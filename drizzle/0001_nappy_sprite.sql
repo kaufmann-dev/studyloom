@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "jobs_active_material_idx" ON "jobs" USING btree ("material_id") WHERE "jobs"."status" in ('queued', 'running');--> statement-breakpoint
+CREATE UNIQUE INDEX "jobs_active_conversation_idx" ON "jobs" USING btree ("conversation_id") WHERE "jobs"."status" in ('queued', 'running');
