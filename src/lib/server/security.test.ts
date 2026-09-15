@@ -5,7 +5,7 @@ import { scopedFile, wavHeader } from './storage';
 import { validateWav } from './transcribe';
 import { validateCitations, gradeChoice, readArtifact } from './jobs';
 import { safeError } from './config';
-import { answersSchema, chatInput, projectInput, quizSchema } from '../domain';
+import { answersSchema, chatInput, ingestionSchema, projectInput, quizSchema } from '../domain';
 import { sandboxArgs } from './sandbox';
 import { mkdtemp, writeFile, symlink, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -74,6 +74,27 @@ describe('source and tool boundaries', () => {
 		expect(() => projectInput.parse({ name: '   ', description: '' })).toThrow();
 		expect(() => chatInput.parse({ message: '\t\n', materialIds: [id] })).toThrow();
 		expect(() => answersSchema.parse({ answers: [{ questionId: 'q1', value: '' }] })).toThrow();
+	});
+	it('rejects empty extracted chunks and contradictory ingestion statuses', () => {
+		expect(() =>
+			ingestionSchema.parse({ status: 'ready', notes: '', chunks: [], assets: [] })
+		).toThrow('Readable content');
+		expect(() =>
+			ingestionSchema.parse({
+				status: 'partial',
+				notes: '',
+				chunks: [{ locator: '   ', text: 'content' }],
+				assets: []
+			})
+		).toThrow('locator');
+		expect(() =>
+			ingestionSchema.parse({
+				status: 'unreadable',
+				notes: '',
+				chunks: [{ locator: 'page:1', text: 'content' }],
+				assets: []
+			})
+		).toThrow('Unreadable');
 	});
 	it('reports missing and malformed Muse artifacts without exposing filesystem errors', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'studyloom-artifact-'));

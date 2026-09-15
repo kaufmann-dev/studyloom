@@ -72,11 +72,19 @@ async function requireIdle(projectId: string) {
 	const [recording] = await db()
 		.select({ id: t.materials.id })
 		.from(t.materials)
-		.where(and(eq(t.materials.projectId, projectId), eq(t.materials.status, 'recording')))
+		.where(
+			and(
+				eq(t.materials.projectId, projectId),
+				inArray(t.materials.status, ['recording', 'paused'])
+			)
+		)
 		.limit(1);
-	if (recording) error(409, 'Stop recording before deleting.');
+	if (recording) error(409, 'Save or stop recording before deleting.');
 }
 type UploadStatus = 'uploading' | 'failed' | 'partial';
+function isUniqueViolation(value: unknown) {
+	return value && typeof value === 'object' && 'code' in value && value.code === '23505';
+}
 async function enqueueFileIngest(
 	source: typeof t.materials.$inferSelect,
 	modelId: string,
@@ -105,6 +113,43 @@ async function enqueueFileIngest(
 			.returning();
 		return job;
 	});
+}
+async function enqueueMaterialJob(
+	source: typeof t.materials.$inferSelect,
+	statuses: Array<'failed' | 'partial' | 'paused' | 'recording' | 'processing'>,
+	kind: 'ingest' | 'recover',
+	payload: Record<string, unknown>
+) {
+	try {
+		return await db().transaction(async (tx) => {
+			const [changed] = await tx
+				.update(t.materials)
+				.set({ status: 'processing', updatedAt: new Date() })
+				.where(and(eq(t.materials.id, source.id), inArray(t.materials.status, statuses)))
+				.returning();
+			if (!changed) return undefined;
+			const [job] = await tx
+				.insert(t.jobs)
+				.values({
+					projectId: source.projectId,
+					materialId: source.id,
+					kind,
+					queue: 'background',
+					payload
+				})
+				.returning();
+			return job;
+		});
+	} catch (e) {
+		if (!isUniqueViolation(e)) throw e;
+		const [active] = await db()
+			.select()
+			.from(t.jobs)
+			.where(and(eq(t.jobs.materialId, source.id), inArray(t.jobs.status, ['queued', 'running'])))
+			.limit(1);
+		if (active) return active;
+		throw e;
+	}
 }
 async function body(event: RequestEvent) {
 	const length = Number(event.request.headers.get('content-length') || 0);
@@ -215,7 +260,7 @@ export async function api(event: RequestEvent) {
 			}
 			const row = await project(id);
 			if (!action && method === 'GET') {
-				const [materials, conversations, outputs, jobs] = await Promise.all([
+				const [materials, conversations, outputs, jobs, readableChunks] = await Promise.all([
 					db()
 						.select()
 						.from(t.materials)
@@ -236,11 +281,16 @@ export async function api(event: RequestEvent) {
 						.from(t.jobs)
 						.where(eq(t.jobs.projectId, id))
 						.orderBy(desc(t.jobs.createdAt))
-						.limit(100)
+						.limit(100),
+					db()
+						.select({ materialId: t.sourceChunks.materialId })
+						.from(t.sourceChunks)
+						.groupBy(t.sourceChunks.materialId)
 				]);
 				return json({
 					project: row,
 					materials,
+					readableMaterialIds: readableChunks.map((chunk) => chunk.materialId),
 					conversations,
 					outputs: outputs.map(publicOutput),
 					jobs: jobs.map(publicJob)
@@ -334,36 +384,37 @@ export async function api(event: RequestEvent) {
 				await validateModel(input.modelId);
 				const snapshot = await sourceSnapshot(id, input.materialIds);
 				let conversationId = input.conversationId;
-				if (conversationId) {
-					const [conversation] = await db()
-						.select()
-						.from(t.conversations)
-						.where(and(eq(t.conversations.id, conversationId), eq(t.conversations.projectId, id)));
-					if (!conversation) error(404, 'Conversation not found.');
-					const [active] = await db()
-						.select()
-						.from(t.jobs)
-						.where(
-							and(
-								eq(t.jobs.conversationId, conversationId),
-								inArray(t.jobs.status, ['queued', 'running'])
-							)
-						)
-						.limit(1);
-					if (active) error(409, 'Wait for the current answer or cancel it.');
-				} else {
-					const [conversation] = await db()
-						.insert(t.conversations)
-						.values({
-							projectId: id,
-							title: input.message.trim().slice(0, 120),
-							materialIds: input.materialIds,
-							modelId: input.modelId
-						})
-						.returning();
-					conversationId = conversation.id;
-				}
 				const job = await db().transaction(async (tx) => {
+					if (conversationId) {
+						const [conversation] = await tx
+							.select()
+							.from(t.conversations)
+							.where(and(eq(t.conversations.id, conversationId), eq(t.conversations.projectId, id)))
+							.for('update');
+						if (!conversation) error(404, 'Conversation not found.');
+						const [active] = await tx
+							.select()
+							.from(t.jobs)
+							.where(
+								and(
+									eq(t.jobs.conversationId, conversationId),
+									inArray(t.jobs.status, ['queued', 'running'])
+								)
+							)
+							.limit(1);
+						if (active) error(409, 'Wait for the current answer or cancel it.');
+					} else {
+						const [conversation] = await tx
+							.insert(t.conversations)
+							.values({
+								projectId: id,
+								title: input.message.trim().slice(0, 120),
+								materialIds: input.materialIds,
+								modelId: input.modelId
+							})
+							.returning();
+						conversationId = conversation.id;
+					}
 					await tx
 						.insert(t.messages)
 						.values({ conversationId: conversationId!, role: 'user', content: input.message });
@@ -449,17 +500,13 @@ export async function api(event: RequestEvent) {
 				}
 				if (!['failed', 'partial'].includes(source.status))
 					error(409, 'This source cannot be retried yet.');
-				await db()
-					.update(t.materials)
-					.set({ status: 'processing', updatedAt: new Date() })
-					.where(eq(t.materials.id, id));
-				const job = await enqueue({
-					projectId: source.projectId,
-					materialId: id,
-					kind: source.kind === 'recording' ? 'recover' : 'ingest',
-					queue: 'background',
-					payload: { modelId: input.modelId, finalize: true }
-				});
+				const job = await enqueueMaterialJob(
+					source,
+					['failed', 'partial'],
+					source.kind === 'recording' ? 'recover' : 'ingest',
+					{ modelId: input.modelId, finalize: true }
+				);
+				if (!job) return json({ ok: true });
 				return json({ jobId: job.id }, { status: 202 });
 			}
 		}
@@ -481,30 +528,50 @@ export async function api(event: RequestEvent) {
 			}
 			if (action === 'recover' && method === 'POST') {
 				const { finalize } = z.object({ finalize: z.boolean() }).parse(await body(event));
-				const [active] = await db()
-					.select()
-					.from(t.jobs)
-					.where(and(eq(t.jobs.materialId, id), inArray(t.jobs.status, ['queued', 'running'])))
-					.limit(1);
-				if (active) return json({ jobId: active.id }, { status: 202 });
-				if (source.status === 'ready' || source.status === 'partial') return json({ ok: true });
-				await db()
-					.update(t.recordingSegments)
-					.set({ status: 'interrupted' })
-					.where(
-						and(eq(t.recordingSegments.materialId, id), eq(t.recordingSegments.status, 'live'))
-					);
-				await db()
-					.update(t.materials)
-					.set({ status: 'processing', updatedAt: new Date() })
-					.where(eq(t.materials.id, id));
-				const job = await enqueue({
-					projectId: source.projectId,
-					materialId: id,
-					kind: 'recover',
-					queue: 'background',
-					payload: { finalize }
+				const job = await db().transaction(async (tx) => {
+					const [current] = await tx
+						.select()
+						.from(t.materials)
+						.where(eq(t.materials.id, id))
+						.for('update');
+					const [active] = await tx
+						.select()
+						.from(t.jobs)
+						.where(and(eq(t.jobs.materialId, id), inArray(t.jobs.status, ['queued', 'running'])))
+						.limit(1);
+					if (active) return active;
+					if (!current || current.status === 'ready' || current.status === 'partial')
+						return undefined;
+					await tx
+						.update(t.recordingSegments)
+						.set({ status: 'interrupted' })
+						.where(
+							and(eq(t.recordingSegments.materialId, id), eq(t.recordingSegments.status, 'live'))
+						);
+					const [changed] = await tx
+						.update(t.materials)
+						.set({ status: 'processing', updatedAt: new Date() })
+						.where(
+							and(
+								eq(t.materials.id, id),
+								inArray(t.materials.status, ['paused', 'recording', 'failed', 'processing'])
+							)
+						)
+						.returning();
+					if (!changed) return undefined;
+					const [created] = await tx
+						.insert(t.jobs)
+						.values({
+							projectId: current.projectId,
+							materialId: id,
+							kind: 'recover',
+							queue: 'background',
+							payload: { finalize }
+						})
+						.returning();
+					return created;
 				});
+				if (!job) return json({ ok: true });
 				return json({ jobId: job.id }, { status: 202 });
 			}
 		}
@@ -558,26 +625,32 @@ export async function api(event: RequestEvent) {
 				const grades = gradeChoice(quiz, input.answers);
 				const written = quiz.questions.some((q) => q.type === 'written');
 				if (written) await validateModel(output.modelId);
-				const [attempt] = await db()
-					.insert(t.attempts)
-					.values({
-						outputId: id,
-						answers: input.answers,
-						grades,
-						maxScore: quiz.questions.length,
-						status: written ? 'grading' : 'complete',
-						score: written ? null : grades.reduce((s, g) => s + g.score, 0)
-					})
-					.returning();
-				const job = written
-					? await enqueue({
-							projectId: output.projectId,
-							kind: 'grade',
-							queue: 'interactive',
-							attemptId: attempt.id,
-							payload: { snapshot: output.sourceSnapshot, modelId: output.modelId }
+				const { attempt, job } = await db().transaction(async (tx) => {
+					const [attempt] = await tx
+						.insert(t.attempts)
+						.values({
+							outputId: id,
+							answers: input.answers,
+							grades,
+							maxScore: quiz.questions.length,
+							status: written ? 'grading' : 'complete',
+							score: written ? null : grades.reduce((s, g) => s + g.score, 0)
 						})
-					: undefined;
+						.returning();
+					const [job] = written
+						? await tx
+								.insert(t.jobs)
+								.values({
+									projectId: output.projectId,
+									kind: 'grade',
+									queue: 'interactive',
+									attemptId: attempt.id,
+									payload: { snapshot: output.sourceSnapshot, modelId: output.modelId }
+								})
+								.returning()
+						: [undefined];
+					return { attempt, job };
+				});
 				return json({ attemptId: attempt.id, jobId: job?.id }, { status: 202 });
 			}
 		}
@@ -589,46 +662,65 @@ export async function api(event: RequestEvent) {
 			if (!job) error(404);
 			if (!action && method === 'GET') return json({ job: publicJob(job) });
 			if (action === 'cancel' && method === 'POST') {
-				await db()
-					.update(t.jobs)
-					.set({ status: 'cancelled', progress: 'Cancelled', updatedAt: new Date() })
-					.where(and(eq(t.jobs.id, id), inArray(t.jobs.status, ['queued', 'running'])));
-				if (job.materialId)
-					await db()
-						.update(t.materials)
+				await db().transaction(async (tx) => {
+					const [cancelled] = await tx
+						.update(t.jobs)
 						.set({
-							status: job.kind === 'recover' ? 'paused' : 'failed',
-							notes: 'Processing was cancelled.',
+							status: 'cancelled',
+							progress: 'Cancelled',
+							leaseOwner: null,
+							leaseUntil: null,
 							updatedAt: new Date()
 						})
-						.where(eq(t.materials.id, job.materialId));
+						.where(and(eq(t.jobs.id, id), inArray(t.jobs.status, ['queued', 'running'])))
+						.returning({ id: t.jobs.id });
+					if (!cancelled) return;
+					if (job.materialId)
+						await tx
+							.update(t.materials)
+							.set({
+								status: job.kind === 'recover' ? 'paused' : 'failed',
+								notes: 'Processing was cancelled.',
+								updatedAt: new Date()
+							})
+							.where(eq(t.materials.id, job.materialId));
+					if (job.attemptId)
+						await tx
+							.update(t.attempts)
+							.set({ status: 'failed' })
+							.where(and(eq(t.attempts.id, job.attemptId), eq(t.attempts.status, 'grading')));
+				});
 				return json({ ok: true });
 			}
 			if (action === 'retry' && method === 'POST') {
 				if (!['failed', 'cancelled'].includes(job.status))
 					error(409, 'Only failed or cancelled jobs can be retried.');
-				await db()
-					.update(t.jobs)
-					.set({
-						status: 'queued',
-						error: null,
-						tries: 0,
-						progress: 'Waiting to retry',
-						leaseOwner: null,
-						leaseUntil: null,
-						updatedAt: new Date()
-					})
-					.where(eq(t.jobs.id, id));
-				if (job.materialId)
-					await db()
-						.update(t.materials)
-						.set({ status: 'processing', notes: '', updatedAt: new Date() })
-						.where(eq(t.materials.id, job.materialId));
-				if (job.attemptId)
-					await db()
-						.update(t.attempts)
-						.set({ status: 'grading' })
-						.where(eq(t.attempts.id, job.attemptId));
+				await db().transaction(async (tx) => {
+					const [retried] = await tx
+						.update(t.jobs)
+						.set({
+							status: 'queued',
+							error: null,
+							tries: 0,
+							progress: 'Waiting to retry',
+							leaseOwner: null,
+							leaseUntil: null,
+							updatedAt: new Date()
+						})
+						.where(and(eq(t.jobs.id, id), inArray(t.jobs.status, ['failed', 'cancelled'])))
+						.returning({ id: t.jobs.id });
+					if (!retried) return;
+					if (job.materialId)
+						await tx
+							.update(t.materials)
+							.set({ status: 'processing', notes: '', updatedAt: new Date() })
+							.where(eq(t.materials.id, job.materialId));
+					if (job.attemptId)
+						await tx
+							.update(t.attempts)
+							.set({ status: 'grading' })
+							.where(eq(t.attempts.id, job.attemptId));
+				});
 				return json({ jobId: id }, { status: 202 });
 			}
 		}

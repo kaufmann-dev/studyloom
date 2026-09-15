@@ -55,3 +55,25 @@ and all page forms accepted Superforms' identical default ID.
 - Targeted ESLint and Prettier checks
 - Live `agent-browser` check: `hello ` remains in the chat textarea and a
   complete upload shows `Continue processing`.
+
+## Follow-up state fixes
+
+- Fix timestamp: 2026-09-15 15:45:53 UTC (+0000)
+- Base commit: 4cc72df fix(studyloom): preserve input and recover failed jobs
+
+The first fix left several concurrent state transitions unsafe. Cancelling a
+grading job could leave its attempt stuck in `grading`, a stale worker could
+overwrite a cancellation while unwinding, and concurrent recovery requests
+could race into duplicate jobs. Paused recordings could also be deleted while
+their recoverable audio still existed.
+
+The follow-up makes recovery, material retries, chat creation, and quiz attempt
+creation transactional; records dependent quiz attempts as failed when their
+jobs are cancelled; requires a worker lease owner for terminal job updates;
+requeues work during graceful shutdown; protects paused recordings from
+deletion; removes failed chunk files; rejects empty or contradictory extraction
+artifacts; excludes sources without readable chunks from selection; and hides
+original download and playback controls until the original file exists.
+
+Verification for the follow-up: `pnpm check`, `pnpm test -- --run` (32 tests),
+`pnpm build`, targeted ESLint, and targeted Prettier checks.

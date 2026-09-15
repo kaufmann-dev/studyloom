@@ -88,33 +88,44 @@ export async function putChunk(id: string, sequence: number, body: Buffer, start
 		if (material.receivedBytes + body.length > maxUploadBytes())
 			throw new Error('Source exceeds the configured upload limit.');
 		await mkdir(join(materialDir(id), 'chunks'), { recursive: true, mode: 0o700 });
-		const file = await open(chunkPath(id, sequence), 'w', 0o600);
+		const path = chunkPath(id, sequence);
+		const file = await open(path, 'w', 0o600);
 		try {
-			await file.writeFile(body);
-			await file.sync();
+			try {
+				await file.writeFile(body);
+				await file.sync();
+			} catch (error) {
+				await rm(path, { force: true }).catch(() => {});
+				throw error;
+			}
 		} finally {
 			await file.close();
 		}
-		await tx.insert(uploadChunks).values({
-			materialId: id,
-			sequence,
-			size: body.length,
-			hash,
-			startSample: startSample ?? null
-		});
-		await tx
-			.update(materials)
-			.set({
-				receivedBytes: material.receivedBytes + body.length,
-				updatedAt: new Date(),
-				...(material.kind === 'recording'
-					? {
-							size: material.receivedBytes + body.length,
-							durationMs: Math.round(((startSample ?? 0) + body.length / 2) / 24)
-						}
-					: {})
-			})
-			.where(eq(materials.id, id));
+		try {
+			await tx.insert(uploadChunks).values({
+				materialId: id,
+				sequence,
+				size: body.length,
+				hash,
+				startSample: startSample ?? null
+			});
+			await tx
+				.update(materials)
+				.set({
+					receivedBytes: material.receivedBytes + body.length,
+					updatedAt: new Date(),
+					...(material.kind === 'recording'
+						? {
+								size: material.receivedBytes + body.length,
+								durationMs: Math.round(((startSample ?? 0) + body.length / 2) / 24)
+							}
+						: {})
+				})
+				.where(eq(materials.id, id));
+		} catch (error) {
+			await rm(path, { force: true }).catch(() => {});
+			throw error;
+		}
 		return { duplicate: false };
 	});
 }

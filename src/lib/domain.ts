@@ -81,8 +81,16 @@ export const answersSchema = z.object({
 		.max(50)
 });
 export const chunkResultSchema = z.object({
-	locator: z.string().min(1).max(300),
-	text: z.string().min(1).max(60000)
+	locator: z
+		.string()
+		.min(1)
+		.max(300)
+		.refine((value) => value.trim().length > 0, 'A source locator is required.'),
+	text: z
+		.string()
+		.min(1)
+		.max(60000)
+		.refine((value) => value.trim().length > 0, 'Readable source text is required.')
 });
 export const ingestionSchema = z
 	.object({
@@ -102,8 +110,13 @@ export const ingestionSchema = z
 			.default([])
 	})
 	.superRefine((r, ctx) => {
-		if (r.status === 'ready' && !r.chunks.length)
-			ctx.addIssue({ code: 'custom', message: 'Readable content is required for ready status.' });
+		if (r.status !== 'unreadable' && !r.chunks.length)
+			ctx.addIssue({ code: 'custom', message: 'Readable content is required for this status.' });
+		if (r.status === 'unreadable' && r.chunks.length)
+			ctx.addIssue({
+				code: 'custom',
+				message: 'Unreadable sources cannot contain readable content.'
+			});
 	});
 export type Citation = z.infer<typeof citationSchema>;
 export type Quiz = z.infer<typeof quizSchema>;

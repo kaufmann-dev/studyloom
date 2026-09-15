@@ -46,6 +46,7 @@
 	type WorkspaceData = {
 		project: Project;
 		materials: Material[];
+		readableMaterialIds: string[];
 		conversations: Conversation[];
 		outputs: StudyOutput[];
 		jobs: Job[];
@@ -64,11 +65,15 @@
 	let previousReady = new Set<string>();
 	let materialId = $derived(page.url.searchParams.get('material') ?? '');
 	let locator = $derived(page.url.searchParams.get('locator') ?? '');
-	let ready = $derived(
-		data?.materials.filter(
-			(material) => material.status === 'ready' || material.status === 'partial'
-		) ?? []
-	);
+	let ready = $derived.by(() => {
+		if (!data) return [];
+		const readableMaterialIds = data.readableMaterialIds;
+		return data.materials.filter(
+			(material) =>
+				(material.status === 'ready' || material.status === 'partial') &&
+				readableMaterialIds.includes(material.id)
+		);
+	});
 	let activeJobs = $derived(
 		data?.jobs.filter((job) => job.status === 'queued' || job.status === 'running') ?? []
 	);
@@ -90,7 +95,11 @@
 			data = result;
 			error = '';
 			const available = result.materials
-				.filter((material) => material.status === 'ready' || material.status === 'partial')
+				.filter(
+					(material) =>
+						(material.status === 'ready' || material.status === 'partial') &&
+						result.readableMaterialIds.includes(material.id)
+				)
 				.map((material) => material.id);
 			selected = [
 				...selected.filter((id) => available.includes(id)),
@@ -280,7 +289,8 @@
 										type="checkbox"
 										aria-label={`Use ${material.name} as a source`}
 										checked={selected.includes(material.id)}
-										disabled={material.status !== 'ready' && material.status !== 'partial'}
+										disabled={(material.status !== 'ready' && material.status !== 'partial') ||
+											!data.readableMaterialIds.includes(material.id)}
 										onchange={(event) => toggleSource(material.id, event.currentTarget.checked)}
 										class="mt-1 size-4 shrink-0 accent-primary"
 									/>
@@ -310,7 +320,7 @@
 										><Trash2 /></Button
 									>
 								</div>
-								{#if material.status === 'failed' || material.status === 'partial' || (material.status === 'uploading' && material.receivedBytes === material.size)}<Button
+								{#if material.status === 'failed' || (material.status === 'partial' && data.readableMaterialIds.includes(material.id)) || (material.status === 'uploading' && material.receivedBytes === material.size)}<Button
 										variant="ghost"
 										size="sm"
 										class="mt-2"

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, copyFile, readFile, rm, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
-import { and, asc, eq, inArray, lt, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from './db';
 import * as t from './db/schema';
@@ -233,7 +233,16 @@ async function generate(
 			.from(t.outputs)
 			.where(eq(t.outputs.id, job.id));
 		if (existing) {
-			await db().update(t.jobs).set({ outputId: job.id }).where(eq(t.jobs.id, job.id));
+			await db()
+				.update(t.jobs)
+				.set({ outputId: job.id })
+				.where(
+					and(
+						eq(t.jobs.id, job.id),
+						eq(t.jobs.status, 'running'),
+						eq(t.jobs.leaseOwner, job.leaseOwner ?? '')
+					)
+				);
 			return;
 		}
 	}
@@ -346,7 +355,16 @@ async function generate(
 				modelId
 			})
 			.onConflictDoNothing();
-		await db().update(t.jobs).set({ outputId: job.id }).where(eq(t.jobs.id, job.id));
+		await db()
+			.update(t.jobs)
+			.set({ outputId: job.id })
+			.where(
+				and(
+					eq(t.jobs.id, job.id),
+					eq(t.jobs.status, 'running'),
+					eq(t.jobs.leaseOwner, job.leaseOwner ?? '')
+				)
+			);
 		return;
 	}
 	await runMuseWithArtifact(
@@ -372,7 +390,16 @@ async function generate(
 			modelId
 		})
 		.onConflictDoNothing();
-	await db().update(t.jobs).set({ outputId: job.id }).where(eq(t.jobs.id, job.id));
+	await db()
+		.update(t.jobs)
+		.set({ outputId: job.id })
+		.where(
+			and(
+				eq(t.jobs.id, job.id),
+				eq(t.jobs.status, 'running'),
+				eq(t.jobs.leaseOwner, job.leaseOwner ?? '')
+			)
+		);
 }
 export async function finishRecording(id: string) {
 	await assemble(id, true);
@@ -476,12 +503,15 @@ async function recover(job: Job, workspace: string, signal: AbortSignal) {
 				.where(eq(t.recordingSegments.id, segment.id));
 		});
 	}
+	signal.throwIfAborted();
 	if (job.payload.finalize) await finishRecording(id);
-	else
+	else {
+		signal.throwIfAborted();
 		await db()
 			.update(t.materials)
 			.set({ status: 'paused', updatedAt: new Date() })
 			.where(eq(t.materials.id, id));
+	}
 }
 export function startWorkers() {
 	const owner = randomUUID();
@@ -500,7 +530,10 @@ export function startWorkers() {
 								eq(t.jobs.queue, queue),
 								or(
 									eq(t.jobs.status, 'queued'),
-									and(eq(t.jobs.status, 'running'), lt(t.jobs.leaseUntil, new Date()))
+									and(
+										eq(t.jobs.status, 'running'),
+										or(isNull(t.jobs.leaseUntil), lt(t.jobs.leaseUntil, new Date()))
+									)
 								)
 							)
 						)
@@ -557,7 +590,13 @@ export function startWorkers() {
 					void db()
 						.update(t.jobs)
 						.set({ progress: s.slice(-600), updatedAt: new Date() })
-						.where(and(eq(t.jobs.id, current.id), eq(t.jobs.status, 'running')))
+						.where(
+							and(
+								eq(t.jobs.id, current.id),
+								eq(t.jobs.status, 'running'),
+								eq(t.jobs.leaseOwner, owner)
+							)
+						)
 						.catch(() => {});
 				};
 				try {
@@ -566,22 +605,55 @@ export function startWorkers() {
 					else if (job.kind === 'recover') await recover(job, workspace, signal);
 					else await generate(job, workspace, signal, progress);
 					signal.throwIfAborted();
-					await db()
+					const [succeeded] = await db()
 						.update(t.jobs)
 						.set({
 							status: 'succeeded',
 							progress: 'Complete',
+							leaseOwner: null,
 							leaseUntil: null,
 							updatedAt: new Date()
 						})
-						.where(and(eq(t.jobs.id, job.id), eq(t.jobs.status, 'running')));
+						.where(
+							and(eq(t.jobs.id, job.id), eq(t.jobs.status, 'running'), eq(t.jobs.leaseOwner, owner))
+						)
+						.returning({ id: t.jobs.id });
+					if (!succeeded) continue;
 				} catch (e) {
+					if (stop.signal.aborted) {
+						await db()
+							.update(t.jobs)
+							.set({
+								status: 'queued',
+								progress: 'Waiting to retry after restart',
+								leaseOwner: null,
+								leaseUntil: null,
+								updatedAt: new Date()
+							})
+							.where(
+								and(
+									eq(t.jobs.id, job.id),
+									eq(t.jobs.status, 'running'),
+									eq(t.jobs.leaseOwner, owner)
+								)
+							);
+						continue;
+					}
 					const message = safeError(e);
-					await db()
+					const [failed] = await db()
 						.update(t.jobs)
-						.set({ status: 'failed', error: message, leaseUntil: null, updatedAt: new Date() })
-						.where(and(eq(t.jobs.id, job.id), eq(t.jobs.status, 'running')));
-					if (job.materialId)
+						.set({
+							status: 'failed',
+							error: message,
+							leaseOwner: null,
+							leaseUntil: null,
+							updatedAt: new Date()
+						})
+						.where(
+							and(eq(t.jobs.id, job.id), eq(t.jobs.status, 'running'), eq(t.jobs.leaseOwner, owner))
+						)
+						.returning({ id: t.jobs.id });
+					if (failed && job.materialId)
 						await db()
 							.update(t.materials)
 							.set({
@@ -590,7 +662,7 @@ export function startWorkers() {
 								updatedAt: new Date()
 							})
 							.where(eq(t.materials.id, job.materialId));
-					if (job.attemptId)
+					if (failed && job.attemptId)
 						await db()
 							.update(t.attempts)
 							.set({ status: 'failed' })
@@ -600,6 +672,7 @@ export function startWorkers() {
 					await rm(workspace, { recursive: true, force: true });
 				}
 			} catch (e) {
+				if (stop.signal.aborted) break;
 				if (!busy) {
 					console.error('Worker:', safeError(e));
 					busy = true;

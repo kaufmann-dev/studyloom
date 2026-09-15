@@ -22,6 +22,13 @@
 	let media: HTMLMediaElement | undefined;
 	let mounted = false;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let originalReady = $derived(
+		data
+			? data.material.kind === 'file'
+				? data.material.status !== 'uploading'
+				: data.material.status === 'ready' || data.material.status === 'partial'
+			: false
+	);
 	const vttTime = (ms: number) => new Date(Math.max(0, ms)).toISOString().slice(11, 23);
 	let captions = $derived(
 		`data:text/vtt;charset=utf-8,${encodeURIComponent('WEBVTT\n\n' + (data?.turns.map((turn) => `${vttTime(turn.startMs)} --> ${vttTime(turn.endMs)}\n${turn.text}`).join('\n\n') ?? ''))}`
@@ -102,9 +109,12 @@
 					{data.material.notes}
 				</p>{/if}
 			<div class="flex flex-wrap gap-2">
-				<Button variant="outline" size="sm" href={`/api/materials/${materialId}/file?download=1`}
-					><Download />Original</Button
-				>{#if transcript}<Button variant="ghost" size="sm" onclick={copy}><Copy />Copy text</Button
+				{#if originalReady}<Button
+						variant="outline"
+						size="sm"
+						href={`/api/materials/${materialId}/file?download=1`}><Download />Original</Button
+					>{/if}{#if transcript}<Button variant="ghost" size="sm" onclick={copy}
+						><Copy />Copy text</Button
 					><Button
 						variant="ghost"
 						size="sm"
@@ -113,7 +123,7 @@
 					>{/if}
 			</div>
 			{#if notice}<p role="status" class="text-xs text-muted-foreground">{notice}</p>{/if}
-			{#if data.material.mimeType.startsWith('audio/') || data.material.kind === 'recording'}<audio
+			{#if originalReady && (data.material.mimeType.startsWith('audio/') || data.material.kind === 'recording')}<audio
 					controls
 					class="w-full"
 					src={`/api/materials/${materialId}/file`}
@@ -124,7 +134,7 @@
 						};
 					}}
 				></audio>
-			{:else if data.material.mimeType.startsWith('video/')}
+			{:else if originalReady && data.material.mimeType.startsWith('video/')}
 				<video
 					controls
 					class="max-h-80 w-full"
@@ -137,12 +147,12 @@
 					}}
 					><track kind="captions" src={captions} srclang="und" label="Transcript" default /></video
 				>
-			{:else if data.material.mimeType.startsWith('image/')}<img
+			{:else if originalReady && data.material.mimeType.startsWith('image/')}<img
 					class="max-h-96 w-full object-contain"
 					src={`/api/materials/${materialId}/file`}
 					alt={data.material.name}
 				/>
-			{:else if data.material.mimeType === 'application/pdf'}<iframe
+			{:else if originalReady && data.material.mimeType === 'application/pdf'}<iframe
 					class="h-96 w-full border"
 					src={`/api/materials/${materialId}/file`}
 					title={`PDF: ${data.material.name}`}
