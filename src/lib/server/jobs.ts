@@ -16,7 +16,7 @@ import {
 	type Grade,
 	type Quiz
 } from '../domain';
-import { museRun } from './muse';
+import { museRun, type MuseResult } from './muse';
 import { ensureSandboxAvailable } from './sandbox';
 import { transcribeFile } from './transcribe';
 type Job = typeof t.jobs.$inferSelect;
@@ -112,7 +112,14 @@ async function artifactExists(workspace: string, name: string) {
 		throw error;
 	}
 }
-async function runMuseWithArtifact(
+export function missingArtifactError(artifact: string, result: MuseResult): Error {
+	const parts = [result.text.trim(), result.stderr.trim()]
+		.filter(Boolean)
+		.map((part) => part.slice(-400));
+	const detail = parts.length ? ` Last output: ${parts.join(' | ')}` : '';
+	return new Error(`Muse completed without writing ${artifact}.${detail} Retry this job.`);
+}
+export async function runMuseWithArtifact(
 	workspace: string,
 	modelId: string,
 	prompt: string,
@@ -122,18 +129,25 @@ async function runMuseWithArtifact(
 ) {
 	await ensureSandboxAvailable();
 	const contract = `The required artifact is ${artifact}. Use run_command to write valid JSON to /work/${artifact}, verify that it exists, and do not finish until it is saved.`;
-	await museRun(workspace, modelId, `${prompt}\n${contract}`, signal, progress);
+	const first = await museRun(workspace, modelId, `${prompt}\n${contract}`, signal, progress);
 	if (await artifactExists(workspace, artifact)) return;
 	progress(`Muse did not save ${artifact}; asking it to finish the artifact.`);
-	await museRun(
+	const retryNote =
+		`\nThe previous attempt finished without saving the required artifact. Complete the artifact now.` +
+		(first.text.trim()
+			? `\nYour previous final response was: ${first.text.trim().slice(-800)}`
+			: '');
+	const second = await museRun(
 		workspace,
 		modelId,
-		`${prompt}\n${contract}\nThe previous attempt finished without saving the required artifact. Complete the artifact now.`,
+		`${prompt}\n${contract}${retryNote}`,
 		signal,
 		progress
 	);
-	if (!(await artifactExists(workspace, artifact)))
-		throw new Error(`Muse completed without writing ${artifact}. Retry this job.`);
+	if (!(await artifactExists(workspace, artifact))) {
+		const last = second.text.trim() || second.stderr.trim() ? second : first;
+		throw missingArtifactError(artifact, last);
+	}
 }
 async function writeData(workspace: string, name: string, value: unknown) {
 	const { writeFile } = await import('node:fs/promises');

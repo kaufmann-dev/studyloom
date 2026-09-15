@@ -229,13 +229,17 @@ export async function validateModel(modelId: string) {
 	if (!models.some((m) => m.modelId === modelId))
 		throw new Error('This model is no longer available. Refresh the model list.');
 }
+export interface MuseResult {
+	text: string;
+	stderr: string;
+}
 export async function museRun(
 	workspace: string,
 	modelId: string,
 	prompt: string,
 	signal: AbortSignal,
 	onProgress: (text: string) => void
-) {
+): Promise<MuseResult> {
 	await validateModel(modelId);
 	const configDir = join(workspace, 'control');
 	await museSettings();
@@ -247,6 +251,7 @@ export async function museRun(
 	await writeFile(promptFile, prompt, { mode: 0o600 });
 	let terminal: string | undefined;
 	let failure: string | undefined;
+	const stderrTail = { text: '' };
 	await runProcess(
 		await resolveMuseBin(),
 		[
@@ -275,6 +280,7 @@ export async function museRun(
 			signal,
 			timeoutMs: 30 * 60_000,
 			maxBytes: 32 * 1024 * 1024,
+			stderrTail,
 			onLine: (line) => {
 				try {
 					const event = JSON.parse(line);
@@ -296,5 +302,5 @@ export async function museRun(
 	});
 	if (terminal === undefined)
 		throw new Error('Muse did not complete this task. Retry from the job panel.');
-	return terminal;
+	return { text: terminal, stderr: stderrTail.text };
 }

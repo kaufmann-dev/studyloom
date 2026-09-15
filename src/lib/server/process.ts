@@ -9,6 +9,7 @@ export function runProcess(
 		timeoutMs?: number;
 		maxBytes?: number;
 		onLine?: (line: string) => void;
+		stderrTail?: { text: string };
 	} = {}
 ) {
 	return new Promise<string>((resolve, reject) => {
@@ -71,6 +72,7 @@ export function runProcess(
 		child.on('close', (code) => {
 			clean();
 			if (pending) options.onLine?.(pending);
+			if (options.stderrTail) options.stderrTail.text = stderr;
 			if (problem) reject(problem);
 			else if (code !== 0) reject(new Error(`${command} exited with ${code}: ${stderr}`));
 			else resolve(output);
