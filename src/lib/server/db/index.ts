@@ -22,9 +22,7 @@ function migrationsFolder() {
 		join(here, '../../drizzle'),
 		join(here, '../../../../drizzle')
 	];
-	const folder = candidates.find((candidate) =>
-		existsSync(join(candidate, 'meta/_journal.json'))
-	);
+	const folder = candidates.find((candidate) => existsSync(join(candidate, 'meta/_journal.json')));
 	if (!folder) throw new Error('Cannot locate the drizzle migrations folder.');
 	return folder;
 }
