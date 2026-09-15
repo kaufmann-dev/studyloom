@@ -186,18 +186,37 @@ class MuseHost {
 // The SvelteKit and worker bundles share one process and one account-control connection.
 const processState = globalThis as typeof globalThis & { __studyloomMuseHost?: MuseHost };
 export const museHost = (processState.__studyloomMuseHost ??= new MuseHost());
-export async function museStatus() {
+export interface MuseStatus {
+	account: MuseAccount;
+	models: MuseModel[];
+	error?: string;
+}
+export const STALE_MUSE_LOGIN =
+	'Your Muse login is no longer valid. Disconnect, then connect your Muse account again.';
+export const MUSE_MODELS_UNREACHABLE =
+	'Could not load Muse models. Check the connection and try again.';
+export function museStatusFromCatalog(account: MuseAccount, models: MuseModel[]): MuseStatus {
+	if (account.state === 'accountLogin' && models.length === 0)
+		return { account, models, error: STALE_MUSE_LOGIN };
+	return { account, models };
+}
+export async function museStatus(): Promise<MuseStatus> {
 	const account = await museHost.call<MuseAccount>('account/read');
-	const catalog =
-		account.state === 'accountLogin'
-			? await museHost.call<{ models: MuseModel[] }>('model/list')
-			: { models: [] };
-	return { account, models: catalog.models };
+	if (account.state !== 'accountLogin') return { account, models: [] };
+	let models: MuseModel[];
+	try {
+		const catalog = await museHost.call<{ models: MuseModel[] }>('model/list');
+		models = Array.isArray(catalog.models) ? catalog.models : [];
+	} catch {
+		return { account, models: [], error: MUSE_MODELS_UNREACHABLE };
+	}
+	return museStatusFromCatalog(account, models);
 }
 export async function validateModel(modelId: string) {
 	const { account, models } = await museStatus();
 	if (account.state !== 'accountLogin')
 		throw new Error('Sign into Muse with your subscription in Settings.');
+	if (models.length === 0) throw new Error(STALE_MUSE_LOGIN);
 	if (!models.some((m) => m.modelId === modelId))
 		throw new Error('This model is no longer available. Refresh the model list.');
 }

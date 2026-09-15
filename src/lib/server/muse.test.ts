@@ -2,7 +2,8 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { museEnvironment, resolveMuseBin } from './muse';
+import { museEnvironment, museStatusFromCatalog, resolveMuseBin } from './muse';
+import type { MuseAccount, MuseModel } from '../domain';
 
 const savedPath = process.env.PATH;
 const savedMuseBin = process.env.MUSE_BIN;
@@ -37,5 +38,34 @@ describe('muse binary resolution', () => {
 		expect(env.PATH).toContain('/usr/local/bin');
 		process.env.PATH = '/usr/bin:/bin';
 		expect(museEnvironment('/private/config').PATH).toContain('/usr/local/bin');
+	});
+});
+
+describe('muse stale-login detection', () => {
+	const loggedIn: MuseAccount = {
+		state: 'accountLogin',
+		label: 'david@kaufmann.dev',
+		credentialRequired: true
+	};
+	const model: MuseModel = {
+		modelId: 'muse-spark-1.3-contributor',
+		displayLabel: 'muse-spark-1.3-contributor',
+		contextLimit: 1007997,
+		description: null
+	};
+	it('returns models without an error when the catalog is populated', () => {
+		const status = museStatusFromCatalog(loggedIn, [model]);
+		expect(status.models).toEqual([model]);
+		expect(status.error).toBeUndefined();
+	});
+	it('flags an empty catalog on a logged-in account as a stale login', () => {
+		const status = museStatusFromCatalog(loggedIn, []);
+		expect(status.models).toEqual([]);
+		expect(status.error).toMatch(/no longer valid/);
+	});
+	it('stays silent when logged out, even with an empty catalog', () => {
+		const status = museStatusFromCatalog({ state: 'loggedOut', credentialRequired: true }, []);
+		expect(status.models).toEqual([]);
+		expect(status.error).toBeUndefined();
 	});
 });
