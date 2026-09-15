@@ -86,7 +86,7 @@ Required environment variables:
 Optional environment variables:
 
 - `MAX_UPLOAD_BYTES`: maximum source size; default `2147483648`.
-- `MUSE_BIN`: executable path; default `muse`.
+- `MUSE_BIN`: executable path; unset by default, auto-detects `/usr/local/bin/muse` then `PATH`. Set it only if the CLI was installed elsewhere.
 - `MUSE_AUTH_IMPORT_PATH`: one-time import of an existing credential file; unset by default.
 - `HOST`: bind address; default `0.0.0.0`.
 - `PORT`: supplied by Coolify; standalone default `3000`.

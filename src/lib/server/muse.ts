@@ -1,14 +1,20 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, writeFile, copyFile, chmod, rename, access } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { dataDir } from './config';
 import { runProcess } from './process';
 import type { MuseAccount, MuseModel } from '../domain';
+const FALLBACK_PATH = '/usr/local/bin:/usr/bin:/bin';
+function musePath(): string {
+	const basePath = process.env.PATH || FALLBACK_PATH;
+	return basePath.includes('/usr/local/bin') ? basePath : `/usr/local/bin:${basePath}`;
+}
 export function museEnvironment(configDir: string): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {
-		PATH: process.env.PATH,
+		PATH: musePath(),
 		LANG: 'C.UTF-8',
 		XDG_CONFIG_HOME: configDir,
 		XDG_CACHE_HOME: join(dataDir(), 'cache'),
@@ -18,6 +24,39 @@ export function museEnvironment(configDir: string): NodeJS.ProcessEnv {
 	for (const key of ['SSL_CERT_FILE', 'SSL_CERT_DIR'])
 		if (process.env[key]) env[key] = process.env[key];
 	return env;
+}
+export async function resolveMuseBin(): Promise<string> {
+	const configured = process.env.MUSE_BIN;
+	if (configured) {
+		const usable = await access(configured, constants.X_OK).then(
+			() => true,
+			() => false
+		);
+		if (!usable)
+			throw new Error(
+				`Muse CLI not found at MUSE_BIN=${configured}. Set MUSE_BIN to the muse executable path or unset it to use automatic detection.`
+			);
+		return configured;
+	}
+	for (const candidate of ['/usr/local/bin/muse', '/usr/bin/muse']) {
+		const usable = await access(candidate, constants.X_OK).then(
+			() => true,
+			() => false
+		);
+		if (usable) return candidate;
+	}
+	for (const dir of musePath().split(':')) {
+		if (!dir) continue;
+		const candidate = join(dir, 'muse');
+		const usable = await access(candidate, constants.X_OK).then(
+			() => true,
+			() => false
+		);
+		if (usable) return candidate;
+	}
+	throw new Error(
+		'Muse CLI not found. Install it with `bash scripts/install-muse.sh` or set MUSE_BIN to the muse executable path.'
+	);
 }
 const configPath = () => join(dataDir(), 'muse-config');
 let settingsReady: Promise<void> | undefined;
@@ -85,7 +124,7 @@ class MuseHost {
 		await mkdir(join(dir, 'files'), { recursive: true, mode: 0o700 });
 		await museSettings();
 		const child = spawn(
-			process.env.MUSE_BIN || 'muse',
+			await resolveMuseBin(),
 			['serve', '--no-session-log', '--disable-write', '--disable-shell'],
 			{ env: museEnvironment(configPath()), cwd: join(dir, 'files'), stdio: 'pipe' }
 		);
@@ -181,7 +220,7 @@ export async function museRun(
 	let terminal: string | undefined;
 	let failure: string | undefined;
 	await runProcess(
-		process.env.MUSE_BIN || 'muse',
+		await resolveMuseBin(),
 		[
 			'exec',
 			'--json',
