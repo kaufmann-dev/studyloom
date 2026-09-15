@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { defaults, superForm } from 'sveltekit-superforms';
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
 	import { Send, Plus, Copy, Download } from '@lucide/svelte';
@@ -37,7 +37,8 @@
 	const schema = chatInput.pick({ message: true, modelId: true });
 	const editor = superForm(defaults({ message: '', modelId: DEFAULT_MODEL }, zod4(schema)), {
 		validators: zod4Client(schema),
-		SPA: true
+		SPA: true,
+		id: untrack(() => `chat-${projectId}`)
 	});
 	const { form } = editor;
 	let messages = $state.raw<Message[]>([]);
@@ -57,11 +58,13 @@
 		if (!job) return;
 		const version = `${job.id}:${job.status}:${job.updatedAt}`;
 		if (observedJob === version) return;
-		observedJob = version;
 		const id = conversationId;
 		try {
 			const result = await api<{ messages: Message[] }>(`/api/conversations/${id}`);
-			if (mounted && conversationId === id) messages = result.messages;
+			if (mounted && conversationId === id) {
+				messages = result.messages;
+				observedJob = version;
+			}
 		} catch (e) {
 			if (mounted) error = errorText(e);
 		}

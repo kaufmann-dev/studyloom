@@ -1,9 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, writeFile, copyFile, chmod, rename, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { dataDir } from './config';
 import { runProcess } from './process';
 import type { MuseAccount, MuseModel } from '../domain';
@@ -59,6 +61,13 @@ export async function resolveMuseBin(): Promise<string> {
 	);
 }
 const configPath = () => join(dataDir(), 'muse-config');
+export function resolveMcpPath() {
+	const colocated = fileURLToPath(new URL('./mcp.js', import.meta.url));
+	if (existsSync(colocated)) return colocated;
+	const sourceBuild = fileURLToPath(new URL('../../../build/runtime/mcp.js', import.meta.url));
+	if (existsSync(sourceBuild)) return sourceBuild;
+	return resolve('build/runtime/mcp.js');
+}
 let settingsReady: Promise<void> | undefined;
 function museSettings() {
 	return (settingsReady ??= prepareSettings().catch((e) => {
@@ -94,7 +103,7 @@ async function prepareSettings() {
 			studyloom: {
 				transport: 'stdio',
 				command: process.execPath,
-				args: [resolve('build/runtime/mcp.js')],
+				args: [resolveMcpPath()],
 				env: { TRANSCRIPTION_API_KEY: process.env.TRANSCRIPTION_API_KEY ?? '' },
 				mode: 'required',
 				enabled: true

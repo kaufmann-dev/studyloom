@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import type { Pathname } from '$app/types';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { defaults, superForm } from 'sveltekit-superforms';
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
 	import * as Form from '$lib/components/ui/form';
@@ -38,7 +38,8 @@
 	const ingestionSchema = generationInput.pick({ modelId: true });
 	const ingestionForm = superForm(defaults({ modelId: DEFAULT_MODEL }, zod4(ingestionSchema)), {
 		validators: zod4Client(ingestionSchema),
-		SPA: true
+		SPA: true,
+		id: untrack(() => `ingestion-${projectId}`)
 	});
 	const { form: ingestionData } = ingestionForm;
 	let busyJob = $state('');
@@ -309,12 +310,15 @@
 										><Trash2 /></Button
 									>
 								</div>
-								{#if material.status === 'failed' || material.status === 'partial'}<Button
+								{#if material.status === 'failed' || material.status === 'partial' || (material.status === 'uploading' && material.receivedBytes === material.size)}<Button
 										variant="ghost"
 										size="sm"
 										class="mt-2"
 										disabled={busyMaterial === material.id}
-										onclick={() => retryMaterial(material.id)}><RefreshCw />Retry processing</Button
+										onclick={() => retryMaterial(material.id)}
+										><RefreshCw />{material.status === 'uploading'
+											? 'Continue processing'
+											: 'Retry processing'}</Button
 									>{/if}
 								{#if deleteId === material.id}<div class="mt-3 bg-muted p-3 text-xs">
 										<p>Delete this source permanently?</p>

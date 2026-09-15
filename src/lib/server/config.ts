@@ -17,6 +17,10 @@ export function maxUploadBytes(): number {
 	return value;
 }
 export function safeError(error: unknown): string {
+	if (error && typeof error === 'object' && 'path' in error) {
+		const code = 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+		return code ? `File operation failed (${code}).` : 'File operation failed.';
+	}
 	let message = error instanceof Error ? error.message : 'The operation failed.';
 	for (const name of ['TRANSCRIPTION_API_KEY', 'OIDC_CLIENT_SECRET', 'DATABASE_URL']) {
 		const value = process.env[name];

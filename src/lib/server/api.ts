@@ -76,6 +76,36 @@ async function requireIdle(projectId: string) {
 		.limit(1);
 	if (recording) error(409, 'Stop recording before deleting.');
 }
+type UploadStatus = 'uploading' | 'failed' | 'partial';
+async function enqueueFileIngest(
+	source: typeof t.materials.$inferSelect,
+	modelId: string,
+	allowedStatuses: UploadStatus[],
+	assembleUpload: boolean
+) {
+	if (assembleUpload && source.receivedBytes !== source.size) error(409, 'Upload is incomplete.');
+	await validateModel(modelId);
+	if (assembleUpload) await assemble(source.id);
+	return db().transaction(async (tx) => {
+		const [changed] = await tx
+			.update(t.materials)
+			.set({ status: 'processing', updatedAt: new Date() })
+			.where(and(eq(t.materials.id, source.id), inArray(t.materials.status, allowedStatuses)))
+			.returning();
+		if (!changed) return undefined;
+		const [job] = await tx
+			.insert(t.jobs)
+			.values({
+				projectId: source.projectId,
+				materialId: source.id,
+				kind: 'ingest',
+				queue: 'background',
+				payload: { modelId }
+			})
+			.returning();
+		return job;
+	});
+}
 async function body(event: RequestEvent) {
 	const length = Number(event.request.headers.get('content-length') || 0);
 	if (length > 1024 * 1024) error(413, 'Request too large.');
@@ -104,13 +134,17 @@ export async function boundedBody(request: Request, limit: number) {
 }
 async function download(event: RequestEvent, path: string, mime: string, name: string) {
 	const info = await stat(path).catch(() => null);
-	if (!info) error(404, 'File is not ready yet.');
+	if (!info?.isFile()) error(404, 'File is not ready yet.');
+	const contentType =
+		/^[A-Za-z0-9][A-Za-z0-9!#$%&'*+.^_`|~-]*\/[A-Za-z0-9][A-Za-z0-9!#$%&'*+.^_`|~-]*$/.test(mime)
+			? mime
+			: 'application/octet-stream';
 	const inline =
 		/^(audio\/(wav|mpeg|ogg|webm|mp4|x-m4a|flac)|video\/(mp4|webm)|image\/(png|jpeg|webp)|application\/pdf|text\/plain)$/.test(
-			mime
+			contentType
 		) && !event.url.searchParams.has('download');
 	const headers: Record<string, string> = {
-		'content-type': inline ? mime : 'application/octet-stream',
+		'content-type': inline ? contentType : 'application/octet-stream',
 		'content-disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`,
 		'accept-ranges': 'bytes',
 		'x-content-type-options': 'nosniff',
@@ -168,9 +202,14 @@ export async function api(event: RequestEvent) {
 					projects: await db().select().from(t.projects).orderBy(desc(t.projects.updatedAt))
 				});
 			if (!id && method === 'POST') {
+				const input = projectInput.parse(await body(event));
 				const [row] = await db()
 					.insert(t.projects)
-					.values(projectInput.parse(await body(event)))
+					.values({
+						...input,
+						name: input.name.trim(),
+						description: input.description.trim()
+					})
 					.returning();
 				return json({ project: row }, { status: 201 });
 			}
@@ -208,9 +247,15 @@ export async function api(event: RequestEvent) {
 				});
 			}
 			if (!action && method === 'PATCH') {
+				const input = projectInput.parse(await body(event));
 				const [project] = await db()
 					.update(t.projects)
-					.set({ ...projectInput.parse(await body(event)), updatedAt: new Date() })
+					.set({
+						...input,
+						name: input.name.trim(),
+						description: input.description.trim(),
+						updatedAt: new Date()
+					})
 					.where(eq(t.projects.id, id))
 					.returning();
 				return json({ project });
@@ -229,7 +274,13 @@ export async function api(event: RequestEvent) {
 				const input = z
 					.object({
 						filename: z.string().min(1).max(255),
-						mimeType: z.string().max(120).default('application/octet-stream'),
+						mimeType: z
+							.string()
+							.max(120)
+							.regex(
+								/^[A-Za-z0-9][A-Za-z0-9!#$%&'*+.^_`|~-]*\/[A-Za-z0-9][A-Za-z0-9!#$%&'*+.^_`|~-]*$/
+							)
+							.default('application/octet-stream'),
 						size: z.number().int().positive().max(maxUploadBytes())
 					})
 					.parse(await body(event));
@@ -305,7 +356,7 @@ export async function api(event: RequestEvent) {
 						.insert(t.conversations)
 						.values({
 							projectId: id,
-							title: input.message.slice(0, 120),
+							title: input.message.trim().slice(0, 120),
 							materialIds: input.materialIds,
 							modelId: input.modelId
 						})
@@ -380,35 +431,22 @@ export async function api(event: RequestEvent) {
 					.object({ modelId: z.string().min(1).max(160).default(DEFAULT_MODEL) })
 					.parse(await body(event));
 				if (source.status !== 'uploading') return json({ ok: true });
-				await validateModel(input.modelId);
-				if (source.receivedBytes !== source.size) error(409, 'Upload is incomplete.');
-				await assemble(id);
-				const job = await db().transaction(async (tx) => {
-					const [changed] = await tx
-						.update(t.materials)
-						.set({ status: 'processing', updatedAt: new Date() })
-						.where(and(eq(t.materials.id, id), eq(t.materials.status, 'uploading')))
-						.returning();
-					if (!changed) return undefined;
-					const [job] = await tx
-						.insert(t.jobs)
-						.values({
-							projectId: source.projectId,
-							materialId: id,
-							kind: 'ingest',
-							queue: 'background',
-							payload: { modelId: input.modelId }
-						})
-						.returning();
-					return job;
-				});
+				const job = await enqueueFileIngest(source, input.modelId, ['uploading'], true);
 				return json({ jobId: job?.id }, { status: 202 });
 			}
 			if (action === 'retry' && method === 'POST') {
 				const input = z
 					.object({ modelId: z.string().min(1).max(160).default(DEFAULT_MODEL) })
 					.parse(await body(event));
-				if (source.kind === 'file') await validateModel(input.modelId);
+				if (source.kind === 'file') {
+					const job = await enqueueFileIngest(
+						source,
+						input.modelId,
+						['uploading', 'failed', 'partial'],
+						source.status === 'uploading'
+					);
+					return json({ jobId: job?.id }, { status: 202 });
+				}
 				if (!['failed', 'partial'].includes(source.status))
 					error(409, 'This source cannot be retried yet.');
 				await db()

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { defaults, superForm } from 'sveltekit-superforms';
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
 	import { Sparkles, ArrowLeft } from '@lucide/svelte';
@@ -36,7 +36,11 @@
 	const schema = generationInput.pick({ modelId: true, questionCount: true, questionMix: true });
 	const editor = superForm(
 		defaults({ modelId: DEFAULT_MODEL, questionCount: 10, questionMix: 'mixed' }, zod4(schema)),
-		{ validators: zod4Client(schema), SPA: true }
+		{
+			validators: zod4Client(schema),
+			SPA: true,
+			id: untrack(() => `${kind}-generator-${projectId}`)
+		}
 	);
 	const { form } = editor;
 	let busy = $state(false);

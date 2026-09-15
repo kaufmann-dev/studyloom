@@ -19,7 +19,8 @@
 	const schema = projectInput;
 	const projectForm = superForm(defaults(zod4(schema)), {
 		validators: zod4Client(schema),
-		SPA: true
+		SPA: true,
+		id: 'project-create'
 	});
 	const { form } = projectForm;
 	async function loadProjects() {

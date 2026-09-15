@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
 	plugins: [
 		tailwindcss(),
 		sveltekit({
@@ -22,11 +22,15 @@ export default defineConfig({
 			}
 		}),
 
-		paraglideVitePlugin({
-			project: './project.inlang',
-			outdir: './src/lib/paraglide',
-			emitTsDeclarations: true
-		})
+		...(command === 'serve'
+			? [
+					paraglideVitePlugin({
+						project: './project.inlang',
+						outdir: './src/lib/paraglide',
+						emitTsDeclarations: true
+					})
+				]
+			: [])
 	],
 	test: {
 		expect: { requireAssertions: true },
@@ -56,4 +60,4 @@ export default defineConfig({
 			}
 		]
 	}
-});
+}));

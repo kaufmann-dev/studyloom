@@ -23,7 +23,11 @@
 			untrack(() => ({ name: project.name, description: project.description ?? '' })),
 			zod4(schema)
 		),
-		{ validators: zod4Client(schema), SPA: true }
+		{
+			validators: zod4Client(schema),
+			SPA: true,
+			id: untrack(() => `project-details-${project.id}`)
+		}
 	);
 	const { form } = editor;
 	let busy = $state(false);

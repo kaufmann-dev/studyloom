@@ -4,8 +4,12 @@ export const TRANSCRIPTION_MODEL = 'muse-voice-transcribe-1.0';
 export const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
 export const idSchema = z.uuid();
 export const projectInput = z.object({
-	name: z.string().trim().min(1).max(160),
-	description: z.string().trim().max(4000).default('')
+	name: z
+		.string()
+		.min(1)
+		.max(160)
+		.refine((value) => value.trim().length > 0, 'Project name is required.'),
+	description: z.string().max(4000).default('')
 });
 export const sourceSelection = z.array(idSchema).min(1).max(500);
 export const citationSchema = z.object({
@@ -53,13 +57,26 @@ export const generationInput = z.object({
 });
 export const chatInput = z.object({
 	conversationId: idSchema.optional(),
-	message: z.string().trim().min(1).max(30000),
+	message: z
+		.string()
+		.min(1)
+		.max(30000)
+		.refine((value) => value.trim().length > 0, 'Message is required.'),
 	materialIds: sourceSelection,
 	modelId: z.string().min(1).max(160).default(DEFAULT_MODEL)
 });
 export const answersSchema = z.object({
 	answers: z
-		.array(z.object({ questionId: z.string().min(1), value: z.string().max(12000) }))
+		.array(
+			z.object({
+				questionId: z.string().min(1),
+				value: z
+					.string()
+					.min(1)
+					.max(12000)
+					.refine((value) => value.trim().length > 0, 'Answer is required.')
+			})
+		)
 		.min(1)
 		.max(50)
 });

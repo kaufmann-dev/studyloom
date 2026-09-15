@@ -18,6 +18,7 @@
 			: (data?.output.content ?? '')
 	);
 	async function refresh(interaction = false) {
+		error = '';
 		try {
 			const result = await api<{ output: StudyOutput; attempts: QuizAttempt[] }>(
 				`/api/outputs/${outputId}`,

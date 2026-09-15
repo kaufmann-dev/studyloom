@@ -3,8 +3,9 @@ import { safeReturnTo, sessionAlive, hashToken } from './auth';
 import { museEnvironment } from './muse';
 import { scopedFile, wavHeader } from './storage';
 import { validateWav } from './transcribe';
-import { validateCitations, gradeChoice } from './jobs';
-import { quizSchema } from '../domain';
+import { validateCitations, gradeChoice, readArtifact } from './jobs';
+import { safeError } from './config';
+import { answersSchema, chatInput, projectInput, quizSchema } from '../domain';
 import { sandboxArgs } from './sandbox';
 import { mkdtemp, writeFile, symlink, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -64,6 +65,41 @@ describe('authentication boundaries', () => {
 	});
 });
 describe('source and tool boundaries', () => {
+	it('preserves user whitespace while rejecting blank project names and messages', () => {
+		expect(projectInput.parse({ name: '  Course  ', description: '  Notes  ' })).toMatchObject({
+			name: '  Course  ',
+			description: '  Notes  '
+		});
+		expect(chatInput.parse({ message: 'hello ', materialIds: [id] }).message).toBe('hello ');
+		expect(() => projectInput.parse({ name: '   ', description: '' })).toThrow();
+		expect(() => chatInput.parse({ message: '\t\n', materialIds: [id] })).toThrow();
+		expect(() => answersSchema.parse({ answers: [{ questionId: 'q1', value: '' }] })).toThrow();
+	});
+	it('reports missing and malformed Muse artifacts without exposing filesystem errors', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'studyloom-artifact-'));
+		try {
+			await mkdir(join(root, 'files'));
+			await expect(readArtifact(root, 'extracted.json')).rejects.toThrow(
+				'Muse completed without writing extracted.json'
+			);
+			await writeFile(join(root, 'files', 'result.json'), '{');
+			await expect(readArtifact(root, 'result.json')).rejects.toThrow(
+				'Muse wrote invalid JSON in result.json'
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	it('redacts filesystem paths from operational errors', () => {
+		const error = Object.assign(
+			new Error("ENOENT: no such file or directory, stat '/data/jobs/id/files/result.json'"),
+			{
+				code: 'ENOENT',
+				path: '/data/jobs/id/files/result.json'
+			}
+		);
+		expect(safeError(error)).toBe('File operation failed (ENOENT).');
+	});
 	it('rejects traversal and symlinks outside a job workspace', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'studyloom-test-'));
 		try {

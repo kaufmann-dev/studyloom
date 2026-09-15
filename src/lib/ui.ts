@@ -31,7 +31,7 @@ export function downloadText(filename: string, text: string): void {
 	anchor.href = url;
 	anchor.download = filename;
 	anchor.click();
-	URL.revokeObjectURL(url);
+	setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 export function dateLabel(value: string | Date): string {
 	return new Date(value).toLocaleDateString(undefined, {

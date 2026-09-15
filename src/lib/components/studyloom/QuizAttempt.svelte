@@ -33,7 +33,12 @@
 			})),
 			zod4(answersSchema)
 		),
-		{ validators: zod4Client(answersSchema), SPA: true, dataType: 'json' }
+		{
+			validators: zod4Client(answersSchema),
+			SPA: true,
+			dataType: 'json',
+			id: untrack(() => `quiz-attempt-${output.id}`)
+		}
 	);
 	const { form } = editor;
 	let busy = $state(false);
