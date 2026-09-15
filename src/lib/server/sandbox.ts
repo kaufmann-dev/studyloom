@@ -1,5 +1,6 @@
-import { access } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runProcess } from './process';
 export async function sandboxArgs(files: string, command: string) {
@@ -51,6 +52,35 @@ export async function sandboxArgs(files: string, command: string) {
 		command
 	);
 	return args;
+}
+let sandboxReady: Promise<void> | undefined;
+export function ensureSandboxAvailable() {
+	return (sandboxReady ??= probeSandbox().catch((e) => {
+		sandboxReady = undefined;
+		throw e;
+	}));
+}
+async function probeSandbox() {
+	const dir = await mkdtemp(join(tmpdir(), 'studyloom-sandbox-'));
+	try {
+		const files = join(dir, 'files');
+		await mkdir(files, { recursive: true });
+		await runProcess(
+			'prlimit',
+			['--cpu=10', '--', 'bwrap', ...(await sandboxArgs(files, 'true'))],
+			{
+				timeoutMs: 15_000,
+				maxBytes: 65536,
+				env: { PATH: process.env.PATH, LANG: 'C.UTF-8' }
+			}
+		);
+	} catch {
+		throw new Error(
+			'Processing needs the isolated Bubblewrap sandbox, but this runtime cannot establish it. Run `pnpm sandbox:check` in the app runtime (the deployment image installs bubblewrap), then retry this job.'
+		);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
 }
 export async function sandboxCommand(jobDir: string, command: string, signal?: AbortSignal) {
 	return runProcess(

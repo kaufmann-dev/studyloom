@@ -17,6 +17,7 @@ import {
 	type Quiz
 } from '../domain';
 import { museRun } from './muse';
+import { ensureSandboxAvailable } from './sandbox';
 import { transcribeFile } from './transcribe';
 type Job = typeof t.jobs.$inferSelect;
 type Snapshot = typeof t.outputs.$inferSelect.sourceSnapshot;
@@ -119,6 +120,7 @@ async function runMuseWithArtifact(
 	signal: AbortSignal,
 	progress: (s: string) => void
 ) {
+	await ensureSandboxAvailable();
 	const contract = `The required artifact is ${artifact}. Use run_command to write valid JSON to /work/${artifact}, verify that it exists, and do not finish until it is saved.`;
 	await museRun(workspace, modelId, `${prompt}\n${contract}`, signal, progress);
 	if (await artifactExists(workspace, artifact)) return;

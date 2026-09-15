@@ -25,6 +25,19 @@ function tokenFrom(req: IncomingMessage) {
 const send = (client: WebSocket, value: unknown) => {
 	if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(value));
 };
+export function providerErrorMessage(event: unknown): string {
+	const detail =
+		event && typeof event === 'object'
+			? (['errorType', 'message'] as const)
+					.map((key) => (event as Record<string, unknown>)[key])
+					.filter((value): value is string => typeof value === 'string' && value.length > 0)
+					.join(' — ')
+					.slice(0, 300)
+			: '';
+	return detail
+		? `Transcription stream interrupted: ${detail}.`
+		: 'Transcription API rejected the stream. Check the API key and usage limits.';
+}
 export async function attachRuntime(server: Server) {
 	// This app runs one process. Apply pending migrations before touching tables:
 	// on a fresh database, or when this process starts before the post-deploy
@@ -258,10 +271,13 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 									send(client, { type: 'ready', nextSequence });
 									return;
 								}
-								if (event.type === 'error')
-									throw new Error(
-										'Transcription API rejected the stream. Check the API key and usage limits.'
+								if (event.type === 'error') {
+									console.error(
+										'Transcription provider error:',
+										JSON.stringify(event).slice(0, 1000)
 									);
+									throw new Error(providerErrorMessage(event));
+								}
 								const offset = Number(event.audioProcessedMs);
 								const ms = Number.isFinite(offset)
 									? Math.round(startSample / 24 + offset)
