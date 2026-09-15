@@ -2,7 +2,7 @@ import type { Server, IncomingMessage } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
-import { db, closeDatabase } from '../lib/server/db';
+import { db, closeDatabase, migrateDatabase } from '../lib/server/db';
 import * as t from '../lib/server/db/schema';
 import { origin, required, safeError } from '../lib/server/config';
 import { readSession, SESSION_COOKIE } from '../lib/server/auth';
@@ -26,7 +26,11 @@ const send = (client: WebSocket, value: unknown) => {
 	if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(value));
 };
 export async function attachRuntime(server: Server) {
-	// This app runs one process. Crash recovery makes unfinished live spans eligible for file transcription.
+	// This app runs one process. Apply pending migrations before touching tables:
+	// on a fresh database, or when this process starts before the post-deploy
+	// migrate finishes, the recovery updates below would throw 42P01 and crash.
+	await migrateDatabase();
+	// Crash recovery makes unfinished live spans eligible for file transcription.
 	await db()
 		.update(t.recordingSegments)
 		.set({ status: 'interrupted' })

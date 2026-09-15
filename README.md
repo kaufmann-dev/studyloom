@@ -68,7 +68,7 @@ Uploads default to 2 GiB per source, using 8 MiB HTTP chunks. Audio is mono sign
 - Domain: `https://studyloom.kaufmann.dev`
 - Persistent storage mount: `/data`, writable by the application process.
 - PostgreSQL: provision a dedicated production database and set `DATABASE_URL`.
-- Post-Deployment Command: `npx --yes pnpm@11.18.0 db:migrate` (executed via `sh -c`). For the first deployment, allow this command to finish before using the workspace.
+- The server applies pending Drizzle migrations on startup before serving traffic, so a fresh database or a fast restart cannot crash on missing tables. The optional Post-Deployment Command `npx --yes pnpm@11.18.0 db:migrate` (executed via `sh -c`) remains as a fallback.
 - Keep one replica. Enable WebSocket forwarding and allow at least 10 MiB request bodies in any additional proxy.
 
 `nixpacks.toml` installs Bubblewrap, FFmpeg, LibreOffice, Poppler, Tesseract (English/German), Python/Pillow and fonts **inside the app image**, plus the Muse CLI. It invokes the pinned pnpm version because Nixpacks 1.41 otherwise selects outdated package-manager tooling. Node is selected from `package.json`.
