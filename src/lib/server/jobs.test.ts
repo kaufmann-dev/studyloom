@@ -10,10 +10,6 @@ vi.mock('./muse', async (importOriginal) => ({
 	museRun: vi.fn()
 }));
 
-vi.mock('./sandbox', () => ({
-	ensureSandboxAvailable: vi.fn().mockResolvedValue(undefined)
-}));
-
 const museRunMock = vi.mocked(museRun);
 
 beforeEach(() => {

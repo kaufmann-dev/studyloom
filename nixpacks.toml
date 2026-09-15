@@ -1,5 +1,5 @@
 [phases.setup]
-aptPkgs = ["bubblewrap", "util-linux", "ffmpeg", "libreoffice-writer", "libreoffice-calc", "libreoffice-impress", "libreoffice-draw", "poppler-utils", "tesseract-ocr", "tesseract-ocr-eng", "tesseract-ocr-deu", "python3", "python3-pil", "fontconfig", "fonts-dejavu-core", "curl", "ca-certificates"]
+aptPkgs = ["ffmpeg", "libreoffice-writer", "libreoffice-calc", "libreoffice-impress", "libreoffice-draw", "poppler-utils", "tesseract-ocr", "tesseract-ocr-eng", "tesseract-ocr-deu", "python3", "python3-pil", "fontconfig", "fonts-dejavu-core", "curl", "ca-certificates"]
 
 # Nixpacks 1.41 otherwise injects Corepack 0.24.1 and pnpm 9.
 [phases.install]

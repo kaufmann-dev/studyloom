@@ -28,7 +28,7 @@ pnpm build
 pnpm start
 ```
 
-Native conversion tools are **deployment image dependencies**, not prerequisites for editing, checking, testing or building this repository in a terminal. Running actual processing jobs locally requires the same runtime tools as deployment. `pnpm sandbox:check` verifies them and the operating-system isolation in the environment where processing runs.
+Native conversion tools are **deployment image dependencies**, not prerequisites for editing, checking, testing or building this repository in a terminal. Running actual processing jobs locally requires the same runtime tools as deployment. `pnpm tools:check` verifies them in the environment where processing runs.
 
 Use `pnpm db:generate` after changing the Drizzle schema, then `pnpm db:migrate`. Migration files are committed under `drizzle/`. Never use schema push for deployment.
 
@@ -55,7 +55,7 @@ The integration uses Muse CLI's experimental MSP account/model methods and `muse
 
 `server.mjs` hosts SvelteKit, the authenticated recording WebSocket and two durable PostgreSQL job queues: one interactive job and one background job at a time. Run **one application replica**. Failed jobs can be retried; cancelled jobs retain saved source audio and files. Completed generated outputs use stable job IDs to avoid duplicates after a restart.
 
-Muse runs as a trusted service for this single-user app and receives a job workspace and MCP tools. The app does not route file extensions through a fixed conversion pipeline. Commands run through Bubblewrap in an offline Linux namespace with runtime directories mounted read-only and only that job's files writable. CPU, memory, output and time limits apply; processing fails if isolation cannot be established. The transcription MCP tool brokers authenticated requests without exposing the API key to conversion commands.
+Muse runs as a trusted service for this single-user app and receives a job workspace and MCP tools. The app does not route file extensions through a fixed conversion pipeline. Commands run directly with the job workspace as the working directory and a restricted environment that never contains app secrets; output and time limits apply. The transcription MCP tool brokers authenticated requests without exposing the API key to conversion commands.
 
 Sources are stored under `DATA_DIR/materials`; temporary job workspaces are removed after processing. Transcripts and extracted chunks live in PostgreSQL, with a full-text index. Generated study tools keep source snapshots so later grading uses the original evidence and rubric. Back up PostgreSQL **and** the persistent data volume together.
 
@@ -71,7 +71,7 @@ Uploads default to 2 GiB per source, using 8 MiB HTTP chunks. Audio is mono sign
 - The server applies pending Drizzle migrations on startup before serving traffic, so a fresh database or a fast restart cannot crash on missing tables. The optional Post-Deployment Command `npx --yes pnpm@11.18.0 db:migrate` (executed via `sh -c`) remains as a fallback.
 - Keep one replica. Enable WebSocket forwarding and allow at least 10 MiB request bodies in any additional proxy.
 
-`nixpacks.toml` installs Bubblewrap, FFmpeg, LibreOffice, Poppler, Tesseract (English/German), Python/Pillow and fonts **inside the app image**, plus the Muse CLI. It invokes the pinned pnpm version because Nixpacks 1.41 otherwise selects outdated package-manager tooling. Node is selected from `package.json`.
+`nixpacks.toml` installs FFmpeg, LibreOffice, Poppler, Tesseract (English/German), Python/Pillow and fonts **inside the app image**, plus the Muse CLI. It invokes the pinned pnpm version because Nixpacks 1.41 otherwise selects outdated package-manager tooling. Node is selected from `package.json`.
 
 Required environment variables:
 
@@ -92,7 +92,7 @@ Optional environment variables:
 - `PORT`: supplied by Coolify; standalone default `3000`.
 - `BODY_SIZE_LIMIT`: Node adapter HTTP body limit; default `10M`.
 
-Application secrets are not needed during the build. Complete the Pocket ID client settings and Muse device login after deploying. The processing image needs working unprivileged user namespaces; `pnpm sandbox:check` can diagnose that runtime. No privileged container or host container socket is used.
+Application secrets are not needed during the build. Complete the Pocket ID client settings and Muse device login after deploying. No privileged container or host container socket is used.
 
 ## Verification
 

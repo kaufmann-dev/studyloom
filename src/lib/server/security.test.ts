@@ -6,7 +6,6 @@ import { validateWav } from './transcribe';
 import { validateCitations, gradeChoice, readArtifact } from './jobs';
 import { safeError } from './config';
 import { answersSchema, chatInput, ingestionSchema, projectInput, quizSchema } from '../domain';
-import { sandboxArgs } from './sandbox';
 import { mkdtemp, writeFile, symlink, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -134,19 +133,6 @@ describe('source and tool boundaries', () => {
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
-	});
-	it('isolates namespaces and mounts only the job workspace writable', async () => {
-		const args = await sandboxArgs('/private/job/files', 'echo test');
-		expect(args).toContain('--unshare-all');
-		expect(args).toContain('--clearenv');
-		expect(args).not.toContain('--share-net');
-		expect(args.filter((v) => v === '--bind')).toHaveLength(1);
-		expect(args.slice(args.indexOf('--bind') + 1, args.indexOf('--bind') + 3)).toEqual([
-			'/private/job/files',
-			'/work'
-		]);
-		expect(args).not.toContain('/data');
-		expect(args).not.toContain('/code');
 	});
 	it('accepts valid PCM WAV and rejects invalid format, rate and length', () => {
 		const valid = Buffer.concat([wavHeader(48000), Buffer.alloc(48000)]);

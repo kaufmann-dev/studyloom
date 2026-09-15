@@ -216,8 +216,8 @@ For Coolify and Nixpacks:
 - `src/lib/server/api.ts` dispatches authenticated HTTP endpoints. Never return job payloads, source snapshots, credentials or private filesystem paths in API responses.
 - `src/server/runtime.ts` attaches authenticated WebSockets and starts durable workers. `server.mjs` is the production entrypoint; Vite alone does not run recording sockets or workers.
 - `src/lib/server/jobs.ts` handles ingestion, chat, overviews, quizzes, grading and recovery. Keep source snapshots and validated citations. Preserve idempotency when retrying jobs.
-- Muse selects conversion commands through `src/server/mcp.ts`; do not introduce a file-extension conversion dispatcher. Shell commands must remain inside the offline Bubblewrap sandbox.
-- Muse text tasks use the persistent subscription profile under `DATA_DIR/muse-config`. Never pass `META_API_KEY` to Muse. `TRANSCRIPTION_API_KEY` belongs only to the transcription broker, never to sandbox commands or browser code.
+- Muse selects conversion commands through `src/server/mcp.ts`; do not introduce a file-extension conversion dispatcher. Commands run directly via `src/lib/server/commands.ts` with the workspace as cwd and a secrets-free environment.
+- Muse text tasks use the persistent subscription profile under `DATA_DIR/muse-config`. Never pass `META_API_KEY` to Muse. `TRANSCRIPTION_API_KEY` belongs only to the transcription broker, never to conversion commands or browser code.
 - Browser audio is 24 kHz signed 16-bit mono PCM. Persist and acknowledge chunks before discarding them; retain exact sample offsets. Never replay recovery backlog into a live stream faster than real time.
 - Native processing packages belong in `nixpacks.toml`, inside the deployed app image. Their absence from a development terminal does not block implementation, type checks, unit tests or builds.
 - Generate migrations with `pnpm db:generate` and apply with `pnpm db:migrate`. Run a single application replica with persistent PostgreSQL and `/data` storage.

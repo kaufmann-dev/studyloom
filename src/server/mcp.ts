@@ -3,7 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
-import { sandboxCommand } from '../lib/server/sandbox';
+import { runCommand } from '../lib/server/commands';
 import { scopedFile } from '../lib/server/storage';
 import { transcribeFile } from '../lib/server/transcribe';
 // Muse starts stdio MCP children in the explicit workspace and does not inherit custom environment variables.
@@ -20,16 +20,16 @@ server.registerTool(
 	'run_command',
 	{
 		description:
-			'Run a shell command or Python script in an isolated, offline Linux workspace at /work. Installed tools include Python3, FFmpeg/ffprobe, LibreOffice, pdftotext/pdftoppm/pdfinfo and Tesseract. Choose the tools needed for the actual source; do not assume any file format is readable. Only /work is persistent writable storage. Write extracted.json as your final ingestion artifact. No network, credentials or other projects are accessible.',
+			'Run a shell command or Python script with the job workspace as the working directory. Installed tools include Python3, FFmpeg/ffprobe, LibreOffice, pdftotext/pdftoppm/pdfinfo and Tesseract. Choose the tools needed for the actual source; do not assume any file format is readable. Use relative paths. App secrets are never passed to commands. Write extracted.json as your final ingestion artifact.',
 		inputSchema: { command: z.string().min(1).max(100000) }
 	},
-	async ({ command }) => result(await sandboxCommand(jobDir, command))
+	async ({ command }) => result(await runCommand(jobDir, command))
 );
 server.registerTool(
 	'read_file',
 	{
 		description:
-			'Read up to 200,000 characters from a UTF-8 workspace file. Paths are relative to /work.',
+			'Read up to 200,000 characters from a UTF-8 workspace file. Paths are relative to the workspace root.',
 		inputSchema: { path: z.string(), offset: z.number().int().nonnegative().default(0) }
 	},
 	async ({ path, offset }) => {
@@ -43,7 +43,7 @@ server.registerTool(
 	'view_image',
 	{
 		description:
-			'Inspect a PNG/JPEG/WebP image from /work. Use this to read diagrams, images, scanned pages and slide renders. Resize very large images using tools first.',
+			'Inspect a PNG/JPEG/WebP image from the workspace. Use this to read diagrams, images, scanned pages and slide renders. Resize very large images using tools first.',
 		inputSchema: { path: z.string(), mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']) }
 	},
 	async ({ path, mimeType }) => {

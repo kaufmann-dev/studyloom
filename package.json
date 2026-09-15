@@ -21,7 +21,7 @@
 		"db:studio": "drizzle-kit studio",
 		"start": "node server.mjs",
 		"test:components": "vitest run --project client",
-		"sandbox:check": "node scripts/check-sandbox.mjs"
+		"tools:check": "node scripts/check-tools.mjs"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
