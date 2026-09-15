@@ -20,13 +20,6 @@ import { museRun } from './muse';
 import { transcribeFile } from './transcribe';
 type Job = typeof t.jobs.$inferSelect;
 type Snapshot = typeof t.outputs.$inferSelect.sourceSnapshot;
-export async function enqueue(
-	values: Pick<typeof t.jobs.$inferInsert, 'projectId' | 'kind' | 'queue'> &
-		Partial<typeof t.jobs.$inferInsert>
-) {
-	const [job] = await db().insert(t.jobs).values(values).returning();
-	return job;
-}
 export async function sourceSnapshot(projectId: string, ids: string[]): Promise<Snapshot> {
 	const unique = [...new Set(ids)];
 	const selected = await db()
@@ -516,7 +509,7 @@ async function recover(job: Job, workspace: string, signal: AbortSignal) {
 export function startWorkers() {
 	const owner = randomUUID();
 	const stop = new AbortController();
-	let busy = false;
+	let errorLogged = false;
 	async function loop(queue: 'interactive' | 'background') {
 		while (!stop.signal.aborted) {
 			let job: Job | undefined;
@@ -555,6 +548,7 @@ export function startWorkers() {
 						.returning();
 					return claimed;
 				});
+				errorLogged = false;
 				if (!job) {
 					await new Promise((r) => setTimeout(r, 1000));
 					continue;
@@ -673,9 +667,9 @@ export function startWorkers() {
 				}
 			} catch (e) {
 				if (stop.signal.aborted) break;
-				if (!busy) {
+				if (!errorLogged) {
 					console.error('Worker:', safeError(e));
-					busy = true;
+					errorLogged = true;
 				}
 				await new Promise((r) => setTimeout(r, 5000));
 			}

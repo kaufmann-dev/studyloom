@@ -98,6 +98,12 @@
 			if (input) input.value = '';
 		}
 	}
+	function discardUpload() {
+		if (busy) return;
+		pending = null;
+		progress = '';
+		error = '';
+	}
 </script>
 
 <div class="space-y-3">
@@ -122,7 +128,7 @@
 		>
 		{#if pending}<Button variant="ghost" disabled={busy} onclick={resumeUpload}
 				><RefreshCw /><span class="sr-only">Resume upload</span></Button
-			>{/if}
+			><Button variant="ghost" disabled={busy} onclick={discardUpload}>Discard</Button>{/if}
 	</div>
 	<p class="text-xs leading-relaxed text-muted-foreground">
 		Audio, video, documents, slides, and images.

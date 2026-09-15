@@ -50,6 +50,11 @@
 	let activeJob = $state('');
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let mounted = false;
+	let selectedModel = $derived(
+		models.find((model) => model.modelId === $form.modelId)?.modelId ??
+			models[0]?.modelId ??
+			DEFAULT_MODEL
+	);
 	let matching = $derived(outputs.filter((output) => output.kind === kind));
 	async function poll(jobId: string) {
 		try {
@@ -86,6 +91,7 @@
 		try {
 			const result = await api<{ jobId: string }>(`/api/projects/${projectId}/generate`, {
 				...$form,
+				modelId: selectedModel,
 				kind,
 				materialIds
 			});
@@ -134,15 +140,12 @@
 				><Form.Control
 					>{#snippet children({ props })}<Form.Label>Model</Form.Label><select
 							{...props}
-							bind:value={$form.modelId}
 							class="h-9 w-full border bg-background px-2 text-sm"
 							disabled={busy}
-							><option value={DEFAULT_MODEL}
-								>{models.find((model) => model.modelId === DEFAULT_MODEL)?.displayLabel ??
-									DEFAULT_MODEL}</option
-							>{#each models.filter((model) => model.modelId !== DEFAULT_MODEL) as model (model.modelId)}<option
-									value={model.modelId}>{model.displayLabel}</option
-								>{/each}</select
+							bind:value={() => selectedModel, (value) => ($form.modelId = value)}
+							>{#if models.length}{#each models as model (model.modelId)}<option
+										value={model.modelId}>{model.displayLabel}</option
+									>{/each}{:else}<option value={DEFAULT_MODEL}>{DEFAULT_MODEL}</option>{/if}</select
 						>{/snippet}</Form.Control
 				><Form.FieldErrors /></Form.Field
 			>

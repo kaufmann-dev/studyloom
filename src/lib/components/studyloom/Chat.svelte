@@ -48,6 +48,11 @@
 	let error = $state('');
 	let notice = $state('');
 	let activeJob = $state('');
+	let selectedModel = $derived(
+		models.find((model) => model.modelId === $form.modelId)?.modelId ??
+			models[0]?.modelId ??
+			DEFAULT_MODEL
+	);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let mounted = false;
 	let syncTimer: ReturnType<typeof setInterval> | undefined;
@@ -134,7 +139,12 @@
 		try {
 			const result = await api<{ jobId: string; conversationId: string }>(
 				`/api/projects/${projectId}/chat`,
-				{ ...$form, materialIds, ...(conversationId ? { conversationId } : {}) }
+				{
+					...$form,
+					modelId: selectedModel,
+					materialIds,
+					...(conversationId ? { conversationId } : {})
+				}
 			);
 			conversationId = result.conversationId;
 			activeJob = result.jobId;
@@ -249,15 +259,12 @@
 				><Form.Control
 					>{#snippet children({ props })}<Form.Label>Model</Form.Label><select
 							{...props}
-							bind:value={$form.modelId}
 							class="h-9 w-full border bg-background px-2 text-sm"
 							disabled={sending}
-							><option value={DEFAULT_MODEL}
-								>{models.find((model) => model.modelId === DEFAULT_MODEL)?.displayLabel ??
-									DEFAULT_MODEL}</option
-							>{#each models.filter((model) => model.modelId !== DEFAULT_MODEL) as model (model.modelId)}<option
-									value={model.modelId}>{model.displayLabel}</option
-								>{/each}</select
+							bind:value={() => selectedModel, (value) => ($form.modelId = value)}
+							>{#if models.length}{#each models as model (model.modelId)}<option
+										value={model.modelId}>{model.displayLabel}</option
+									>{/each}{:else}<option value={DEFAULT_MODEL}>{DEFAULT_MODEL}</option>{/if}</select
 						>{/snippet}</Form.Control
 				><Form.FieldErrors /></Form.Field
 			><Button type="submit" disabled={sending || !materialIds.length || !models.length}

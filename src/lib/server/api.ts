@@ -1,5 +1,5 @@
 import { error, json, type RequestEvent } from '@sveltejs/kit';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
@@ -18,7 +18,7 @@ import {
 } from '../domain';
 import { maxUploadBytes, safeError } from './config';
 import { assemble, originalPath, putChunk, removeMaterialFiles } from './storage';
-import { enqueue, gradeChoice, sourceSnapshot } from './jobs';
+import { gradeChoice, sourceSnapshot } from './jobs';
 import { museHost, museStatus, validateModel } from './muse';
 const publicJob = (j: typeof t.jobs.$inferSelect) => ({
 	id: j.id,
@@ -62,25 +62,6 @@ async function material(id: string) {
 	if (!row) error(404, 'Source not found.');
 	return row;
 }
-async function requireIdle(projectId: string) {
-	const [active] = await db()
-		.select({ id: t.jobs.id })
-		.from(t.jobs)
-		.where(and(eq(t.jobs.projectId, projectId), inArray(t.jobs.status, ['running', 'queued'])))
-		.limit(1);
-	if (active) error(409, 'Cancel active jobs before deleting.');
-	const [recording] = await db()
-		.select({ id: t.materials.id })
-		.from(t.materials)
-		.where(
-			and(
-				eq(t.materials.projectId, projectId),
-				inArray(t.materials.status, ['recording', 'paused'])
-			)
-		)
-		.limit(1);
-	if (recording) error(409, 'Save or stop recording before deleting.');
-}
 type UploadStatus = 'uploading' | 'failed' | 'partial';
 function isUniqueViolation(value: unknown) {
 	return value && typeof value === 'object' && 'code' in value && value.code === '23505';
@@ -94,25 +75,41 @@ async function enqueueFileIngest(
 	if (assembleUpload && source.receivedBytes !== source.size) error(409, 'Upload is incomplete.');
 	await validateModel(modelId);
 	if (assembleUpload) await assemble(source.id);
-	return db().transaction(async (tx) => {
-		const [changed] = await tx
-			.update(t.materials)
-			.set({ status: 'processing', updatedAt: new Date() })
-			.where(and(eq(t.materials.id, source.id), inArray(t.materials.status, allowedStatuses)))
-			.returning();
-		if (!changed) return undefined;
-		const [job] = await tx
-			.insert(t.jobs)
-			.values({
-				projectId: source.projectId,
-				materialId: source.id,
-				kind: 'ingest',
-				queue: 'background',
-				payload: { modelId }
-			})
-			.returning();
-		return job;
-	});
+	try {
+		return await db().transaction(async (tx) => {
+			await tx
+				.select({ id: t.projects.id })
+				.from(t.projects)
+				.where(eq(t.projects.id, source.projectId))
+				.for('update');
+			const [changed] = await tx
+				.update(t.materials)
+				.set({ status: 'processing', updatedAt: new Date() })
+				.where(and(eq(t.materials.id, source.id), inArray(t.materials.status, allowedStatuses)))
+				.returning();
+			if (!changed) return undefined;
+			const [job] = await tx
+				.insert(t.jobs)
+				.values({
+					projectId: source.projectId,
+					materialId: source.id,
+					kind: 'ingest',
+					queue: 'background',
+					payload: { modelId }
+				})
+				.returning();
+			return job;
+		});
+	} catch (e) {
+		if (!isUniqueViolation(e)) throw e;
+		const [active] = await db()
+			.select()
+			.from(t.jobs)
+			.where(and(eq(t.jobs.materialId, source.id), inArray(t.jobs.status, ['queued', 'running'])))
+			.limit(1);
+		if (active) return active;
+		throw e;
+	}
 }
 async function enqueueMaterialJob(
 	source: typeof t.materials.$inferSelect,
@@ -122,6 +119,11 @@ async function enqueueMaterialJob(
 ) {
 	try {
 		return await db().transaction(async (tx) => {
+			await tx
+				.select({ id: t.projects.id })
+				.from(t.projects)
+				.where(eq(t.projects.id, source.projectId))
+				.for('update');
 			const [changed] = await tx
 				.update(t.materials)
 				.set({ status: 'processing', updatedAt: new Date() })
@@ -285,6 +287,8 @@ export async function api(event: RequestEvent) {
 					db()
 						.select({ materialId: t.sourceChunks.materialId })
 						.from(t.sourceChunks)
+						.innerJoin(t.materials, eq(t.materials.id, t.sourceChunks.materialId))
+						.where(eq(t.materials.projectId, id))
 						.groupBy(t.sourceChunks.materialId)
 				]);
 				return json({
@@ -311,12 +315,37 @@ export async function api(event: RequestEvent) {
 				return json({ project });
 			}
 			if (!action && method === 'DELETE') {
-				await requireIdle(id);
-				const sources = await db()
-					.select({ id: t.materials.id })
-					.from(t.materials)
-					.where(eq(t.materials.projectId, id));
-				await db().delete(t.projects).where(eq(t.projects.id, id));
+				const sources = await db().transaction(async (tx) => {
+					const [locked] = await tx
+						.select({ id: t.projects.id })
+						.from(t.projects)
+						.where(eq(t.projects.id, id))
+						.for('update');
+					if (!locked) error(404, 'Project not found.');
+					const [active] = await tx
+						.select({ id: t.jobs.id })
+						.from(t.jobs)
+						.where(and(eq(t.jobs.projectId, id), inArray(t.jobs.status, ['running', 'queued'])))
+						.limit(1);
+					if (active) error(409, 'Cancel active jobs before deleting.');
+					const [recording] = await tx
+						.select({ id: t.materials.id })
+						.from(t.materials)
+						.where(
+							and(
+								eq(t.materials.projectId, id),
+								inArray(t.materials.status, ['recording', 'paused'])
+							)
+						)
+						.limit(1);
+					if (recording) error(409, 'Save or stop recording before deleting.');
+					const sources = await tx
+						.select({ id: t.materials.id })
+						.from(t.materials)
+						.where(eq(t.materials.projectId, id));
+					await tx.delete(t.projects).where(eq(t.projects.id, id));
+					return sources;
+				});
 				await Promise.all(sources.map((s) => removeMaterialFiles(s.id)));
 				return json({ ok: true });
 			}
@@ -371,11 +400,23 @@ export async function api(event: RequestEvent) {
 				const input = generationInput.parse(await body(event));
 				await validateModel(input.modelId);
 				const snapshot = await sourceSnapshot(id, input.materialIds);
-				const job = await enqueue({
-					projectId: id,
-					kind: input.kind,
-					queue: 'background',
-					payload: { ...input, snapshot }
+				const job = await db().transaction(async (tx) => {
+					const [locked] = await tx
+						.select({ id: t.projects.id })
+						.from(t.projects)
+						.where(eq(t.projects.id, id))
+						.for('update');
+					if (!locked) error(404, 'Project not found.');
+					const [job] = await tx
+						.insert(t.jobs)
+						.values({
+							projectId: id,
+							kind: input.kind,
+							queue: 'background',
+							payload: { ...input, snapshot }
+						})
+						.returning();
+					return job;
 				});
 				return json({ jobId: job.id }, { status: 202 });
 			}
@@ -385,6 +426,11 @@ export async function api(event: RequestEvent) {
 				const snapshot = await sourceSnapshot(id, input.materialIds);
 				let conversationId = input.conversationId;
 				const job = await db().transaction(async (tx) => {
+					await tx
+						.select({ id: t.projects.id })
+						.from(t.projects)
+						.where(eq(t.projects.id, id))
+						.for('update');
 					if (conversationId) {
 						const [conversation] = await tx
 							.select()
@@ -465,8 +511,34 @@ export async function api(event: RequestEvent) {
 				return json({ material: source, chunks, turns, assets });
 			}
 			if (!action && method === 'DELETE') {
-				await requireIdle(source.projectId);
-				await db().delete(t.materials).where(eq(t.materials.id, id));
+				await db().transaction(async (tx) => {
+					const [lockedProject] = await tx
+						.select({ id: t.projects.id })
+						.from(t.projects)
+						.where(eq(t.projects.id, source.projectId))
+						.for('update');
+					if (!lockedProject) error(404, 'Project not found.');
+					const [active] = await tx
+						.select({ id: t.jobs.id })
+						.from(t.jobs)
+						.where(
+							and(
+								eq(t.jobs.projectId, source.projectId),
+								inArray(t.jobs.status, ['running', 'queued'])
+							)
+						)
+						.limit(1);
+					if (active) error(409, 'Cancel active jobs before deleting.');
+					const [lockedSource] = await tx
+						.select({ id: t.materials.id, status: t.materials.status })
+						.from(t.materials)
+						.where(eq(t.materials.id, id))
+						.for('update');
+					if (!lockedSource) error(404, 'Source not found.');
+					if (['recording', 'paused'].includes(lockedSource.status))
+						error(409, 'Save or stop recording before deleting.');
+					await tx.delete(t.materials).where(eq(t.materials.id, id));
+				});
 				await removeMaterialFiles(id);
 				return json({ ok: true });
 			}
@@ -529,6 +601,11 @@ export async function api(event: RequestEvent) {
 			if (action === 'recover' && method === 'POST') {
 				const { finalize } = z.object({ finalize: z.boolean() }).parse(await body(event));
 				const job = await db().transaction(async (tx) => {
+					await tx
+						.select({ id: t.projects.id })
+						.from(t.projects)
+						.where(eq(t.projects.id, source.projectId))
+						.for('update');
 					const [current] = await tx
 						.select()
 						.from(t.materials)
@@ -626,6 +703,11 @@ export async function api(event: RequestEvent) {
 				const written = quiz.questions.some((q) => q.type === 'written');
 				if (written) await validateModel(output.modelId);
 				const { attempt, job } = await db().transaction(async (tx) => {
+					await tx
+						.select({ id: t.projects.id })
+						.from(t.projects)
+						.where(eq(t.projects.id, output.projectId))
+						.for('update');
 					const [attempt] = await tx
 						.insert(t.attempts)
 						.values({
@@ -719,7 +801,7 @@ export async function api(event: RequestEvent) {
 						await tx
 							.update(t.attempts)
 							.set({ status: 'grading' })
-							.where(eq(t.attempts.id, job.attemptId));
+							.where(and(eq(t.attempts.id, job.attemptId), ne(t.attempts.status, 'complete')));
 				});
 				return json({ jobId: id }, { status: 202 });
 			}

@@ -12,6 +12,7 @@
 		ArrowLeft,
 		Trash2,
 		RefreshCw,
+		Save,
 		MessageSquare,
 		NotebookText,
 		ListChecks
@@ -65,6 +66,11 @@
 	let previousReady = new Set<string>();
 	let materialId = $derived(page.url.searchParams.get('material') ?? '');
 	let locator = $derived(page.url.searchParams.get('locator') ?? '');
+	let processingModel = $derived(
+		models.find((model) => model.modelId === $ingestionData.modelId)?.modelId ??
+			models[0]?.modelId ??
+			DEFAULT_MODEL
+	);
 	let ready = $derived.by(() => {
 		if (!data) return [];
 		const readableMaterialIds = data.readableMaterialIds;
@@ -153,7 +159,18 @@
 	async function retryMaterial(id: string) {
 		busyMaterial = id;
 		try {
-			await api(`/api/materials/${id}/retry`, { modelId: $ingestionData.modelId });
+			await api(`/api/materials/${id}/retry`, { modelId: processingModel });
+			await refresh();
+		} catch (e) {
+			error = errorText(e);
+		} finally {
+			busyMaterial = '';
+		}
+	}
+	async function saveRecording(id: string) {
+		busyMaterial = id;
+		try {
+			await api(`/api/recordings/${id}/recover`, { finalize: true });
 			await refresh();
 		} catch (e) {
 			error = errorText(e);
@@ -236,19 +253,17 @@
 						><Form.Control
 							>{#snippet children({ props })}<Form.Label>Processing model</Form.Label><select
 									{...props}
-									bind:value={$ingestionData.modelId}
 									class="h-9 w-full border bg-background px-2 text-xs"
-									><option value={DEFAULT_MODEL}
-										>{models.find((model) => model.modelId === DEFAULT_MODEL)?.displayLabel ??
-											DEFAULT_MODEL}</option
-									>{#each models.filter((model) => model.modelId !== DEFAULT_MODEL) as model (model.modelId)}<option
-											value={model.modelId}>{model.displayLabel}</option
-										>{/each}</select
+									bind:value={() => processingModel, (value) => ($ingestionData.modelId = value)}
+									>{#if models.length}{#each models as model (model.modelId)}<option
+												value={model.modelId}>{model.displayLabel}</option
+											>{/each}{:else}<option value={DEFAULT_MODEL}>{DEFAULT_MODEL}</option
+										>{/if}</select
 								>{/snippet}</Form.Control
 						><Form.FieldErrors /></Form.Field
 					>
 				</div>
-				<Upload {projectId} modelId={$ingestionData.modelId} onSaved={refresh} />
+				<Upload {projectId} modelId={processingModel} onSaved={refresh} />
 				<div class="mt-5 border-t pt-5">
 					{#key projectId}<Recorder
 							{projectId}
@@ -329,6 +344,13 @@
 										><RefreshCw />{material.status === 'uploading'
 											? 'Continue processing'
 											: 'Retry processing'}</Button
+									>{/if}
+								{#if material.kind === 'recording' && material.status === 'paused'}<Button
+										variant="ghost"
+										size="sm"
+										class="mt-2"
+										disabled={busyMaterial === material.id}
+										onclick={() => saveRecording(material.id)}><Save />Save recording</Button
 									>{/if}
 								{#if deleteId === material.id}<div class="mt-3 bg-muted p-3 text-xs">
 										<p>Delete this source permanently?</p>
