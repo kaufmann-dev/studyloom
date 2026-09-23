@@ -39,6 +39,7 @@
 				);
 			}
 			next = { ...next, nextSequence: sequence + 1 };
+			pending = next;
 			progress = `${next.file.name} · ${Math.min(100, Math.round(((offset + next.chunkSize) / next.file.size) * 100))}%`;
 		}
 		return next;
@@ -98,11 +99,21 @@
 			if (input) input.value = '';
 		}
 	}
-	function discardUpload() {
-		if (busy) return;
-		pending = null;
-		progress = '';
+	async function discardUpload() {
+		if (!pending || busy) return;
+		const materialId = pending.materialId;
+		busy = true;
 		error = '';
+		try {
+			await api(`/api/materials/${materialId}`, undefined, 'DELETE');
+			pending = null;
+			progress = '';
+			await onSaved();
+		} catch (e) {
+			error = errorText(e);
+		} finally {
+			busy = false;
+		}
 	}
 </script>
 
@@ -117,7 +128,6 @@
 		tabindex="-1"
 		aria-label="Select study materials"
 		onchange={(event) => upload(event.currentTarget.files)}
-		accept=".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg,.webp,.mp3,.wav,.m4a,.webm,.ogg,.mp4,.mov"
 	/>
 	<div class="flex gap-2">
 		<Button

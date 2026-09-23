@@ -98,7 +98,7 @@
 			</div>
 		</form>{/if}
 	{#if loading}<p role="status" class="py-12 text-muted-foreground">Loading projects…</p>
-	{:else if projects.length === 0}<div
+	{:else if !error && projects.length === 0}<div
 			class="flex flex-col items-center border border-dashed px-6 py-16 text-center"
 		>
 			<FolderOpen class="mb-4 size-8 text-muted-foreground" />
@@ -108,7 +108,7 @@
 			</p>
 			<Button class="mt-6" onclick={() => (showCreate = true)}><Plus />Create a project</Button>
 		</div>
-	{:else}<div class="grid gap-4 sm:grid-cols-2">
+	{:else if projects.length > 0}<div class="grid gap-4 sm:grid-cols-2">
 			{#each projects as project (project.id)}<a
 					href={resolve('/projects/[id]', { id: project.id })}
 					class="group min-w-0 border p-6 hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-primary"

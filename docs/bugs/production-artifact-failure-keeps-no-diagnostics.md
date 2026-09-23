@@ -31,7 +31,7 @@ diagnosis itself.
   call sites are in `runMuseWithArtifact`.
 - Added exported `missingArtifactError()` in `src/lib/server/jobs.ts`
   that appends the bounded model output and stderr tail (`Last
-  output: …`) to the missing-artifact error.
+output: …`) to the missing-artifact error.
 - The artifact retry prompt now includes the previous final response
   so the second attempt can self-correct.
 - Added `src/lib/server/jobs.test.ts` covering the diagnostic error

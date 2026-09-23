@@ -2,7 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { ModeWatcher, toggleMode } from 'mode-watcher';
 	import { page } from '$app/state';
-	import { AudioLines, FolderOpen, Settings, SunMoon, LogOut } from '@lucide/svelte';
+	import { FolderOpen, Settings, SunMoon, LogOut } from '@lucide/svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import favicon from '$lib/assets/favicon.svg';
 	import './layout.css';
@@ -23,7 +23,11 @@
 			class="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-8"
 		>
 			<a href={resolve('/')} class="flex items-center gap-2 text-lg font-semibold tracking-tight"
-				><AudioLines class="size-6 text-primary" />Studyloom</a
+				><span
+					aria-hidden="true"
+					class="size-6 shrink-0 bg-primary"
+					style:mask={`url("${favicon}") center / contain no-repeat`}
+				></span>Studyloom</a
 			>
 			<nav aria-label="Main navigation" class="flex items-center gap-2">
 				<Button href={resolve('/')} variant="ghost"><FolderOpen />Projects</Button>

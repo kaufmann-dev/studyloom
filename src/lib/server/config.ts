@@ -1,4 +1,12 @@
 import { resolve } from 'node:path';
+export class ClientError extends Error {
+	constructor(
+		readonly status: 400 | 404 | 409 | 413 | 503,
+		message: string
+	) {
+		super(message);
+	}
+}
 export function required(name: string): string {
 	const value = process.env[name];
 	if (!value) throw new Error(`Missing required environment variable: ${name}`);

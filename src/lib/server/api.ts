@@ -16,7 +16,7 @@ import {
 	DEFAULT_MODEL,
 	quizSchema
 } from '../domain';
-import { maxUploadBytes, safeError } from './config';
+import { ClientError, maxUploadBytes, safeError } from './config';
 import { assemble, originalPath, putChunk, removeMaterialFiles } from './storage';
 import { gradeChoice, sourceSnapshot } from './jobs';
 import { museHost, museStatus, validateModel } from './muse';
@@ -156,7 +156,20 @@ async function enqueueMaterialJob(
 async function body(event: RequestEvent) {
 	const length = Number(event.request.headers.get('content-length') || 0);
 	if (length > 1024 * 1024) error(413, 'Request too large.');
-	return JSON.parse(await boundedBody(event.request, 1024 * 1024).then((b) => b.toString()));
+	try {
+		return JSON.parse(await boundedBody(event.request, 1024 * 1024).then((b) => b.toString()));
+	} catch (cause) {
+		if (cause instanceof SyntaxError) throw new ClientError(400, 'Invalid JSON request.');
+		throw cause;
+	}
+}
+async function museAction<T>(operation: Promise<T>): Promise<T> {
+	try {
+		return await operation;
+	} catch (cause) {
+		console.error('Muse request failed:', safeError(cause));
+		throw new ClientError(503, 'Muse is unavailable. Check Settings and retry.');
+	}
 }
 export async function boundedBody(request: Request, limit: number) {
 	if (!request.body) return Buffer.alloc(0);
@@ -236,12 +249,13 @@ export async function api(event: RequestEvent) {
 	if (!event.locals.session) error(401, 'Please sign in.');
 	try {
 		if (resource === 'muse') {
-			if (method === 'GET') return json(await museStatus());
+			if (method === 'GET') return json(await museAction(museStatus()));
 			if (method === 'POST' && id === 'login')
-				return json(await museHost.call('account/loginStart', { type: 'deviceCode' }));
+				return json(await museAction(museHost.call('account/loginStart', { type: 'deviceCode' })));
 			if (method === 'POST' && id === 'cancel-login')
-				return json(await museHost.call('account/loginCancel'));
-			if (method === 'POST' && id === 'logout') return json(await museHost.call('account/logout'));
+				return json(await museAction(museHost.call('account/loginCancel')));
+			if (method === 'POST' && id === 'logout')
+				return json(await museAction(museHost.call('account/logout')));
 		}
 		if (resource === 'projects') {
 			if (!id && method === 'GET')
@@ -346,7 +360,11 @@ export async function api(event: RequestEvent) {
 					await tx.delete(t.projects).where(eq(t.projects.id, id));
 					return sources;
 				});
-				await Promise.all(sources.map((s) => removeMaterialFiles(s.id)));
+				for (const result of await Promise.allSettled(
+					sources.map((source) => removeMaterialFiles(source.id))
+				))
+					if (result.status === 'rejected')
+						console.error('Project file cleanup failed:', safeError(result.reason));
 				return json({ ok: true });
 			}
 			if (action === 'uploads' && method === 'POST') {
@@ -539,7 +557,9 @@ export async function api(event: RequestEvent) {
 						error(409, 'Save or stop recording before deleting.');
 					await tx.delete(t.materials).where(eq(t.materials.id, id));
 				});
-				await removeMaterialFiles(id);
+				await removeMaterialFiles(id).catch((cause) =>
+					console.error('Source file cleanup failed:', safeError(cause))
+				);
 				return json({ ok: true });
 			}
 			if (action === 'file' && method === 'GET')
@@ -809,7 +829,7 @@ export async function api(event: RequestEvent) {
 		error(404, 'Endpoint not found.');
 	} catch (e) {
 		if (e instanceof z.ZodError) error(400, e.issues.map((i) => i.message).join('; '));
-		if (e && typeof e === 'object' && 'status' in e) throw e;
-		error(400, safeError(e));
+		if (e instanceof ClientError) error(e.status, e.message);
+		throw e;
 	}
 }

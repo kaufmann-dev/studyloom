@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { dataDir } from './config';
+import { ClientError, dataDir } from './config';
 import { runProcess } from './process';
 import type { MuseAccount, MuseModel } from '../domain';
 const FALLBACK_PATH = '/usr/local/bin:/usr/bin:/bin';
@@ -222,12 +222,18 @@ export async function museStatus(): Promise<MuseStatus> {
 	return museStatusFromCatalog(account, models);
 }
 export async function validateModel(modelId: string) {
-	const { account, models } = await museStatus();
+	let account: MuseAccount;
+	let models: MuseModel[];
+	try {
+		({ account, models } = await museStatus());
+	} catch {
+		throw new ClientError(503, 'Muse is unavailable. Check Settings and retry.');
+	}
 	if (account.state !== 'accountLogin')
-		throw new Error('Sign into Muse with your subscription in Settings.');
-	if (models.length === 0) throw new Error(STALE_MUSE_LOGIN);
+		throw new ClientError(409, 'Sign into Muse with your subscription in Settings.');
+	if (models.length === 0) throw new ClientError(409, STALE_MUSE_LOGIN);
 	if (!models.some((m) => m.modelId === modelId))
-		throw new Error('This model is no longer available. Refresh the model list.');
+		throw new ClientError(409, 'This model is no longer available. Refresh the model list.');
 }
 export interface MuseResult {
 	text: string;

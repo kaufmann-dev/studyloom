@@ -115,9 +115,7 @@
 			clearTimeout(timer);
 			if (
 				result.jobs.some((job) => job.status === 'queued' || job.status === 'running') ||
-				result.materials.some((material) =>
-					['uploading', 'processing', 'recording', 'paused'].includes(material.status)
-				)
+				result.materials.some((material) => ['processing', 'recording'].includes(material.status))
 			)
 				timer = setTimeout(refresh, 3000);
 		} catch (e) {

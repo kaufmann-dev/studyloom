@@ -5,7 +5,7 @@ import { and, asc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from './db';
 import * as t from './db/schema';
-import { dataDir, safeError } from './config';
+import { ClientError, dataDir, safeError } from './config';
 import { originalPath, materialDir, scopedFile, assemble, chunkPath, wavHeader } from './storage';
 import {
 	DEFAULT_MODEL,
@@ -20,6 +20,51 @@ import { museRun, type MuseResult } from './muse';
 import { transcribeFile } from './transcribe';
 type Job = typeof t.jobs.$inferSelect;
 type Snapshot = typeof t.outputs.$inferSelect.sourceSnapshot;
+type Transaction = Parameters<Parameters<ReturnType<typeof db>['transaction']>[0]>[0];
+
+async function assertJobOwned(tx: Transaction, job: Job) {
+	const [current] = await tx
+		.select({ id: t.jobs.id })
+		.from(t.jobs)
+		.where(
+			and(
+				eq(t.jobs.id, job.id),
+				eq(t.jobs.status, 'running'),
+				eq(t.jobs.leaseOwner, job.leaseOwner ?? '')
+			)
+		)
+		.for('update');
+	if (!current) throw new Error('Job was cancelled or superseded.');
+}
+
+export async function completeJob<T>(
+	job: Job,
+	write: (tx: Transaction) => Promise<T>,
+	outputId?: string
+) {
+	return db().transaction(async (tx) => {
+		const [completed] = await tx
+			.update(t.jobs)
+			.set({
+				status: 'succeeded',
+				progress: 'Complete',
+				leaseOwner: null,
+				leaseUntil: null,
+				updatedAt: new Date(),
+				...(outputId ? { outputId } : {})
+			})
+			.where(
+				and(
+					eq(t.jobs.id, job.id),
+					eq(t.jobs.status, 'running'),
+					eq(t.jobs.leaseOwner, job.leaseOwner ?? '')
+				)
+			)
+			.returning({ id: t.jobs.id });
+		if (!completed) throw new Error('Job was cancelled or superseded.');
+		return write(tx);
+	});
+}
 export async function sourceSnapshot(projectId: string, ids: string[]): Promise<Snapshot> {
 	const unique = [...new Set(ids)];
 	const selected = await db()
@@ -30,7 +75,7 @@ export async function sourceSnapshot(projectId: string, ids: string[]): Promise<
 		selected.length !== unique.length ||
 		selected.some((m) => !['ready', 'partial'].includes(m.status))
 	)
-		throw new Error('Select readable sources from this project.');
+		throw new ClientError(400, 'Select readable sources from this project.');
 	const chunks = await db()
 		.select()
 		.from(t.sourceChunks)
@@ -43,7 +88,7 @@ export async function sourceSnapshot(projectId: string, ids: string[]): Promise<
 		chunksByMaterial.set(chunk.materialId, materialChunks);
 	}
 	if (selected.some((m) => !chunksByMaterial.has(m.id)))
-		throw new Error('Each selected source must contain readable text.');
+		throw new ClientError(400, 'Each selected source must contain readable text.');
 	return selected.map((m) => ({
 		id: m.id,
 		name: m.name,
@@ -181,45 +226,52 @@ async function ingest(
 	if (new Set(result.chunks.map((c) => c.locator)).size !== result.chunks.length)
 		throw new Error('Extracted source locators must be unique.');
 	const assets: (typeof t.assets.$inferInsert)[] = [];
+	const copiedAssets: string[] = [];
 	await mkdir(join(materialDir(material.id), 'assets'), { recursive: true, mode: 0o700 });
-	for (const asset of result.assets) {
-		const source = await scopedFile(join(workspace, 'files'), asset.path);
-		const id = randomUUID();
-		const destination = join(materialDir(material.id), 'assets', id);
-		if ((await stat(source)).size > 128 * 1024 * 1024)
-			throw new Error('Generated asset exceeds 128 MiB.');
-		await copyFile(source, destination);
-		assets.push({
-			id,
-			materialId: material.id,
-			path: destination,
-			label: asset.label,
-			mimeType: asset.mimeType,
-			locator: asset.locator
-		});
-	}
-	signal.throwIfAborted();
-	await db().transaction(async (tx) => {
-		await tx.delete(t.sourceChunks).where(eq(t.sourceChunks.materialId, material.id));
-		await tx.delete(t.assets).where(eq(t.assets.materialId, material.id));
-		for (let n = 0; n < result.chunks.length; n += 200)
+	try {
+		for (const asset of result.assets) {
+			const source = await scopedFile(join(workspace, 'files'), asset.path);
+			const id = randomUUID();
+			const destination = join(materialDir(material.id), 'assets', id);
+			if ((await stat(source)).size > 128 * 1024 * 1024)
+				throw new Error('Generated asset exceeds 128 MiB.');
+			copiedAssets.push(destination);
+			await copyFile(source, destination);
+			assets.push({
+				id,
+				materialId: material.id,
+				path: destination,
+				label: asset.label,
+				mimeType: asset.mimeType,
+				locator: asset.locator
+			});
+		}
+		signal.throwIfAborted();
+		await completeJob(job, async (tx) => {
+			await tx.delete(t.sourceChunks).where(eq(t.sourceChunks.materialId, material.id));
+			await tx.delete(t.assets).where(eq(t.assets.materialId, material.id));
+			for (let n = 0; n < result.chunks.length; n += 200)
+				await tx
+					.insert(t.sourceChunks)
+					.values(
+						result.chunks
+							.slice(n, n + 200)
+							.map((c, i) => ({ ...c, materialId: material.id, ordinal: n + i }))
+					);
+			if (assets.length) await tx.insert(t.assets).values(assets);
 			await tx
-				.insert(t.sourceChunks)
-				.values(
-					result.chunks
-						.slice(n, n + 200)
-						.map((c, i) => ({ ...c, materialId: material.id, ordinal: n + i }))
-				);
-		if (assets.length) await tx.insert(t.assets).values(assets);
-		await tx
-			.update(t.materials)
-			.set({
-				status: result.status === 'unreadable' ? 'failed' : result.status,
-				notes: result.notes,
-				updatedAt: new Date()
-			})
-			.where(eq(t.materials.id, material.id));
-	});
+				.update(t.materials)
+				.set({
+					status: result.status === 'unreadable' ? 'failed' : result.status,
+					notes: result.notes,
+					updatedAt: new Date()
+				})
+				.where(eq(t.materials.id, material.id));
+		});
+	} catch (cause) {
+		await Promise.allSettled(copiedAssets.map((path) => rm(path, { force: true })));
+		throw cause;
+	}
 }
 async function generate(
 	job: Job,
@@ -232,7 +284,10 @@ async function generate(
 			.select({ id: t.messages.id })
 			.from(t.messages)
 			.where(eq(t.messages.id, job.id));
-		if (existing) return;
+		if (existing) {
+			await completeJob(job, async () => {});
+			return;
+		}
 	}
 	if (job.kind === 'summary' || job.kind === 'quiz') {
 		const [existing] = await db()
@@ -240,16 +295,7 @@ async function generate(
 			.from(t.outputs)
 			.where(eq(t.outputs.id, job.id));
 		if (existing) {
-			await db()
-				.update(t.jobs)
-				.set({ outputId: job.id })
-				.where(
-					and(
-						eq(t.jobs.id, job.id),
-						eq(t.jobs.status, 'running'),
-						eq(t.jobs.leaseOwner, job.leaseOwner ?? '')
-					)
-				);
+			await completeJob(job, async () => {}, job.id);
 			return;
 		}
 	}
@@ -260,7 +306,10 @@ async function generate(
 		const [attempt] = await db().select().from(t.attempts).where(eq(t.attempts.id, job.attemptId!));
 		const [output] = await db().select().from(t.outputs).where(eq(t.outputs.id, attempt.outputId));
 		const quiz = quizSchema.parse(output.quiz);
-		if (attempt.status === 'complete') return;
+		if (attempt.status === 'complete') {
+			await completeJob(job, async () => {});
+			return;
+		}
 		await writeData(workspace, 'quiz-and-answers.json', { quiz, answers: attempt.answers });
 		await runMuseWithArtifact(
 			workspace,
@@ -286,10 +335,12 @@ async function generate(
 			})
 		];
 		signal.throwIfAborted();
-		await db()
-			.update(t.attempts)
-			.set({ grades, score: grades.reduce((s, g) => s + g.score, 0), status: 'complete' })
-			.where(eq(t.attempts.id, attempt.id));
+		await completeJob(job, async (tx) => {
+			await tx
+				.update(t.attempts)
+				.set({ grades, score: grades.reduce((s, g) => s + g.score, 0), status: 'complete' })
+				.where(eq(t.attempts.id, attempt.id));
+		});
 		return;
 	}
 	if (job.kind === 'chat') {
@@ -310,17 +361,19 @@ async function generate(
 		const result = outputSchema.parse(await readArtifact(workspace, 'result.json'));
 		validateCitations(result.citations, snapshot);
 		signal.throwIfAborted();
-		await db()
-			.insert(t.messages)
-			.values({
-				id: job.id,
-				conversationId: job.conversationId!,
-				role: 'assistant',
-				content: result.content,
-				citations: result.citations,
-				modelId
-			})
-			.onConflictDoNothing();
+		await completeJob(job, async (tx) => {
+			await tx
+				.insert(t.messages)
+				.values({
+					id: job.id,
+					conversationId: job.conversationId!,
+					role: 'assistant',
+					content: result.content,
+					citations: result.citations,
+					modelId
+				})
+				.onConflictDoNothing();
+		});
 		return;
 	}
 	if (job.kind === 'quiz') {
@@ -347,31 +400,27 @@ async function generate(
 		const citations = quiz.questions.flatMap((q) => q.citations);
 		validateCitations(citations, snapshot);
 		signal.throwIfAborted();
-		await db()
-			.insert(t.outputs)
-			.values({
-				id: job.id,
-				projectId: job.projectId,
-				kind: 'quiz',
-				title: quiz.title,
-				content: '',
-				quiz,
-				citations,
-				materialIds: snapshot.map((m) => m.id),
-				sourceSnapshot: snapshot,
-				modelId
-			})
-			.onConflictDoNothing();
-		await db()
-			.update(t.jobs)
-			.set({ outputId: job.id })
-			.where(
-				and(
-					eq(t.jobs.id, job.id),
-					eq(t.jobs.status, 'running'),
-					eq(t.jobs.leaseOwner, job.leaseOwner ?? '')
-				)
-			);
+		await completeJob(
+			job,
+			async (tx) => {
+				await tx
+					.insert(t.outputs)
+					.values({
+						id: job.id,
+						projectId: job.projectId,
+						kind: 'quiz',
+						title: quiz.title,
+						content: '',
+						quiz,
+						citations,
+						materialIds: snapshot.map((m) => m.id),
+						sourceSnapshot: snapshot,
+						modelId
+					})
+					.onConflictDoNothing();
+			},
+			job.id
+		);
 		return;
 	}
 	await runMuseWithArtifact(
@@ -385,37 +434,33 @@ async function generate(
 	const result = outputSchema.parse(await readArtifact(workspace, 'result.json'));
 	validateCitations(result.citations, snapshot);
 	signal.throwIfAborted();
-	await db()
-		.insert(t.outputs)
-		.values({
-			id: job.id,
-			...result,
-			projectId: job.projectId,
-			kind: 'summary',
-			materialIds: snapshot.map((m) => m.id),
-			sourceSnapshot: snapshot,
-			modelId
-		})
-		.onConflictDoNothing();
-	await db()
-		.update(t.jobs)
-		.set({ outputId: job.id })
-		.where(
-			and(
-				eq(t.jobs.id, job.id),
-				eq(t.jobs.status, 'running'),
-				eq(t.jobs.leaseOwner, job.leaseOwner ?? '')
-			)
-		);
+	await completeJob(
+		job,
+		async (tx) => {
+			await tx
+				.insert(t.outputs)
+				.values({
+					id: job.id,
+					...result,
+					projectId: job.projectId,
+					kind: 'summary',
+					materialIds: snapshot.map((m) => m.id),
+					sourceSnapshot: snapshot,
+					modelId
+				})
+				.onConflictDoNothing();
+		},
+		job.id
+	);
 }
-export async function finishRecording(id: string) {
+export async function finishRecording(id: string, job?: Job) {
 	await assemble(id, true);
 	const turns = await db()
 		.select()
 		.from(t.transcriptTurns)
 		.where(eq(t.transcriptTurns.materialId, id))
 		.orderBy(asc(t.transcriptTurns.startMs));
-	await db().transaction(async (tx) => {
+	const save = async (tx: Transaction) => {
 		await tx.delete(t.sourceChunks).where(eq(t.sourceChunks.materialId, id));
 		for (let n = 0; n < turns.length; n += 200)
 			await tx.insert(t.sourceChunks).values(
@@ -434,7 +479,9 @@ export async function finishRecording(id: string) {
 				updatedAt: new Date()
 			})
 			.where(eq(t.materials.id, id));
-	});
+	};
+	if (job) await completeJob(job, save);
+	else await db().transaction(save);
 }
 async function recover(job: Job, workspace: string, signal: AbortSignal) {
 	const id = job.materialId!;
@@ -502,6 +549,7 @@ async function recover(job: Job, workspace: string, signal: AbortSignal) {
 		await flush();
 		signal.throwIfAborted();
 		await db().transaction(async (tx) => {
+			await assertJobOwned(tx, job);
 			await tx.delete(t.transcriptTurns).where(eq(t.transcriptTurns.segmentId, segment.id));
 			if (turns.length) await tx.insert(t.transcriptTurns).values(turns);
 			await tx
@@ -511,13 +559,15 @@ async function recover(job: Job, workspace: string, signal: AbortSignal) {
 		});
 	}
 	signal.throwIfAborted();
-	if (job.payload.finalize) await finishRecording(id);
+	if (job.payload.finalize) await finishRecording(id, job);
 	else {
 		signal.throwIfAborted();
-		await db()
-			.update(t.materials)
-			.set({ status: 'paused', updatedAt: new Date() })
-			.where(eq(t.materials.id, id));
+		await completeJob(job, async (tx) => {
+			await tx
+				.update(t.materials)
+				.set({ status: 'paused', updatedAt: new Date() })
+				.where(eq(t.materials.id, id));
+		});
 	}
 }
 export function startWorkers() {
@@ -612,21 +662,7 @@ export function startWorkers() {
 					if (job.kind === 'ingest') await ingest(job, workspace, signal, progress);
 					else if (job.kind === 'recover') await recover(job, workspace, signal);
 					else await generate(job, workspace, signal, progress);
-					signal.throwIfAborted();
-					const [succeeded] = await db()
-						.update(t.jobs)
-						.set({
-							status: 'succeeded',
-							progress: 'Complete',
-							leaseOwner: null,
-							leaseUntil: null,
-							updatedAt: new Date()
-						})
-						.where(
-							and(eq(t.jobs.id, job.id), eq(t.jobs.status, 'running'), eq(t.jobs.leaseOwner, owner))
-						)
-						.returning({ id: t.jobs.id });
-					if (!succeeded) continue;
+					// Each job commits its final result and succeeded status together.
 				} catch (e) {
 					if (stop.signal.aborted) {
 						await db()

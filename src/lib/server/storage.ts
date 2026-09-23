@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { eq, and, asc, sql } from 'drizzle-orm';
 import { db } from './db';
 import { materials, uploadChunks } from './db/schema';
-import { dataDir, maxUploadBytes } from './config';
+import { ClientError, dataDir, maxUploadBytes } from './config';
 import { idSchema, UPLOAD_CHUNK_SIZE } from '../domain';
 export const materialDir = (id: string) => join(dataDir(), 'materials', idSchema.parse(id));
 export const originalPath = (id: string) => join(materialDir(id), 'original');
@@ -42,10 +42,10 @@ export async function putChunk(id: string, sequence: number, body: Buffer, start
 		!body.length ||
 		body.length > UPLOAD_CHUNK_SIZE
 	)
-		throw new Error('Invalid chunk.');
+		throw new ClientError(400, 'Invalid chunk.');
 	return db().transaction(async (tx) => {
 		const [material] = await tx.select().from(materials).where(eq(materials.id, id)).for('update');
-		if (!material) throw new Error('Source not found.');
+		if (!material) throw new ClientError(404, 'Source not found.');
 		const hash = createHash('sha256').update(body).digest('hex');
 		const [previous] = await tx
 			.select()
@@ -53,26 +53,27 @@ export async function putChunk(id: string, sequence: number, body: Buffer, start
 			.where(and(eq(uploadChunks.materialId, id), eq(uploadChunks.sequence, sequence)));
 		if (previous) {
 			if (previous.hash !== hash || previous.startSample !== (startSample ?? null))
-				throw new Error('Chunk conflicts with saved audio.');
+				throw new ClientError(409, 'Chunk conflicts with saved audio.');
 			return { duplicate: true };
 		}
 		if (material.kind === 'file') {
-			if (material.status !== 'uploading') throw new Error('Upload is already complete.');
+			if (material.status !== 'uploading')
+				throw new ClientError(409, 'Upload is already complete.');
 			if (
 				sequence * UPLOAD_CHUNK_SIZE >= material.size ||
 				body.length !== Math.min(UPLOAD_CHUNK_SIZE, material.size - sequence * UPLOAD_CHUNK_SIZE)
 			)
-				throw new Error('Unexpected upload chunk size.');
+				throw new ClientError(400, 'Unexpected upload chunk size.');
 		} else {
 			if (!['recording', 'paused'].includes(material.status))
-				throw new Error('Recording is already complete.');
+				throw new ClientError(409, 'Recording is already complete.');
 			if (
 				!Number.isSafeInteger(startSample) ||
 				startSample! < 0 ||
 				body.length % 2 ||
 				body.length > 96000
 			)
-				throw new Error('Invalid PCM audio.');
+				throw new ClientError(400, 'Invalid PCM audio.');
 			const [last] = await tx
 				.select()
 				.from(uploadChunks)
@@ -83,10 +84,10 @@ export async function putChunk(id: string, sequence: number, body: Buffer, start
 				sequence !== (last ? last.sequence + 1 : 0) ||
 				startSample !== (last ? (last.startSample ?? 0) + last.size / 2 : 0)
 			)
-				throw new Error('Audio chunks must be contiguous.');
+				throw new ClientError(409, 'Audio chunks must be contiguous.');
 		}
 		if (material.receivedBytes + body.length > maxUploadBytes())
-			throw new Error('Source exceeds the configured upload limit.');
+			throw new ClientError(413, 'Source exceeds the configured upload limit.');
 		await mkdir(join(materialDir(id), 'chunks'), { recursive: true, mode: 0o700 });
 		const path = chunkPath(id, sequence);
 		const file = await open(path, 'w', 0o600);
@@ -135,7 +136,8 @@ export async function assemble(id: string, recording = false) {
 		.from(uploadChunks)
 		.where(eq(uploadChunks.materialId, id))
 		.orderBy(asc(uploadChunks.sequence));
-	if (chunks.some((c, i) => c.sequence !== i)) throw new Error('Some source chunks are missing.');
+	if (chunks.some((c, i) => c.sequence !== i))
+		throw new ClientError(409, 'Some source chunks are missing.');
 	await mkdir(materialDir(id), { recursive: true, mode: 0o700 });
 	const file = await open(originalPath(id), 'w', 0o600);
 	try {

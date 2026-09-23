@@ -57,21 +57,26 @@
 	let mounted = false;
 	let syncTimer: ReturnType<typeof setInterval> | undefined;
 	let observedJob = '';
+	let loadedConversationId = '';
+	let loadedMessages: Message[] = [];
+	let openVersion = 0;
 	async function syncConversation() {
-		if (sending || !conversationId) return;
+		if (sending || loading || !conversationId) return;
 		const job = jobs.find((item) => item.conversationId === conversationId);
 		if (!job) return;
 		const version = `${job.id}:${job.status}:${job.updatedAt}`;
 		if (observedJob === version) return;
 		const id = conversationId;
+		const versionAtStart = openVersion;
 		try {
 			const result = await api<{ messages: Message[] }>(`/api/conversations/${id}`);
-			if (mounted && conversationId === id) {
+			if (mounted && openVersion === versionAtStart && conversationId === id && !loading) {
 				messages = result.messages;
+				loadedMessages = result.messages;
 				observedJob = version;
 			}
 		} catch (e) {
-			if (mounted) error = errorText(e);
+			if (mounted && openVersion === versionAtStart && conversationId === id) error = errorText(e);
 		}
 	}
 	let exported = $derived(
@@ -80,13 +85,18 @@
 			.join('\n\n')
 	);
 	async function open(id: string, interaction = true) {
+		const version = ++openVersion;
 		conversationId = id;
+		messages = [];
+		observedJob = '';
+		error = '';
 		if (!id) {
-			messages = [];
+			loadedConversationId = '';
+			loadedMessages = [];
+			loading = false;
 			return;
 		}
 		loading = true;
-		error = '';
 		try {
 			const data = await api<{ conversation: Conversation; messages: Message[] }>(
 				`/api/conversations/${id}`,
@@ -94,29 +104,35 @@
 				'GET',
 				interaction
 			);
-			if (conversationId === id) {
+			if (version === openVersion) {
 				messages = data.messages;
+				loadedMessages = data.messages;
+				loadedConversationId = id;
 				$form.modelId = data.conversation.modelId;
 			}
 		} catch (e) {
-			error = errorText(e);
+			if (version === openVersion) {
+				conversationId = loadedConversationId;
+				messages = loadedMessages;
+				error = errorText(e);
+			}
 		} finally {
-			loading = false;
+			if (version === openVersion) loading = false;
 		}
 	}
-	async function poll(jobId: string) {
+	async function poll(jobId: string, jobConversationId: string) {
 		try {
 			const { job } = await api<{ job: Job }>(`/api/jobs/${jobId}`);
 			if (!mounted) return;
 			if (job.status === 'queued' || job.status === 'running') {
-				timer = setTimeout(() => poll(jobId), 1500);
+				timer = setTimeout(() => poll(jobId, jobConversationId), 1500);
 				return;
 			}
 			sending = false;
 			activeJob = '';
 
 			if (job.status === 'cancelled') notice = 'Response cancelled.';
-			await open(conversationId, false);
+			if (conversationId === jobConversationId) await open(jobConversationId, false);
 			if (job.status === 'failed')
 				error = job.error ?? 'The response could not be generated. Retry it in Interrupted jobs.';
 			await onChanged();
@@ -128,7 +144,7 @@
 	}
 	async function send(event: SubmitEvent) {
 		event.preventDefault();
-		if (sending || !(await editor.validateForm()).valid) return;
+		if (sending || loading || !(await editor.validateForm()).valid) return;
 		if (!materialIds.length) {
 			error = 'Select at least one ready source.';
 			return;
@@ -136,6 +152,7 @@
 		sending = true;
 		error = '';
 		notice = '';
+		let acceptedJob = false;
 		try {
 			const result = await api<{ jobId: string; conversationId: string }>(
 				`/api/projects/${projectId}/chat`,
@@ -146,15 +163,18 @@
 					...(conversationId ? { conversationId } : {})
 				}
 			);
+			acceptedJob = true;
 			conversationId = result.conversationId;
+			loadedConversationId = result.conversationId;
+			loadedMessages = [];
 			activeJob = result.jobId;
 			$form.message = '';
-			await open(conversationId, false);
+			await open(result.conversationId, false);
+			void poll(result.jobId, result.conversationId);
 			await onChanged();
-			void poll(result.jobId);
 		} catch (e) {
 			error = errorText(e);
-			sending = false;
+			if (!acceptedJob) sending = false;
 		}
 	}
 	async function cancel() {
@@ -225,13 +245,13 @@
 					>
 						{message.modelId}
 					</p>{/if}
-			</article>{:else}<div class="py-10">
-				<h2 class="text-xl font-medium">Ask your sources</h2>
-				<p class="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
-					Explore an idea, compare concepts, or ask for an explanation. Responses draw on the
-					sources you select and link back to the evidence.
-				</p>
-			</div>{/each}
+			</article>{:else}{#if !loading}<div class="py-10">
+					<h2 class="text-xl font-medium">Ask your sources</h2>
+					<p class="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
+						Explore an idea, compare concepts, or ask for an explanation. Responses draw on the
+						sources you select and link back to the evidence.
+					</p>
+				</div>{/if}{/each}
 	</div>
 	{#if sending}<div role="status" class="flex items-center gap-3 text-sm text-muted-foreground">
 			Working with your sources…<Button variant="ghost" size="sm" onclick={cancel}>Cancel</Button>
@@ -250,7 +270,7 @@
 						bind:value={$form.message}
 						rows={3}
 						placeholder="Explain the main concepts and how they connect…"
-						disabled={sending}
+						disabled={sending || loading}
 					/>{/snippet}</Form.Control
 			><Form.FieldErrors /></Form.Field
 		>
@@ -260,14 +280,14 @@
 					>{#snippet children({ props })}<Form.Label>Model</Form.Label><select
 							{...props}
 							class="h-9 w-full border bg-background px-2 text-sm"
-							disabled={sending}
+							disabled={sending || loading}
 							bind:value={() => selectedModel, (value) => ($form.modelId = value)}
 							>{#if models.length}{#each models as model (model.modelId)}<option
 										value={model.modelId}>{model.displayLabel}</option
 									>{/each}{:else}<option value={DEFAULT_MODEL}>{DEFAULT_MODEL}</option>{/if}</select
 						>{/snippet}</Form.Control
 				><Form.FieldErrors /></Form.Field
-			><Button type="submit" disabled={sending || !materialIds.length || !models.length}
+			><Button type="submit" disabled={sending || loading || !materialIds.length || !models.length}
 				><Send />Send</Button
 			>
 		</div>
