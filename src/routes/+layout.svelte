@@ -25,7 +25,7 @@
 			<a href={resolve('/')} class="flex items-center gap-2 text-lg font-semibold tracking-tight"
 				><span
 					aria-hidden="true"
-					class="size-6 shrink-0 bg-primary"
+					class="size-6 shrink-0 bg-foreground"
 					style:mask={`url("${favicon}") center / contain no-repeat`}
 				></span>Studyloom</a
 			>

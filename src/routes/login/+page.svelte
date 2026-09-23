@@ -11,7 +11,7 @@
 
 <svelte:head><title>Sign in · Studyloom</title></svelte:head>
 <div class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12">
-	<AudioLines class="mb-7 size-10 text-primary" />
+	<AudioLines class="mb-7 size-10 text-foreground" />
 	<h1 class="text-3xl font-semibold tracking-tight">Studyloom</h1>
 	<p class="mt-4 leading-relaxed text-muted-foreground">
 		Bring your recordings and course materials together. Build understanding with source-backed
