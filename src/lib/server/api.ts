@@ -346,7 +346,7 @@ export async function api(event: RequestEvent) {
 					.insert(t.libraryEntries)
 					.values({
 						kind: input.kind,
-						name: input.name,
+						name: input.name.trim(),
 						parentId: input.parentId,
 						url: input.kind === 'link' ? input.url : '',
 						phone: input.kind === 'contact' ? input.phone : '',
@@ -383,11 +383,11 @@ export async function api(event: RequestEvent) {
 				await checkLibraryParent(parentId, entry.kind === 'folder' ? entry.id : undefined);
 				const values =
 					entry.kind === 'file'
-						? { name: patch.name ?? entry.name, parentId, updatedAt: new Date() }
+						? { name: patch.name?.trim() ?? entry.name, parentId, updatedAt: new Date() }
 						: (() => {
 								const parsed = libraryInput.parse({ ...entry, ...patch });
 								return {
-									name: parsed.name,
+									name: parsed.name.trim(),
 									parentId,
 									url: parsed.kind === 'link' ? parsed.url : '',
 									phone: parsed.kind === 'contact' ? parsed.phone : '',

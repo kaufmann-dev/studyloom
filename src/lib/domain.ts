@@ -11,7 +11,11 @@ export const projectInput = z.object({
 		.refine((value) => value.trim().length > 0, 'Project name is required.'),
 	description: z.string().max(4000).default('')
 });
-const libraryName = z.string().trim().min(1, 'Name is required.').max(160);
+const libraryName = z
+	.string()
+	.min(1, 'Name is required.')
+	.max(160)
+	.refine((value) => value.trim().length > 0, 'Name is required.');
 const libraryWebUrl = z
 	.string()
 	.max(2048)

@@ -5,7 +5,15 @@ import { scopedFile, wavHeader } from './storage';
 import { validateWav } from './transcribe';
 import { validateCitations, gradeChoice, readArtifact } from './jobs';
 import { safeError } from './config';
-import { answersSchema, chatInput, ingestionSchema, projectInput, quizSchema } from '../domain';
+import {
+	answersSchema,
+	chatInput,
+	ingestionSchema,
+	libraryInput,
+	libraryPatchInput,
+	projectInput,
+	quizSchema
+} from '../domain';
 import { mkdtemp, writeFile, symlink, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,9 +78,17 @@ describe('source and tool boundaries', () => {
 			description: '  Notes  '
 		});
 		expect(chatInput.parse({ message: 'hello ', materialIds: [id] }).message).toBe('hello ');
+		expect(
+			libraryInput.parse({ kind: 'link', name: 'My Link ', url: 'https://example.edu' }).name
+		).toBe('My Link ');
+		expect(libraryPatchInput.parse({ name: 'hello ' }).name).toBe('hello ');
 		expect(() => projectInput.parse({ name: '   ', description: '' })).toThrow();
 		expect(() => chatInput.parse({ message: '\t\n', materialIds: [id] })).toThrow();
 		expect(() => answersSchema.parse({ answers: [{ questionId: 'q1', value: '' }] })).toThrow();
+		expect(() =>
+			libraryInput.parse({ kind: 'link', name: '   ', url: 'https://example.edu' })
+		).toThrow('Name is required.');
+		expect(() => libraryPatchInput.parse({ name: '\t\n' })).toThrow('Name is required.');
 	});
 	it('rejects empty extracted chunks and contradictory ingestion statuses', () => {
 		expect(() =>
