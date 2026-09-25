@@ -209,7 +209,7 @@
 <svelte:head><title>{data?.project.name ?? 'Project'} · Studyloom</title></svelte:head>
 <div class="mb-6">
 	<a
-		href={resolve('/')}
+		href={resolve('/projects')}
 		class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:underline"
 		><ArrowLeft class="size-4" />Projects</a
 	>
@@ -233,7 +233,7 @@
 			</p>{/if}<ProjectDetails
 			project={data.project}
 			onSaved={refresh}
-			onDeleted={() => goto(resolve('/'))}
+			onDeleted={() => goto(resolve('/projects'))}
 		/>
 	</div>
 	{#if museError}<div

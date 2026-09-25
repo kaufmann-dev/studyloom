@@ -10,6 +10,7 @@ import {
 	uniqueIndex,
 	check
 } from 'drizzle-orm/pg-core';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { Citation, Quiz, Grade } from '../../domain';
 const time = (name: string) => timestamp(name, { withTimezone: true }).notNull().defaultNow();
@@ -41,6 +42,66 @@ export const projects = pgTable('projects', {
 	createdAt: time('created_at'),
 	updatedAt: time('updated_at')
 });
+export const libraryEntries = pgTable(
+	'library_entries',
+	{
+		id: pk(),
+		parentId: uuid('parent_id').references((): AnyPgColumn => libraryEntries.id, {
+			onDelete: 'cascade'
+		}),
+		kind: text('kind').$type<'folder' | 'file' | 'link' | 'contact' | 'note'>().notNull(),
+		name: text('name').notNull(),
+		url: text('url').notNull().default(''),
+		phone: text('phone').notNull().default(''),
+		email: text('email').notNull().default(''),
+		website: text('website').notNull().default(''),
+		notes: text('notes').notNull().default(''),
+		text: text('text').notNull().default(''),
+		filename: text('filename'),
+		mimeType: text('mime_type'),
+		size: bigint('size', { mode: 'number' }).notNull().default(0),
+		receivedBytes: bigint('received_bytes', { mode: 'number' }).notNull().default(0),
+		status: text('status').$type<'uploading' | 'ready'>(),
+		createdAt: time('created_at'),
+		updatedAt: time('updated_at')
+	},
+	(t) => [
+		index('library_parent_idx').on(t.parentId),
+		check('library_kind_check', sql`${t.kind} in ('folder', 'file', 'link', 'contact', 'note')`),
+		check('library_not_own_parent_check', sql`${t.parentId} is distinct from ${t.id}`),
+		check(
+			'library_size_check',
+			sql`${t.size} >= 0 and ${t.receivedBytes} >= 0 and ${t.receivedBytes} <= ${t.size}`
+		)
+	]
+);
+export const libraryUploadChunks = pgTable(
+	'library_upload_chunks',
+	{
+		id: pk(),
+		entryId: uuid('entry_id')
+			.notNull()
+			.references(() => libraryEntries.id, { onDelete: 'cascade' }),
+		sequence: integer('sequence').notNull(),
+		size: integer('size').notNull(),
+		hash: text('hash').notNull()
+	},
+	(t) => [uniqueIndex('library_upload_chunk_sequence_idx').on(t.entryId, t.sequence)]
+);
+export const pins = pgTable(
+	'pins',
+	{
+		id: pk(),
+		projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+		libraryId: uuid('library_id').references(() => libraryEntries.id, { onDelete: 'cascade' }),
+		createdAt: time('created_at')
+	},
+	(t) => [
+		uniqueIndex('pins_project_idx').on(t.projectId),
+		uniqueIndex('pins_library_idx').on(t.libraryId),
+		check('pins_one_target_check', sql`(${t.projectId} is null) <> (${t.libraryId} is null)`)
+	]
+);
 export const materials = pgTable(
 	'materials',
 	{

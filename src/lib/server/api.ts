@@ -1,5 +1,5 @@
 import { error, json, type RequestEvent } from '@sveltejs/kit';
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
@@ -14,10 +14,20 @@ import {
 	chatInput,
 	answersSchema,
 	DEFAULT_MODEL,
-	quizSchema
+	quizSchema,
+	libraryInput,
+	libraryPatchInput,
+	libraryUploadInput,
+	pinInput
 } from '../domain';
 import { ClientError, maxUploadBytes, safeError } from './config';
 import { assemble, originalPath, putChunk, removeMaterialFiles } from './storage';
+import {
+	completeLibraryUpload,
+	libraryFilePath,
+	putLibraryChunk,
+	removeLibraryFiles
+} from './library-storage';
 import { gradeChoice, sourceSnapshot } from './jobs';
 import { museHost, museStatus, validateModel } from './muse';
 const publicJob = (j: typeof t.jobs.$inferSelect) => ({
@@ -61,6 +71,51 @@ async function material(id: string) {
 		.where(eq(t.materials.id, idSchema.parse(id)));
 	if (!row) error(404, 'Source not found.');
 	return row;
+}
+async function libraryEntry(id: string) {
+	const [entry] = await db()
+		.select()
+		.from(t.libraryEntries)
+		.where(eq(t.libraryEntries.id, idSchema.parse(id)));
+	if (!entry) error(404, 'Library item not found.');
+	return entry;
+}
+async function checkLibraryParent(parentId: string | null, movingId?: string) {
+	let current = parentId;
+	const seen = new Set<string>();
+	while (current) {
+		if (current === movingId || seen.has(current)) error(409, 'A folder cannot contain itself.');
+		seen.add(current);
+		const parent = await libraryEntry(current);
+		if (parent.kind !== 'folder') error(400, 'Choose a folder as the destination.');
+		current = parent.parentId;
+	}
+}
+function publicPin(
+	pin: typeof t.pins.$inferSelect,
+	target: { name: string; description?: string; kind?: string }
+) {
+	const project = Boolean(pin.projectId);
+	const targetId = pin.projectId ?? pin.libraryId!;
+	return {
+		id: pin.id,
+		targetType: project ? ('project' as const) : ('library' as const),
+		targetId,
+		label: target.name,
+		subtitle: project
+			? 'Project'
+			: target.kind === 'folder'
+				? 'Folder'
+				: target.kind === 'file'
+					? 'File'
+					: target.kind === 'link'
+						? 'Link'
+						: target.kind === 'contact'
+							? 'Contact'
+							: 'Note',
+		href: project ? `/projects/${targetId}` : `/library/${targetId}`,
+		createdAt: pin.createdAt
+	};
 }
 type UploadStatus = 'uploading' | 'failed' | 'partial';
 function isUniqueViolation(value: unknown) {
@@ -248,6 +303,229 @@ export async function api(event: RequestEvent) {
 	if (resource === 'health' && method === 'GET') return json({ status: 'ok' });
 	if (!event.locals.session) error(401, 'Please sign in.');
 	try {
+		if (resource === 'library') {
+			if (id === 'folders' && method === 'GET')
+				return json({
+					folders: await db()
+						.select()
+						.from(t.libraryEntries)
+						.where(eq(t.libraryEntries.kind, 'folder'))
+						.orderBy(asc(t.libraryEntries.name))
+				});
+			if (id === 'uploads' && method === 'POST') {
+				const input = libraryUploadInput
+					.extend({ size: libraryUploadInput.shape.size.max(maxUploadBytes()) })
+					.parse(await body(event));
+				await checkLibraryParent(input.parentId);
+				const [entry] = await db()
+					.insert(t.libraryEntries)
+					.values({
+						kind: 'file',
+						name: input.filename,
+						parentId: input.parentId,
+						filename: input.filename,
+						mimeType: input.mimeType || 'application/octet-stream',
+						size: input.size,
+						status: 'uploading'
+					})
+					.returning();
+				return json({ entry, chunkSize: UPLOAD_CHUNK_SIZE }, { status: 201 });
+			}
+			if (!id && method === 'GET') {
+				const children = await db()
+					.select()
+					.from(t.libraryEntries)
+					.where(isNull(t.libraryEntries.parentId))
+					.orderBy(asc(t.libraryEntries.name));
+				return json({ entry: null, children, ancestors: [] });
+			}
+			if (!id && method === 'POST') {
+				const input = libraryInput.parse(await body(event));
+				await checkLibraryParent(input.parentId);
+				const [entry] = await db()
+					.insert(t.libraryEntries)
+					.values({
+						kind: input.kind,
+						name: input.name,
+						parentId: input.parentId,
+						url: input.kind === 'link' ? input.url : '',
+						phone: input.kind === 'contact' ? input.phone : '',
+						email: input.kind === 'contact' ? input.email : '',
+						website: input.kind === 'contact' ? input.website : '',
+						notes: ['link', 'contact'].includes(input.kind) ? input.notes : '',
+						text: input.kind === 'note' ? input.text : ''
+					})
+					.returning();
+				return json({ entry }, { status: 201 });
+			}
+			const entry = await libraryEntry(id);
+			if (!action && method === 'GET') {
+				const ancestors: { id: string; name: string }[] = [];
+				let parentId = entry.parentId;
+				while (parentId) {
+					const parent = await libraryEntry(parentId);
+					ancestors.unshift({ id: parent.id, name: parent.name });
+					parentId = parent.parentId;
+				}
+				const children =
+					entry.kind === 'folder'
+						? await db()
+								.select()
+								.from(t.libraryEntries)
+								.where(eq(t.libraryEntries.parentId, entry.id))
+								.orderBy(asc(t.libraryEntries.name))
+						: [];
+				return json({ entry, children, ancestors });
+			}
+			if (!action && method === 'PATCH') {
+				const patch = libraryPatchInput.parse(await body(event));
+				const parentId = patch.parentId === undefined ? entry.parentId : patch.parentId;
+				await checkLibraryParent(parentId, entry.kind === 'folder' ? entry.id : undefined);
+				const values =
+					entry.kind === 'file'
+						? { name: patch.name ?? entry.name, parentId, updatedAt: new Date() }
+						: (() => {
+								const parsed = libraryInput.parse({ ...entry, ...patch });
+								return {
+									name: parsed.name,
+									parentId,
+									url: parsed.kind === 'link' ? parsed.url : '',
+									phone: parsed.kind === 'contact' ? parsed.phone : '',
+									email: parsed.kind === 'contact' ? parsed.email : '',
+									website: parsed.kind === 'contact' ? parsed.website : '',
+									notes: ['link', 'contact'].includes(parsed.kind) ? parsed.notes : '',
+									text: parsed.kind === 'note' ? parsed.text : '',
+									updatedAt: new Date()
+								};
+							})();
+				const [updated] = await db()
+					.update(t.libraryEntries)
+					.set(values)
+					.where(eq(t.libraryEntries.id, entry.id))
+					.returning();
+				return json({ entry: updated });
+			}
+			if (!action && method === 'DELETE') {
+				const fileIds = await db().transaction(async (tx) => {
+					await tx
+						.select({ id: t.libraryEntries.id })
+						.from(t.libraryEntries)
+						.where(eq(t.libraryEntries.id, entry.id))
+						.for('update');
+					const all = await tx
+						.select({
+							id: t.libraryEntries.id,
+							parentId: t.libraryEntries.parentId,
+							kind: t.libraryEntries.kind
+						})
+						.from(t.libraryEntries);
+					const descendants = new Set([entry.id]);
+					let changed = true;
+					while (changed) {
+						changed = false;
+						for (const item of all)
+							if (item.parentId && descendants.has(item.parentId) && !descendants.has(item.id)) {
+								descendants.add(item.id);
+								changed = true;
+							}
+					}
+					await tx.delete(t.libraryEntries).where(eq(t.libraryEntries.id, entry.id));
+					return all
+						.filter((item) => descendants.has(item.id) && item.kind === 'file')
+						.map((item) => item.id);
+				});
+				await removeLibraryFiles(fileIds).catch((cause) =>
+					console.error('Library file cleanup failed:', safeError(cause))
+				);
+				return json({ ok: true });
+			}
+			if (entry.kind !== 'file') error(404, 'Endpoint not found.');
+			if (action === 'file' && method === 'GET') {
+				if (entry.status !== 'ready') error(404, 'File is not ready yet.');
+				return download(
+					event,
+					libraryFilePath(entry.id),
+					entry.mimeType ?? 'application/octet-stream',
+					entry.filename ?? entry.name
+				);
+			}
+			if (action === 'chunks' && method === 'PUT') {
+				await putLibraryChunk(
+					entry.id,
+					Number(seq),
+					await boundedBody(event.request, UPLOAD_CHUNK_SIZE)
+				);
+				return json({ ok: true });
+			}
+			if (action === 'complete' && method === 'POST')
+				return json({ entry: await completeLibraryUpload(entry.id) });
+		}
+		if (resource === 'pins') {
+			if (!id && method === 'GET') {
+				const pins = await db()
+					.select()
+					.from(t.pins)
+					.orderBy(desc(t.pins.createdAt), desc(t.pins.id));
+				const projects = await db()
+					.select({ id: t.projects.id, name: t.projects.name })
+					.from(t.projects)
+					.where(
+						inArray(
+							t.projects.id,
+							pins.flatMap((pin) => (pin.projectId ? [pin.projectId] : []))
+						)
+					);
+				const entries = await db()
+					.select({
+						id: t.libraryEntries.id,
+						name: t.libraryEntries.name,
+						kind: t.libraryEntries.kind
+					})
+					.from(t.libraryEntries)
+					.where(
+						inArray(
+							t.libraryEntries.id,
+							pins.flatMap((pin) => (pin.libraryId ? [pin.libraryId] : []))
+						)
+					);
+				const targets = new Map([...projects, ...entries].map((target) => [target.id, target]));
+				return json({
+					pins: pins.flatMap((pin) => {
+						const target = targets.get(pin.projectId ?? pin.libraryId!);
+						return target ? [publicPin(pin, target)] : [];
+					})
+				});
+			}
+			if (!id && method === 'POST') {
+				const input = pinInput.parse(await body(event));
+				const target =
+					input.targetType === 'project'
+						? await project(input.targetId)
+						: await libraryEntry(input.targetId);
+				const column = input.targetType === 'project' ? t.pins.projectId : t.pins.libraryId;
+				const values =
+					input.targetType === 'project'
+						? { projectId: input.targetId }
+						: { libraryId: input.targetId };
+				const [created] = await db()
+					.insert(t.pins)
+					.values(values)
+					.onConflictDoNothing()
+					.returning();
+				const [pin] = created
+					? [created]
+					: await db().select().from(t.pins).where(eq(column, input.targetId));
+				return json({ pin: publicPin(pin, target) }, { status: created ? 201 : 200 });
+			}
+			if (id && method === 'DELETE') {
+				const [deleted] = await db()
+					.delete(t.pins)
+					.where(eq(t.pins.id, idSchema.parse(id)))
+					.returning();
+				if (!deleted) error(404, 'Pin not found.');
+				return json({ ok: true });
+			}
+		}
 		if (resource === 'muse') {
 			if (method === 'GET') return json(await museAction(museStatus()));
 			if (method === 'POST' && id === 'login')

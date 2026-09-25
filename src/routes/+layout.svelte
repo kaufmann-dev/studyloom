@@ -2,7 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { ModeWatcher, toggleMode } from 'mode-watcher';
 	import { page } from '$app/state';
-	import { FolderOpen, Settings, SunMoon, LogOut } from '@lucide/svelte';
+	import { House, FolderOpen, Library, Settings, SunMoon, LogOut } from '@lucide/svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import favicon from '$lib/assets/favicon.svg';
 	import './layout.css';
@@ -30,7 +30,9 @@
 				></span>Studyloom</a
 			>
 			<nav aria-label="Main navigation" class="flex items-center gap-2">
-				<Button href={resolve('/')} variant="ghost"><FolderOpen />Projects</Button>
+				<Button href={resolve('/')} variant="ghost"><House />Home</Button>
+				<Button href={resolve('/projects')} variant="ghost"><FolderOpen />Projects</Button>
+				<Button href={resolve('/library')} variant="ghost"><Library />Library</Button>
 				<Button href={resolve('/settings')} variant="ghost"
 					><Settings /><span class="hidden sm:inline">Settings</span></Button
 				>

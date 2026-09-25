@@ -11,6 +11,77 @@ export const projectInput = z.object({
 		.refine((value) => value.trim().length > 0, 'Project name is required.'),
 	description: z.string().max(4000).default('')
 });
+const libraryName = z.string().trim().min(1, 'Name is required.').max(160);
+const libraryWebUrl = z
+	.string()
+	.max(2048)
+	.refine(
+		(value) =>
+			!value ||
+			(/^https?:\/\//i.test(value) &&
+				(() => {
+					try {
+						return Boolean(new URL(value).hostname);
+					} catch {
+						return false;
+					}
+				})()),
+		'Enter an http or https URL.'
+	);
+const libraryBaseInput = z.object({
+	kind: z.enum(['folder', 'link', 'contact', 'note']),
+	name: libraryName,
+	parentId: idSchema.nullable().default(null),
+	url: libraryWebUrl.default(''),
+	phone: z.string().max(100).default(''),
+	email: z.union([z.email(), z.literal('')]).default(''),
+	website: libraryWebUrl.default(''),
+	notes: z.string().max(10000).default(''),
+	text: z.string().max(100000).default('')
+});
+export const libraryInput = libraryBaseInput.superRefine((value, context) => {
+	if (value.kind === 'link' && !value.url)
+		context.addIssue({ code: 'custom', path: ['url'], message: 'URL is required.' });
+});
+export const libraryPatchInput = libraryBaseInput.omit({ kind: true }).partial();
+export const libraryUploadInput = z.object({
+	parentId: idSchema.nullable().default(null),
+	filename: z.string().trim().min(1).max(255),
+	mimeType: z.string().max(120).default('application/octet-stream'),
+	size: z.number().int().positive()
+});
+export const pinInput = z.object({
+	targetType: z.enum(['project', 'library']),
+	targetId: idSchema
+});
+export interface LibraryEntry {
+	id: string;
+	parentId: string | null;
+	kind: 'folder' | 'file' | 'link' | 'contact' | 'note';
+	name: string;
+	url: string;
+	phone: string;
+	email: string;
+	website: string;
+	notes: string;
+	text: string;
+	filename: string | null;
+	mimeType: string | null;
+	size: number;
+	receivedBytes: number;
+	status: 'uploading' | 'ready' | null;
+	createdAt: string;
+	updatedAt: string;
+}
+export interface Pin {
+	id: string;
+	targetType: 'project' | 'library';
+	targetId: string;
+	label: string;
+	subtitle: string;
+	href: string;
+	createdAt: string;
+}
 export const sourceSelection = z.array(idSchema).min(1).max(500);
 export const citationSchema = z.object({
 	materialId: idSchema,

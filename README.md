@@ -1,11 +1,12 @@
 # Studyloom
 
-A private learning workspace at **studyloom.kaufmann.dev**. Organize materials into projects, record microphone or browser-tab audio, and use selected sources for conversations, AI overviews and quizzes.
+A private learning workspace at **studyloom.kaufmann.dev**. The home page greets you and shows pinned projects and Library items. Organize study materials into projects, and keep important files and information in the separate Library.
 
 - Pause and resume recording; finalized transcript turns are saved with speaker labels and approximate timestamps. Audio is persisted in the browser before transmission and retained on the server until you delete the source.
 - Upload any file type. Muse inspects it and chooses conversion tools or scripts. Unsupported or partly readable files retain their originals and show the extraction limitations.
 - Combine readable materials for source-cited chat, summaries, multiple-choice questions and written-answer quizzes. Answers, grading feedback and the model used are saved.
 - Choose models from Muse's live catalog. Text generation and file processing use your Muse Code subscription login. Audio transcription uses the separate Meta transcription API and incurs API charges.
+- Save files, web links, contacts and notes at the Library root or in nested folders. Library files retain their originals for private viewing or download; they are not sent through Muse processing.
 
 ## Development
 
@@ -57,7 +58,7 @@ The integration uses Muse CLI's experimental MSP account/model methods and `muse
 
 Muse runs as a trusted service for this single-user app and receives a job workspace and MCP tools. The app does not route file extensions through a fixed conversion pipeline. Commands run directly with the job workspace as the working directory and a restricted environment that never contains app secrets; output and time limits apply. The transcription MCP tool brokers authenticated requests without exposing the API key to conversion commands.
 
-Sources are stored under `DATA_DIR/materials`; temporary job workspaces are removed after processing. Transcripts and extracted chunks live in PostgreSQL, with a full-text index. Generated study tools keep source snapshots so later grading uses the original evidence and rubric. Back up PostgreSQL **and** the persistent data volume together.
+Project sources are stored under `DATA_DIR/materials`; Library files are stored under `DATA_DIR/library`. Temporary job workspaces are removed after processing. Transcripts and extracted chunks live in PostgreSQL, with a full-text index. Generated study tools keep source snapshots so later grading uses the original evidence and rubric. Back up PostgreSQL **and** the persistent data volume together.
 
 Uploads default to 2 GiB per source, using 8 MiB HTTP chunks. Audio is mono signed 16-bit PCM at 24 kHz. Live streams send audio at recording speed; interrupted audio uses the file transcription API before a new live stream starts. Browser support for tab/system audio varies; microphone capture is also available. Recording requires HTTPS outside localhost and browser permission to capture the chosen audio source.
 
