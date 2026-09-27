@@ -241,7 +241,7 @@
 </script>
 
 <svelte:head><title>{entry?.name ?? 'Library'} · Studyloom</title></svelte:head>
-<div class="mx-auto max-w-5xl">
+<div>
 	<nav aria-label="Breadcrumb" class="mb-6 flex items-center gap-1 text-sm text-muted-foreground">
 		<a href={resolve('/library')} class="hover:underline">Library</a
 		>{#each ancestors as ancestor (ancestor.id)}<ChevronRight class="size-4 shrink-0" /><a

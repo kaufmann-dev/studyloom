@@ -53,7 +53,7 @@
 </script>
 
 <svelte:head><title>Home · Studyloom</title></svelte:head>
-<div class="mx-auto max-w-5xl">
+<div>
 	<h1 class="text-3xl font-semibold tracking-tight">Hello, {firstName}</h1>
 	<section aria-labelledby="pins-heading" class="mt-12">
 		<div class="mb-5 flex items-center justify-between gap-4">

@@ -71,7 +71,7 @@
 </script>
 
 <svelte:head><title>Settings · Studyloom</title></svelte:head>
-<div class="mx-auto max-w-3xl">
+<div class="max-w-3xl">
 	<h1 class="text-3xl font-semibold tracking-tight">Settings</h1>
 	<p class="mt-2 text-muted-foreground">Connect the Muse account that holds your subscription.</p>
 	{#if error}<p role="alert" class="mt-6 text-sm text-destructive">{error}</p>{/if}

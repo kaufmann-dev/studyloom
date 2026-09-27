@@ -82,7 +82,7 @@
 </script>
 
 <svelte:head><title>Projects · Studyloom</title></svelte:head>
-<div class="mx-auto max-w-5xl">
+<div>
 	<div class="mb-9 flex flex-wrap items-start justify-between gap-4">
 		<div>
 			<h1 class="text-3xl font-semibold tracking-tight">Projects</h1>

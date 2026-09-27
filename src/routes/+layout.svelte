@@ -2,12 +2,21 @@
 	import { resolve } from '$app/paths';
 	import { ModeWatcher, toggleMode } from 'mode-watcher';
 	import { page } from '$app/state';
-	import { House, FolderOpen, Library, Settings, SunMoon, LogOut } from '@lucide/svelte';
+	import { House, FolderOpen, Library, Settings, SunMoon, LogOut, Menu } from '@lucide/svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
+	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import favicon from '$lib/assets/favicon.svg';
 	import './layout.css';
 	let { children } = $props();
 	let isLogin = $derived(page.url.pathname === '/login');
+	let column = $derived(page.route.id === '/projects/[id]' ? 'max-w-[1600px]' : 'max-w-5xl');
+	let menuOpen = $state(false);
+	const links = [
+		{ href: resolve('/'), label: 'Home', icon: House },
+		{ href: resolve('/projects'), label: 'Projects', icon: FolderOpen },
+		{ href: resolve('/library'), label: 'Library', icon: Library },
+		{ href: resolve('/settings'), label: 'Settings', icon: Settings }
+	];
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /><title>Studyloom</title></svelte:head>
@@ -17,11 +26,14 @@
 	class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:bg-background focus:p-3"
 	>Skip to content</a
 >
+{#snippet signOut(extra: string)}
+	<form action="/auth/logout" method="POST">
+		<Button type="submit" variant="ghost" class={extra}><LogOut />Sign out</Button>
+	</form>
+{/snippet}
 {#if !isLogin}
 	<header class="border-b bg-background">
-		<div
-			class="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-8"
-		>
+		<div class={['mx-auto flex items-center justify-between gap-3 px-4 py-4 sm:px-8', column]}>
 			<a href={resolve('/')} class="flex items-center gap-2 text-lg font-semibold tracking-tight"
 				><span
 					aria-hidden="true"
@@ -29,25 +41,45 @@
 					style:mask={`url("${favicon}") center / contain no-repeat`}
 				></span>Studyloom</a
 			>
-			<nav aria-label="Main navigation" class="flex items-center gap-2">
-				<Button href={resolve('/')} variant="ghost"><House />Home</Button>
-				<Button href={resolve('/projects')} variant="ghost"><FolderOpen />Projects</Button>
-				<Button href={resolve('/library')} variant="ghost"><Library />Library</Button>
-				<Button href={resolve('/settings')} variant="ghost"
-					><Settings /><span class="hidden sm:inline">Settings</span></Button
-				>
+			<nav aria-label="Main navigation" class="hidden items-center gap-2 md:flex">
+				{#each links as link (link.href)}
+					<Button href={link.href} variant="ghost"><link.icon />{link.label}</Button>
+				{/each}
 				<Button variant="ghost" size="icon" aria-label="Toggle color theme" onclick={toggleMode}
 					><SunMoon /></Button
 				>
-				<form action="/auth/logout" method="POST">
-					<Button type="submit" variant="ghost" aria-label="Sign out"
-						><LogOut /><span class="hidden sm:inline">Sign out</span></Button
-					>
-				</form>
+				{@render signOut('')}
 			</nav>
+			<Sheet.Root bind:open={menuOpen}>
+				<Sheet.Trigger>
+					{#snippet child({ props })}
+						<Button {...props} variant="ghost" size="icon" class="md:hidden" aria-label="Open menu"
+							><Menu /></Button
+						>
+					{/snippet}
+				</Sheet.Trigger>
+				<Sheet.Content side="right">
+					<Sheet.Header><Sheet.Title>Menu</Sheet.Title></Sheet.Header>
+					<nav aria-label="Main navigation" class="flex flex-col gap-1 px-4">
+						{#each links as link (link.href)}
+							<Button
+								href={link.href}
+								variant="ghost"
+								class="h-11 justify-start"
+								aria-current={page.url.pathname === link.href ? 'page' : undefined}
+								onclick={() => (menuOpen = false)}><link.icon />{link.label}</Button
+							>
+						{/each}
+						<Button variant="ghost" class="h-11 justify-start" onclick={toggleMode}
+							><SunMoon />Toggle theme</Button
+						>
+						{@render signOut('h-11 w-full justify-start')}
+					</nav>
+				</Sheet.Content>
+			</Sheet.Root>
 		</div>
 	</header>
 {/if}
-<main id="main" class={isLogin ? 'min-h-screen' : 'mx-auto max-w-[1600px] px-4 py-8 sm:px-8'}>
+<main id="main" class={isLogin ? 'min-h-screen' : ['mx-auto px-4 py-8 sm:px-8', column]}>
 	{@render children()}
 </main>
