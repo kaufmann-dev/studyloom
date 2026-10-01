@@ -2,11 +2,11 @@
 	import { onMount, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { Check, ChevronRight, Folder, Library, Search } from '@lucide/svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import * as Dialog from '$lib/components/ui/dialog';
-	import Input from '$lib/components/ui/input/input.svelte';
-	import type { LibraryEntry, LibraryFolder } from '$lib/domain';
-	import { api, errorText } from '$lib/ui';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import Input from '#lib/components/ui/input/input.svelte';
+	import type { LibraryEntry, LibraryFolder } from '#lib/domain.js';
+	import { api, errorText } from '#lib/ui.js';
 
 	let {
 		entry,

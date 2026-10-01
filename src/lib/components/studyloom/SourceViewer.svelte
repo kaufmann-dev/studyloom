@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import type { Pathname } from '$app/types';
+	import type { Path } from '$app/types';
 	import { onMount } from 'svelte';
 	import { Download, Copy, X } from '@lucide/svelte';
-	import type { MaterialDetails } from '$lib/domain';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import { createPoller } from '$lib/polling';
-	import { api, copyText, errorText, downloadText } from '$lib/ui';
+	import type { MaterialDetails } from '#lib/domain.js';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import { createPoller } from '#lib/polling.js';
+	import { api, copyText, errorText, downloadText } from '#lib/ui.js';
 	import ErrorAlert from './ErrorAlert.svelte';
 	let {
 		materialId,
@@ -33,6 +33,7 @@
 		`${Math.floor(ms / 60000)}:${Math.floor((ms / 1000) % 60)
 			.toString()
 			.padStart(2, '0')}`;
+
 	let transcript = $derived(
 		data?.turns.length
 			? data.turns
@@ -43,6 +44,7 @@
 					.join('\n\n')
 			: (data?.chunks.map((chunk) => `## ${chunk.locator}\n\n${chunk.text}`).join('\n\n') ?? '')
 	);
+
 	const poller = createPoller(async (interaction) => {
 		error = '';
 		try {
@@ -111,14 +113,11 @@
 					{@attach trackMedia}
 				></audio>
 			{:else if originalReady && data.material.mimeType.startsWith('video/')}
-				<video controls class="max-h-80 w-full" src={fileHref} {@attach trackMedia}
-					><track kind="captions" src={captions} srclang="und" label="Transcript" default /></video
-				>
-			{:else if originalReady && data.material.mimeType.startsWith('image/')}<img
-					class="max-h-96 w-full object-contain"
-					src={fileHref}
-					alt={data.material.name}
-				/>
+				<video controls class="max-h-80 w-full" src={fileHref} {@attach trackMedia}>
+					<track kind="captions" src={captions} srclang="und" label="Transcript" default />
+				</video>
+			{:else if originalReady && data.material.mimeType.startsWith('image/')}
+				<img class="max-h-96 w-full object-contain" src={fileHref} alt={data.material.name} />
 			{:else if originalReady && data.material.mimeType === 'application/pdf'}<iframe
 					class="h-96 w-full border"
 					src={fileHref}
@@ -163,9 +162,10 @@
 									class="max-h-80 w-full object-contain"
 								/>{/if}
 							<figcaption class="text-xs text-muted-foreground">
-								<a href={resolve(`/api/assets/${asset.id}/file` as Pathname)} class="underline"
+								<a href={resolve(`/api/assets/${asset.id}/file` as Path)} class="underline"
 									>{asset.label || 'Open asset'}</a
 								>
+
 								· {asset.locator}
 							</figcaption>
 						</figure>{/each}

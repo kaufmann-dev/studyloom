@@ -1,6 +1,6 @@
 <script lang="ts">
-	import * as AlertDialog from '$lib/components/ui/alert-dialog';
-	import { errorText } from '$lib/ui';
+	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+	import { errorText } from '#lib/ui.js';
 
 	let {
 		open = $bindable(false),

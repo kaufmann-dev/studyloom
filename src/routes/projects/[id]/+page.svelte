@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import Workspace from '$lib/components/studyloom/Workspace.svelte';
+	import Workspace from '#lib/components/studyloom/Workspace.svelte';
 	let projectId = $derived(page.params.id ?? '');
 </script>
 

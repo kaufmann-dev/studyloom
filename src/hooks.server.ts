@@ -1,7 +1,8 @@
-import { error, redirect, type Handle } from '@sveltejs/kit';
-import { building } from '$app/environment';
-import { readSession, SESSION_COOKIE, safeReturnTo } from '$lib/server/auth';
-import { origin } from '$lib/server/config';
+import { error, redirect } from '@sveltejs/kit';
+import type { Handle } from '@sveltejs/kit/hooks';
+import { building } from '$app/env';
+import { readSession, SESSION_COOKIE, safeReturnTo } from '#lib/server/auth.js';
+import { origin } from '#lib/server/config.js';
 export const handle: Handle = async ({ event, resolve }) => {
 	const path = event.url.pathname;
 	if (!building) {

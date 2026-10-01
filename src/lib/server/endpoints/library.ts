@@ -1,4 +1,4 @@
-import { error, json } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import { asc, eq, isNull, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db, type Transaction } from '../db';
@@ -82,7 +82,7 @@ function contentOf(input: z.infer<typeof libraryInput>) {
 
 export const library: Handler = async ({ event, method, id, action, seq }) => {
 	if (id === 'folders' && method === 'GET')
-		return json({
+		return Response.json({
 			folders: await db()
 				.select({
 					id: t.libraryEntries.id,
@@ -113,7 +113,7 @@ export const library: Handler = async ({ event, method, id, action, seq }) => {
 		return created({ entry, chunkSize: UPLOAD_CHUNK_SIZE });
 	}
 	if (!id && method === 'GET')
-		return json({ entry: null, children: await childrenOf(null), ancestors: [] });
+		return Response.json({ entry: null, children: await childrenOf(null), ancestors: [] });
 	if (!id && method === 'POST') {
 		const input = libraryInput.parse(await readJson(event));
 		await checkParent(input.parentId);
@@ -130,7 +130,7 @@ export const library: Handler = async ({ event, method, id, action, seq }) => {
 			folderPath(entry.parentId),
 			entry.kind === 'folder' ? childrenOf(entry.id) : []
 		]);
-		return json({
+		return Response.json({
 			entry,
 			children,
 			ancestors: ancestors.map(({ id, name }) => ({ id, name }))
@@ -149,7 +149,7 @@ export const library: Handler = async ({ event, method, id, action, seq }) => {
 			.set({ ...content, parentId, updatedAt: new Date() })
 			.where(eq(t.libraryEntries.id, entry.id))
 			.returning();
-		return json({ entry: updated });
+		return Response.json({ entry: updated });
 	}
 	if (!action && method === 'DELETE') {
 		const fileIds = await db().transaction(async (tx) => {
@@ -187,5 +187,5 @@ export const library: Handler = async ({ event, method, id, action, seq }) => {
 		return ok();
 	}
 	if (action === 'complete' && method === 'POST')
-		return json({ entry: await completeLibraryUpload(entry.id) });
+		return Response.json({ entry: await completeLibraryUpload(entry.id) });
 };

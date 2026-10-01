@@ -5,16 +5,16 @@
 	import { defaults, superForm } from 'sveltekit-superforms';
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
 	import { FolderOpen, Plus } from '@lucide/svelte';
-	import { projectInput, type Project } from '$lib/domain';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import * as Dialog from '$lib/components/ui/dialog';
-	import * as Form from '$lib/components/ui/form';
-	import Input from '$lib/components/ui/input/input.svelte';
-	import Textarea from '$lib/components/ui/textarea/textarea.svelte';
-	import ErrorAlert from '$lib/components/studyloom/ErrorAlert.svelte';
-	import PinButton from '$lib/components/studyloom/PinButton.svelte';
-	import { Pins } from '$lib/pins.svelte';
-	import { api, dateLabel, errorText } from '$lib/ui';
+	import { projectInput, type Project } from '#lib/domain.js';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import * as Form from '#lib/components/ui/form/index.js';
+	import Input from '#lib/components/ui/input/input.svelte';
+	import Textarea from '#lib/components/ui/textarea/textarea.svelte';
+	import ErrorAlert from '#lib/components/studyloom/ErrorAlert.svelte';
+	import PinButton from '#lib/components/studyloom/PinButton.svelte';
+	import { Pins } from '#lib/pins.svelte.js';
+	import { api, dateLabel, errorText } from '#lib/ui.js';
 
 	const pins = new Pins();
 	const projectForm = superForm(defaults(zod4(projectInput)), {

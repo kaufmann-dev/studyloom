@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import type { Pathname } from '$app/types';
+	import type { Path } from '$app/types';
 	import { toast } from 'svelte-sonner';
 	import { RefreshCw, Save, Trash2 } from '@lucide/svelte';
-	import type { Material } from '$lib/domain';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import { Checkbox } from '$lib/components/ui/checkbox';
-	import { Spinner } from '$lib/components/ui/spinner';
-	import { api, errorText, fileSize } from '$lib/ui';
+	import type { Material } from '#lib/domain.js';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
+	import { Spinner } from '#lib/components/ui/spinner/index.js';
+	import { api, errorText, fileSize } from '#lib/ui.js';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 
 	let {
@@ -18,13 +18,14 @@
 		modelId,
 		onRefresh,
 		onDeleted
+
+		/** Ids of the sources that hold readable text and can back chat and study tools. */
+		/** Model used when a source is processed again. */
 	}: {
 		projectId: string;
 		materials: Material[];
-		/** Ids of the sources that hold readable text and can back chat and study tools. */
 		selectable: string[];
 		selected: string[];
-		/** Model used when a source is processed again. */
 		modelId: string;
 		onRefresh: (interaction?: boolean) => void | Promise<void>;
 		onDeleted: (id: string) => void | Promise<void>;
@@ -119,19 +120,21 @@
 						/>
 						<div class="min-w-0 flex-1">
 							<a
-								href={resolve(`/projects/${projectId}?material=${material.id}` as Pathname)}
+								href={resolve(`/projects/${projectId}?material=${material.id}` as Path)}
 								class="block truncate text-sm font-medium hover:underline"
 								title={material.name}>{material.name}</a
 							>
+
 							<p class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-								{#if material.status === 'processing'}<Spinner
-										class="size-3"
-										role="presentation"
-									/>{/if}
-								<span class={[material.status === 'failed' && 'text-destructive']}>
-									{STATUS_LABELS[material.status]}
-								</span>
-								{#if material.size}<span>· {fileSize(material.size)}</span>{/if}
+								{#if material.status === 'processing'}
+									<Spinner class="size-3" role="presentation" />
+								{/if}
+								<span class={[material.status === 'failed' && 'text-destructive']}
+									>{STATUS_LABELS[material.status]}</span
+								>
+								{#if material.size}
+									<span>· {fileSize(material.size)}</span>
+								{/if}
 							</p>
 							{#if material.notes && (material.status === 'partial' || material.status === 'failed')}
 								<p class="mt-2 line-clamp-3 text-xs text-muted-foreground" title={material.notes}>
@@ -144,10 +147,8 @@
 							size="icon-xs"
 							aria-label={`Delete ${material.name}`}
 							disabled={busy === material.id}
-							onclick={() => (deleting = material)}
+							onclick={() => (deleting = material)}><Trash2 /></Button
 						>
-							<Trash2 />
-						</Button>
 					</div>
 					{#if canRetry(material)}
 						<Button

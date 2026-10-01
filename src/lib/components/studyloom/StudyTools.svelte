@@ -9,13 +9,13 @@
 		type StudyOutput,
 		type Material,
 		type MuseModel
-	} from '$lib/domain';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import * as Form from '$lib/components/ui/form';
-	import Input from '$lib/components/ui/input/input.svelte';
-	import * as NativeSelect from '$lib/components/ui/native-select';
-	import { waitForJob } from '$lib/polling';
-	import { api, dateLabel, errorText, plural } from '$lib/ui';
+	} from '#lib/domain.js';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import * as Form from '#lib/components/ui/form/index.js';
+	import Input from '#lib/components/ui/input/input.svelte';
+	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
+	import { waitForJob } from '#lib/polling.js';
+	import { api, dateLabel, errorText, plural } from '#lib/ui.js';
 	import ModelSelect, { availableModel } from './ModelSelect.svelte';
 	import OutputViewer from './OutputViewer.svelte';
 

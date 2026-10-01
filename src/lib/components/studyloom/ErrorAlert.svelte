@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { CircleAlert } from '@lucide/svelte';
-	import * as Alert from '$lib/components/ui/alert';
-	import Button from '$lib/components/ui/button/button.svelte';
+	import * as Alert from '#lib/components/ui/alert/index.js';
+	import Button from '#lib/components/ui/button/button.svelte';
 
 	let {
 		message,

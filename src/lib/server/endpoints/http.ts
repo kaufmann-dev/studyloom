@@ -1,4 +1,4 @@
-import { error, json, type RequestEvent } from '@sveltejs/kit';
+import { error, type RequestEvent } from '@sveltejs/kit';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
@@ -20,9 +20,9 @@ const JSON_BODY_LIMIT = 1024 * 1024;
 const INLINE_TYPES =
 	/^(audio\/(wav|mpeg|ogg|webm|mp4|x-m4a|flac)|video\/(mp4|webm)|image\/(png|jpeg|webp)|application\/pdf|text\/plain)$/;
 
-export const ok = () => json({ ok: true });
-export const created = (data: unknown) => json(data, { status: 201 });
-export const accepted = (data: unknown) => json(data, { status: 202 });
+export const ok = () => Response.json({ ok: true });
+export const created = (data: unknown) => Response.json(data, { status: 201 });
+export const accepted = (data: unknown) => Response.json(data, { status: 202 });
 
 export async function boundedBody(request: Request, limit: number) {
 	if (!request.body) return Buffer.alloc(0);

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { Ellipsis, FolderInput, Pencil, Trash2 } from '@lucide/svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import type { LibraryEntry } from '$lib/domain';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import type { LibraryEntry } from '#lib/domain.js';
 
 	let {
 		entry,

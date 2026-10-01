@@ -11,14 +11,14 @@
 		type Material,
 		type Message,
 		type MuseModel
-	} from '$lib/domain';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import * as Form from '$lib/components/ui/form';
-	import * as NativeSelect from '$lib/components/ui/native-select';
-	import { Spinner } from '$lib/components/ui/spinner';
-	import Textarea from '$lib/components/ui/textarea/textarea.svelte';
-	import { waitForJob } from '$lib/polling';
-	import { api, copyText, downloadText, errorText, plural } from '$lib/ui';
+	} from '#lib/domain.js';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import * as Form from '#lib/components/ui/form/index.js';
+	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
+	import { Spinner } from '#lib/components/ui/spinner/index.js';
+	import Textarea from '#lib/components/ui/textarea/textarea.svelte';
+	import { waitForJob } from '#lib/polling.js';
+	import { api, copyText, downloadText, errorText, plural } from '#lib/ui.js';
 	import Citations from './Citations.svelte';
 	import Markdown from './Markdown.svelte';
 	import ModelSelect, { availableModel } from './ModelSelect.svelte';

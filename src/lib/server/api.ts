@@ -1,4 +1,4 @@
-import { error, json, type RequestEvent } from '@sveltejs/kit';
+import { error, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { ClientError, safeError } from './config';
 import { museHost, museStatus } from './muse';
@@ -23,9 +23,9 @@ const museCalls: Record<string, [method: string, params?: Record<string, unknown
 	logout: ['account/logout']
 };
 const muse: Handler = async ({ method, id }) => {
-	if (method === 'GET') return json(await museAction(museStatus()));
+	if (method === 'GET') return Response.json(await museAction(museStatus()));
 	const call = method === 'POST' && id && Object.hasOwn(museCalls, id) ? museCalls[id] : undefined;
-	if (call) return json(await museAction(museHost.call(...call)));
+	if (call) return Response.json(await museAction(museHost.call(...call)));
 };
 
 const resources = new Map<string, Handler>(
@@ -47,7 +47,7 @@ const resources = new Map<string, Handler>(
 export async function api(event: RequestEvent) {
 	const method = event.request.method;
 	const [resource, id, action, seq] = event.url.pathname.slice(5).split('/').filter(Boolean);
-	if (resource === 'health' && method === 'GET') return json({ status: 'ok' });
+	if (resource === 'health' && method === 'GET') return Response.json({ status: 'ok' });
 	if (!event.locals.session) error(401, 'Please sign in.');
 	try {
 		const response = await resources.get(resource)?.({ event, method, id, action, seq });

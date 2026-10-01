@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { ArrowUpRight, Download, Mail, Phone } from '@lucide/svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import type { LibraryEntry } from '$lib/domain';
-	import { fileSize } from '$lib/ui';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import type { LibraryEntry } from '#lib/domain.js';
+	import { fileSize } from '#lib/ui.js';
 
 	let { entry }: { entry: LibraryEntry } = $props();
 	let fileHref = $derived(resolve('/api/[...path]', { path: `library/${entry.id}/file` }));

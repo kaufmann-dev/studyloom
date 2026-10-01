@@ -1,4 +1,4 @@
-import { error, json } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
@@ -60,7 +60,7 @@ export const materials: Handler = async ({ event, method, id: rawId, action, seq
 				.from(t.assets)
 				.where(eq(t.assets.materialId, id))
 		]);
-		return json({ material: source, chunks, turns, assets });
+		return Response.json({ material: source, chunks, turns, assets });
 	}
 	if (!action && method === 'DELETE') {
 		await db().transaction(async (tx) => {

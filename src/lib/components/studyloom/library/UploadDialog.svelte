@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { Upload } from '@lucide/svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import * as Dialog from '$lib/components/ui/dialog';
-	import { Progress } from '$lib/components/ui/progress';
-	import type { LibraryEntry } from '$lib/domain';
-	import { api, errorText, plural } from '$lib/ui';
-	import { sendChunks, uploadPercent, type PendingUpload } from '$lib/upload';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import { Progress } from '#lib/components/ui/progress/index.js';
+	import type { LibraryEntry } from '#lib/domain.js';
+	import { api, errorText, plural } from '#lib/ui.js';
+	import { sendChunks, uploadPercent, type PendingUpload } from '#lib/upload.js';
 
 	let {
 		parentId,

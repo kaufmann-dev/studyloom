@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Copy, Download } from '@lucide/svelte';
-	import type { Material, QuizAttempt, StudyOutput } from '$lib/domain';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import { createPoller } from '$lib/polling';
-	import { api, copyText, dateLabel, downloadText, errorText, plural } from '$lib/ui';
+	import type { Material, QuizAttempt, StudyOutput } from '#lib/domain.js';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import { createPoller } from '#lib/polling.js';
+	import { api, copyText, dateLabel, downloadText, errorText, plural } from '#lib/ui.js';
 	import Citations from './Citations.svelte';
 	import ErrorAlert from './ErrorAlert.svelte';
 	import Markdown from './Markdown.svelte';

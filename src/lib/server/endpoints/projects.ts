@@ -1,4 +1,4 @@
-import { error, json } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
 import * as t from '../db/schema';
@@ -25,7 +25,7 @@ const cleaned = (input: { name: string; description: string }) => ({
 
 export const projects: Handler = async ({ event, method, id: rawId, action }) => {
 	if (!rawId && method === 'GET')
-		return json({
+		return Response.json({
 			projects: await db().select().from(t.projects).orderBy(desc(t.projects.updatedAt))
 		});
 	if (!rawId && method === 'POST') {
@@ -66,7 +66,7 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 				.where(eq(t.materials.projectId, id))
 				.groupBy(t.sourceChunks.materialId)
 		]);
-		return json({
+		return Response.json({
 			project,
 			materials,
 			readableMaterialIds: readableChunks.map((chunk) => chunk.materialId),
@@ -82,7 +82,7 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 			.set({ ...cleaned(input), updatedAt: new Date() })
 			.where(eq(t.projects.id, id))
 			.returning();
-		return json({ project: updated });
+		return Response.json({ project: updated });
 	}
 	if (!action && method === 'DELETE') {
 		const sources = await db().transaction(async (tx) => {

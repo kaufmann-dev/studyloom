@@ -4,13 +4,13 @@
 	import { Settings2 } from '@lucide/svelte';
 	import { defaults, superForm } from 'sveltekit-superforms';
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
-	import { projectInput, type Project } from '$lib/domain';
-	import * as Dialog from '$lib/components/ui/dialog';
-	import * as Form from '$lib/components/ui/form';
-	import Input from '$lib/components/ui/input/input.svelte';
-	import Textarea from '$lib/components/ui/textarea/textarea.svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import { api, errorText } from '$lib/ui';
+	import { projectInput, type Project } from '#lib/domain.js';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import * as Form from '#lib/components/ui/form/index.js';
+	import Input from '#lib/components/ui/input/input.svelte';
+	import Textarea from '#lib/components/ui/textarea/textarea.svelte';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import { api, errorText } from '#lib/ui.js';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 
 	let {

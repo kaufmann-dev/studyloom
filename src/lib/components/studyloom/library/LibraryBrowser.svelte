@@ -9,14 +9,14 @@
 		type EditableLibraryKind,
 		type LibraryEntry,
 		type LibraryListing
-	} from '$lib/domain';
-	import * as Breadcrumb from '$lib/components/ui/breadcrumb';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import * as Dialog from '$lib/components/ui/dialog';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import * as Empty from '$lib/components/ui/empty';
-	import { Pins } from '$lib/pins.svelte';
-	import { api, errorText, plural } from '$lib/ui';
+	} from '#lib/domain.js';
+	import * as Breadcrumb from '#lib/components/ui/breadcrumb/index.js';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import * as Empty from '#lib/components/ui/empty/index.js';
+	import { Pins } from '#lib/pins.svelte.js';
+	import { api, errorText, plural } from '#lib/ui.js';
 	import ConfirmDialog from '../ConfirmDialog.svelte';
 	import ErrorAlert from '../ErrorAlert.svelte';
 	import PinButton from '../PinButton.svelte';
@@ -129,7 +129,7 @@
 		toast.success(`Deleted “${target.name}”.`);
 		if (target.id !== entry?.id) return load();
 		if (target.parentId) await goto(resolve('/library/[id]', { id: target.parentId }));
-		else await goto(resolve('/library'));
+		else await goto(resolve('library'));
 	}
 
 	onMount(() => {
@@ -146,7 +146,7 @@
 			class={[dropTarget === null && 'bg-accent outline-2 outline-primary']}
 		>
 			{#if entryId}
-				<Breadcrumb.Link href={resolve('/library')}>Library</Breadcrumb.Link>
+				<Breadcrumb.Link href={resolve('library')}>Library</Breadcrumb.Link>
 			{:else}
 				<Breadcrumb.Page>Library</Breadcrumb.Page>
 			{/if}
@@ -184,6 +184,7 @@
 		<div class="flex flex-wrap items-center gap-2">
 			{#if entry}
 				<PinButton {pins} targetType="library" targetId={entry.id} name={entry.name} />
+
 				<EntryMenu
 					{entry}
 					onEdit={(entry) => (editor = { entry })}
@@ -202,9 +203,9 @@
 					<DropdownMenu.Content align="end" class="w-40">
 						{#each CREATABLE as kind (kind)}
 							{@const Icon = KIND_ICONS[kind]}
-							<DropdownMenu.Item onSelect={() => (editor = { kind })}>
-								<Icon />{LIBRARY_KIND_LABELS[kind]}
-							</DropdownMenu.Item>
+							<DropdownMenu.Item onSelect={() => (editor = { kind })}
+								><Icon />{LIBRARY_KIND_LABELS[kind]}</DropdownMenu.Item
+							>
 						{/each}
 					</DropdownMenu.Content>
 				</DropdownMenu.Root>
@@ -264,6 +265,7 @@
 					</a>
 					<div class="relative flex shrink-0 items-center">
 						<PinButton {pins} targetType="library" targetId={child.id} name={child.name} />
+
 						<EntryMenu
 							entry={child}
 							onEdit={(entry) => (editor = { entry })}

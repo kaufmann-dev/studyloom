@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { isActiveJob, type Job } from '$lib/domain';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import { Spinner } from '$lib/components/ui/spinner';
-	import { api, errorText } from '$lib/ui';
+	import { isActiveJob, type Job } from '#lib/domain.js';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import { Spinner } from '#lib/components/ui/spinner/index.js';
+	import { api, errorText } from '#lib/ui.js';
 
 	let { jobs, onChanged }: { jobs: Job[]; onChanged: () => void | Promise<void> } = $props();
 

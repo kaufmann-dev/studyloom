@@ -1,5 +1,5 @@
 import { SvelteDate } from 'svelte/reactivity';
-import type { Job } from '$lib/domain';
+import type { Job } from '#lib/domain.js';
 import {
 	acknowledgeChunk,
 	listRecordings,

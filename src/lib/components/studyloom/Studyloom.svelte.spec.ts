@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import Upload from './Upload.svelte';
-import type { Conversation, LibraryEntry, LibraryFolder, Message, MuseModel } from '$lib/domain';
+import type { Conversation, LibraryEntry, LibraryFolder, Message, MuseModel } from '#lib/domain.js';
 import Chat from './Chat.svelte';
 import LibraryBrowser from './library/LibraryBrowser.svelte';
 import MoveDialog from './library/MoveDialog.svelte';
@@ -237,7 +237,7 @@ describe('Projects page', () => {
 	it('shows a load error without claiming there are no projects', async () => {
 		serve(() => response({ message: 'Projects unavailable' }, 500));
 		render(Projects);
-		await expect.element(page.getByRole('alert')).toHaveTextContent('Projects unavailable');
+		await expect.element(page.getByRole('alert')).toMatchTextContent('Projects unavailable');
 		await expect.element(page.getByText('Your first project starts here')).not.toBeInTheDocument();
 	});
 });
@@ -287,11 +287,11 @@ describe('Library move dialog', () => {
 		});
 
 		await expect
-			.element(page.getByRole('radio', { name: 'Documents' }))
+			.element(page.getByRole('radio', { name: 'Documents', exact: false }))
 			.toHaveAttribute('aria-checked', 'true');
 		await expect.element(page.getByRole('button', { name: 'Move here' })).toBeDisabled();
 
-		await page.getByRole('radio', { name: 'Travel' }).click();
+		await page.getByRole('radio', { name: 'Travel', exact: false }).click();
 		await page.getByRole('button', { name: 'Move to Travel' }).click();
 		await vi.waitFor(() => expect(onMoved).toHaveBeenCalledWith('Travel'));
 		expect(fetchMock).toHaveBeenCalledWith(
@@ -308,10 +308,18 @@ describe('Library move dialog', () => {
 			onMoved: vi.fn()
 		});
 
-		await expect.element(page.getByRole('radio', { name: 'University' })).toBeInTheDocument();
-		await expect.element(page.getByRole('radio', { name: 'Travel' })).toBeInTheDocument();
-		await expect.element(page.getByRole('radio', { name: 'Documents' })).not.toBeInTheDocument();
-		await expect.element(page.getByRole('radio', { name: 'Archive' })).not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('radio', { name: 'University', exact: false }))
+			.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('radio', { name: 'Travel', exact: false }))
+			.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('radio', { name: 'Documents', exact: false }))
+			.not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('radio', { name: 'Archive', exact: false }))
+			.not.toBeInTheDocument();
 	});
 });
 

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { AudioLines, ArrowRight } from '@lucide/svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
+	import Button from '#lib/components/ui/button/button.svelte';
 	const legalDomain = 'studyloom.kaufmann.dev';
 	let returnTo = $derived(page.url.searchParams.get('returnTo') ?? '/');
 	let signInHref = $derived(

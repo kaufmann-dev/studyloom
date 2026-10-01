@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { RefreshCw, Upload } from '@lucide/svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import { api, errorText } from '$lib/ui';
-	import { sendChunks, uploadPercent, type PendingUpload } from '$lib/upload';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import { api, errorText } from '#lib/ui.js';
+	import { sendChunks, uploadPercent, type PendingUpload } from '#lib/upload.js';
 
 	let {
 		projectId,

@@ -77,7 +77,7 @@ Uploads default to 2 GiB per source, using 8 MiB HTTP chunks. Audio is mono sign
 Required environment variables:
 
 - `DATABASE_URL`: production PostgreSQL connection string; runtime and deployment migration command.
-- `ORIGIN`: `https://studyloom.kaufmann.dev`; runtime.
+- `ORIGIN`: `https://studyloom.kaufmann.dev`; build time (embedded as SvelteKit's `paths.origin` for CSRF checks) and runtime.
 - `OIDC_ISSUER`: Pocket ID issuer URL; runtime.
 - `OIDC_CLIENT_ID`: confidential client ID; runtime.
 - `OIDC_CLIENT_SECRET`: confidential client secret; runtime secret.

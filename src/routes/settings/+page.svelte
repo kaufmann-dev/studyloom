@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { ExternalLink, Link, RefreshCw, Unplug } from '@lucide/svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import ErrorAlert from '$lib/components/studyloom/ErrorAlert.svelte';
-	import type { MuseStatus } from '$lib/domain';
-	import { createPoller } from '$lib/polling';
-	import { api, errorText } from '$lib/ui';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import ErrorAlert from '#lib/components/studyloom/ErrorAlert.svelte';
+	import type { MuseStatus } from '#lib/domain.js';
+	import { createPoller } from '#lib/polling.js';
+	import { api, errorText } from '#lib/ui.js';
 
 	const STATE_LABELS: Record<string, string> = {
 		accountLogin: 'Connected',

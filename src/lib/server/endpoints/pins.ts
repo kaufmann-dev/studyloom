@@ -1,4 +1,4 @@
-import { error, json } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import { desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
 import * as t from '../db/schema';
@@ -39,7 +39,7 @@ export const pins: Handler = async ({ event, method, id }) => {
 		const targets = new Map<string, { name: string; kind?: LibraryKind }>(
 			[...projects, ...entries].map((target) => [target.id, target])
 		);
-		return json({
+		return Response.json({
 			pins: rows.flatMap((pin) => {
 				const target = targets.get(pin.projectId ?? pin.libraryId!);
 				return target ? [publicPin(pin, target)] : [];
@@ -65,7 +65,7 @@ export const pins: Handler = async ({ event, method, id }) => {
 					.where(eq(forProject ? t.pins.projectId : t.pins.libraryId, input.targetId));
 		return inserted
 			? created({ pin: publicPin(pin, target) })
-			: json({ pin: publicPin(pin, target) });
+			: Response.json({ pin: publicPin(pin, target) });
 	}
 	if (id && method === 'DELETE') {
 		const [deleted] = await db()

@@ -1,6 +1,6 @@
 import { Contact, File, Folder, Link, NotebookText } from '@lucide/svelte';
-import type { LibraryEntry, LibraryKind } from '$lib/domain';
-import { fileSize } from '$lib/ui';
+import type { LibraryEntry, LibraryKind } from '#lib/domain.js';
+import { fileSize } from '#lib/ui.js';
 
 export const KIND_ICONS = {
 	folder: Folder,

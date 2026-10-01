@@ -2,11 +2,11 @@
 	import { onMount } from 'svelte';
 	import { beforeNavigate } from '$app/navigation';
 	import { Mic, Pause, Play, Square, RotateCcw } from '@lucide/svelte';
-	import { Button } from '$lib/components/ui/button';
-	import { Label } from '$lib/components/ui/label';
-	import * as NativeSelect from '$lib/components/ui/native-select';
-	import { BrowserRecorder } from '$lib/recording/recorder.svelte';
-	import type { RecordingSource, LocalRecording } from '$lib/recording/storage';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { Label } from '#lib/components/ui/label/index.js';
+	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
+	import { BrowserRecorder } from '#lib/recording/recorder.svelte.js';
+	import type { RecordingSource, LocalRecording } from '#lib/recording/storage.js';
 
 	let { projectId, onSaved }: { projectId: string; onSaved?: (materialId: string) => void } =
 		$props();
@@ -24,6 +24,7 @@
 	});
 
 	beforeNavigate((navigation) => {
+		if (navigation.shallow) return;
 		if (!recorder.needsAttention) return;
 		navigation.cancel();
 		if (!navigation.willUnload) navigationWarning = true;

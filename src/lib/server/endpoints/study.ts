@@ -1,4 +1,4 @@
-import { error, json } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import { db } from '../db';
 import * as t from '../db/schema';
@@ -43,7 +43,7 @@ export const conversations: Handler = async ({ method, id, action }) => {
 		.from(t.conversations)
 		.where(eq(t.conversations.id, idSchema.parse(id)));
 	if (!conversation) error(404);
-	return json({
+	return Response.json({
 		conversation,
 		messages: await db()
 			.select()
@@ -60,7 +60,7 @@ export const outputs: Handler = async ({ event, method, id, action }) => {
 		.where(eq(t.outputs.id, idSchema.parse(id)));
 	if (!output) error(404);
 	if (!action && method === 'GET')
-		return json({
+		return Response.json({
 			output: publicOutput(output),
 			attempts: await db()
 				.select()
@@ -119,7 +119,7 @@ export const jobs: Handler = async ({ method, id, action }) => {
 		.where(eq(t.jobs.id, idSchema.parse(id)));
 	if (!job) error(404);
 	const released = { leaseOwner: null, leaseUntil: null, updatedAt: new Date() };
-	if (!action && method === 'GET') return json({ job: publicJob(job) });
+	if (!action && method === 'GET') return Response.json({ job: publicJob(job) });
 	if (action === 'cancel' && method === 'POST') {
 		await db().transaction(async (tx) => {
 			const [cancelled] = await tx

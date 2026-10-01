@@ -3,11 +3,11 @@
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { FolderOpen, Library, PinOff } from '@lucide/svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import ErrorAlert from '$lib/components/studyloom/ErrorAlert.svelte';
-	import type { Pin } from '$lib/domain';
-	import { Pins } from '$lib/pins.svelte';
-	import { errorText } from '$lib/ui';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import ErrorAlert from '#lib/components/studyloom/ErrorAlert.svelte';
+	import type { Pin } from '#lib/domain.js';
+	import { Pins } from '#lib/pins.svelte.js';
+	import { errorText } from '#lib/ui.js';
 
 	let { data }: { data: { session: { name: string } | null } } = $props();
 	const pins = new Pins();
@@ -55,8 +55,8 @@
 		<div class="border border-dashed px-6 py-12">
 			<p class="text-muted-foreground">Pin projects or Library items to keep them close at hand.</p>
 			<div class="mt-5 flex flex-wrap gap-2">
-				<Button href={resolve('/projects')} variant="outline"><FolderOpen />Browse projects</Button>
-				<Button href={resolve('/library')} variant="outline"><Library />Browse Library</Button>
+				<Button href={resolve('projects')} variant="outline"><FolderOpen />Browse projects</Button>
+				<Button href={resolve('library')} variant="outline"><Library />Browse Library</Button>
 			</div>
 		</div>
 	{:else}

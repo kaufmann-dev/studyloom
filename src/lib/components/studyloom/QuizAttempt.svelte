@@ -2,13 +2,13 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { defaults, superForm } from 'sveltekit-superforms';
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
-	import { answersSchema, type StudyOutput, type QuizAttempt, type Material } from '$lib/domain';
-	import * as Form from '$lib/components/ui/form';
-	import Textarea from '$lib/components/ui/textarea/textarea.svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
+	import { answersSchema, type StudyOutput, type QuizAttempt, type Material } from '#lib/domain.js';
+	import * as Form from '#lib/components/ui/form/index.js';
+	import Textarea from '#lib/components/ui/textarea/textarea.svelte';
+	import Button from '#lib/components/ui/button/button.svelte';
 	import Citations from './Citations.svelte';
-	import { waitForJob } from '$lib/polling';
-	import { api, errorText, dateLabel } from '$lib/ui';
+	import { waitForJob } from '#lib/polling.js';
+	import { api, errorText, dateLabel } from '#lib/ui.js';
 	let {
 		output,
 		attempts,

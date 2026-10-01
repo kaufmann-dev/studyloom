@@ -3,10 +3,10 @@
 	import { ModeWatcher, toggleMode } from 'mode-watcher';
 	import { page } from '$app/state';
 	import { House, FolderOpen, Library, Settings, SunMoon, LogOut, Menu } from '@lucide/svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import * as Sheet from '$lib/components/ui/sheet/index.js';
-	import { Toaster } from '$lib/components/ui/sonner';
-	import favicon from '$lib/assets/favicon.svg';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import * as Sheet from '#lib/components/ui/sheet/index.js';
+	import { Toaster } from '#lib/components/ui/sonner/index.js';
+	import favicon from '#lib/assets/favicon.svg';
 	import './layout.css';
 	let { children } = $props();
 	let isLogin = $derived(page.url.pathname === '/login');
@@ -14,9 +14,13 @@
 	let menuOpen = $state(false);
 	const links = [
 		{ href: resolve('/'), label: 'Home', icon: House },
-		{ href: resolve('/projects'), label: 'Projects', icon: FolderOpen },
-		{ href: resolve('/library'), label: 'Library', icon: Library },
-		{ href: resolve('/settings'), label: 'Settings', icon: Settings }
+		{
+			href: resolve('projects'),
+			label: 'Projects',
+			icon: FolderOpen
+		},
+		{ href: resolve('library'), label: 'Library', icon: Library },
+		{ href: resolve('settings'), label: 'Settings', icon: Settings }
 	];
 	// Nested pages such as a project or a Library folder keep their section highlighted.
 	const isCurrent = (href: string) =>
@@ -44,8 +48,11 @@
 					aria-hidden="true"
 					class="size-6 shrink-0 bg-foreground"
 					style:mask={`url("${favicon}") center / contain no-repeat`}
-				></span>Studyloom</a
-			>
+				></span>
+
+				Studyloom
+			</a>
+
 			<nav aria-label="Main navigation" class="hidden items-center gap-2 md:flex">
 				{#each links as link (link.href)}
 					<Button

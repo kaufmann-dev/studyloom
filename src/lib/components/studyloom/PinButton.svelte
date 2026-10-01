@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { Pin, PinOff } from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
-	import Button, { type ButtonProps } from '$lib/components/ui/button/button.svelte';
-	import type { Pin as SavedPin } from '$lib/domain';
-	import type { Pins } from '$lib/pins.svelte';
-	import { errorText } from '$lib/ui';
+	import Button, { type ButtonProps } from '#lib/components/ui/button/button.svelte';
+	import type { Pin as SavedPin } from '#lib/domain.js';
+	import type { Pins } from '#lib/pins.svelte.js';
+	import { errorText } from '#lib/ui.js';
 
 	let {
 		pins,

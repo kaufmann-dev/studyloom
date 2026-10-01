@@ -11,14 +11,14 @@
 		type MuseModel,
 		type MuseStatus,
 		type ProjectWorkspace
-	} from '$lib/domain';
-	import Button from '$lib/components/ui/button/button.svelte';
-	import { Label } from '$lib/components/ui/label';
-	import * as Tabs from '$lib/components/ui/tabs';
-	import Recorder from '$lib/components/Recorder.svelte';
-	import { Pins } from '$lib/pins.svelte';
-	import { createPoller } from '$lib/polling';
-	import { api, errorText } from '$lib/ui';
+	} from '#lib/domain.js';
+	import Button from '#lib/components/ui/button/button.svelte';
+	import { Label } from '#lib/components/ui/label/index.js';
+	import * as Tabs from '#lib/components/ui/tabs/index.js';
+	import Recorder from '#lib/components/Recorder.svelte';
+	import { Pins } from '#lib/pins.svelte.js';
+	import { createPoller } from '#lib/polling.js';
+	import { api, errorText } from '#lib/ui.js';
 	import Chat from './Chat.svelte';
 	import ErrorAlert from './ErrorAlert.svelte';
 	import JobActivity from './JobActivity.svelte';
@@ -96,7 +96,7 @@
 		}
 	}
 	async function closeViewer() {
-		await goto(resolve('/projects/[id]', { id: projectId }), { noScroll: true });
+		await goto(resolve('/projects/[id]', { id: projectId }), { reset: false });
 	}
 	async function sourceDeleted(id: string) {
 		if (materialId === id) await closeViewer();
@@ -114,7 +114,7 @@
 <svelte:head><title>{data?.project.name ?? 'Project'} · Studyloom</title></svelte:head>
 <div class="mb-6">
 	<a
-		href={resolve('/projects')}
+		href={resolve('projects')}
 		class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:underline"
 		><ArrowLeft class="size-4" />Projects</a
 	>
@@ -134,11 +134,12 @@
 		</div>
 		<div class="flex items-center gap-2">
 			<PinButton {pins} targetType="project" targetId={projectId} name={data.project.name} />
+
 			{#key data.project.id}
 				<ProjectSettings
 					project={data.project}
 					onSaved={refresh}
-					onDeleted={() => goto(resolve('/projects'))}
+					onDeleted={() => goto(resolve('projects'))}
 				/>
 			{/key}
 		</div>
@@ -148,7 +149,8 @@
 			class="mb-6 flex flex-wrap items-center justify-between gap-3 border-l-2 border-primary bg-muted px-4 py-3 text-sm"
 		>
 			<p>{museNotice}</p>
-			<Button href={resolve('/settings')} variant="outline" size="sm">Muse settings</Button>
+
+			<Button href={resolve('settings')} variant="outline" size="sm">Muse settings</Button>
 		</div>
 	{/if}
 	<div class="grid items-start gap-7 lg:grid-cols-[300px_minmax(0,1fr)]">
@@ -157,9 +159,12 @@
 				<h2 id="{uid}-add" class="text-sm font-semibold">Add materials</h2>
 				<div class="space-y-2">
 					<Label for="{uid}-model">Processing model</Label>
+
 					<ModelSelect id="{uid}-model" {models} bind:value={preferredModel} />
 				</div>
+
 				<Upload {projectId} modelId={processingModel} onSaved={refresh} />
+
 				<div class="border-t pt-4">
 					<Recorder {projectId} onSaved={() => void refresh()} />
 				</div>

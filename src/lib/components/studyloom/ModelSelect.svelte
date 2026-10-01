@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import { DEFAULT_MODEL, type MuseModel } from '$lib/domain';
+	import { DEFAULT_MODEL, type MuseModel } from '#lib/domain.js';
 
 	/** The preferred model when the account still offers it, otherwise the first available one. */
 	export function availableModel(models: MuseModel[], preferred: string): string {
@@ -13,7 +13,7 @@
 
 <script lang="ts">
 	import type { HTMLSelectAttributes } from 'svelte/elements';
-	import * as NativeSelect from '$lib/components/ui/native-select';
+	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
 
 	let {
 		models,
