@@ -127,3 +127,61 @@
 		@apply font-sans;
 	}
 }
+
+/* Model-written Markdown (chat answers and summaries). */
+@layer components {
+	.markdown {
+		@apply text-sm leading-relaxed break-words;
+	}
+	.markdown > :first-child {
+		@apply mt-0;
+	}
+	.markdown > :last-child {
+		@apply mb-0;
+	}
+	.markdown :is(p, ul, ol, pre, blockquote, table) {
+		@apply my-3;
+	}
+	.markdown :is(h1, h2, h3, h4) {
+		@apply mt-5 mb-2 font-semibold;
+	}
+	.markdown h1 {
+		@apply text-lg;
+	}
+	.markdown h2 {
+		@apply text-base;
+	}
+	.markdown ul {
+		@apply list-disc pl-5;
+	}
+	.markdown ol {
+		@apply list-decimal pl-5;
+	}
+	.markdown li {
+		@apply my-1;
+	}
+	.markdown a {
+		@apply text-primary underline underline-offset-4;
+	}
+	.markdown blockquote {
+		@apply border-l-2 pl-4 text-muted-foreground;
+	}
+	.markdown code {
+		@apply bg-muted px-1 py-0.5 font-mono text-[0.85em];
+	}
+	.markdown pre {
+		@apply overflow-x-auto bg-muted p-3;
+	}
+	.markdown pre code {
+		@apply bg-transparent p-0;
+	}
+	.markdown table {
+		@apply block w-full border-collapse overflow-x-auto;
+	}
+	.markdown :is(th, td) {
+		@apply border px-2 py-1 text-left align-top;
+	}
+	.markdown hr {
+		@apply my-5;
+	}
+}

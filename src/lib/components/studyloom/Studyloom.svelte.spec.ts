@@ -4,7 +4,9 @@ import { render } from 'vitest-browser-svelte';
 import Upload from './Upload.svelte';
 import type { Conversation, LibraryEntry, LibraryFolder, Message, MuseModel } from '$lib/domain';
 import Chat from './Chat.svelte';
+import LibraryBrowser from './library/LibraryBrowser.svelte';
 import MoveDialog from './library/MoveDialog.svelte';
+import Markdown from './Markdown.svelte';
 import Projects from '../../../routes/projects/+page.svelte';
 
 function response(body: unknown, status = 200) {
@@ -310,5 +312,51 @@ describe('Library move dialog', () => {
 		await expect.element(page.getByRole('radio', { name: 'Travel' })).toBeInTheDocument();
 		await expect.element(page.getByRole('radio', { name: 'Documents' })).not.toBeInTheDocument();
 		await expect.element(page.getByRole('radio', { name: 'Archive' })).not.toBeInTheDocument();
+	});
+});
+
+describe('Markdown', () => {
+	it('formats model text and strips anything that could run or call out', async () => {
+		render(Markdown, {
+			text: '**Key idea**\n\n<script>window.hacked = true</script><img src="https://example.com/x.png" onerror="window.hacked = true">\n\n[source](https://example.com)'
+		});
+		await expect.element(page.getByText('Key idea')).toBeInTheDocument();
+		expect(document.querySelector('.markdown strong')?.textContent).toBe('Key idea');
+		expect(document.querySelector('.markdown script, .markdown img')).toBeNull();
+		expect(document.querySelector('.markdown a')?.getAttribute('rel')).toBe('noopener noreferrer');
+		expect((window as { hacked?: boolean }).hacked).toBeUndefined();
+	});
+});
+
+describe('Library browser', () => {
+	it('moves an item when its row is dropped on a folder row', async () => {
+		const children = [
+			libraryEntry({ id: 'travel', kind: 'folder', name: 'Travel' }),
+			libraryEntry({ id: 'note-1', name: 'Deadline' })
+		];
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+			const path = String(input);
+			if (path === '/api/pins') return response({ pins: [] });
+			if (path === '/api/library') return response({ entry: null, children, ancestors: [] });
+			return response({ entry: {} });
+		});
+		render(LibraryBrowser, { entryId: null });
+		await expect.element(page.getByText('Deadline')).toBeInTheDocument();
+
+		const row = (name: string) => page.getByText(name).element().closest('li')!;
+		const drag = (type: string, target: Element) =>
+			target.dispatchEvent(
+				new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() })
+			);
+		drag('dragstart', row('Deadline'));
+		drag('dragover', row('Travel'));
+		drag('drop', row('Travel'));
+
+		await vi.waitFor(() =>
+			expect(fetchMock).toHaveBeenCalledWith(
+				'/api/library/note-1',
+				expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ parentId: 'travel' }) })
+			)
+		);
 	});
 });

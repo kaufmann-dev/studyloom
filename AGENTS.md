@@ -35,8 +35,6 @@ pnpm drizzle-kit migrate     # Execute migrations
 - **Database**: Drizzle with PostgreSQL
 - **Auth**: Pocket ID OIDC with `openid-client`; one shared private workspace
 - **Forms**: Superforms and Zod
-- **Email**: Resend and `better-svelte-email`
-- **i18n**: Paraglide
 - **Testing**: Vitest
 
 Do not use frameworks or libraries just because they are installed. Keep optional infrastructure out of the project until its feature is being implemented.
@@ -187,12 +185,6 @@ Avoid these legacy Svelte features in new or refactored code:
 
 - **Authentication**: Use `src/lib/server/auth.ts` and `openid-client`. Pocket ID's access policy is the sole admission control. Use S256 PKCE, `client_secret_post`, opaque hashed server sessions, 24-hour idle and seven-day absolute expiry, and RP-Initiated Logout. Never introduce local passwords, refresh-token sessions, identity allowlists or a development auth bypass. Passive polling and recording traffic must not extend idle time.
 - **Forms**: Always use Superforms with Zod. Follow the chain: `zod schema -> superforms -> formsnap -> shadcn-svelte form components`. Use `Form.Field`, `Form.Control`, and shadcn error components rather than ad hoc markup.
-- **Email**: Use `better-svelte-email` for templates and Resend for delivery. Render components in server-only code, and send both HTML and plain text.
-  ```ts
-  import Renderer, { toPlainText } from 'better-svelte-email/render';
-  const html = await new Renderer().render(EmailTemplate, { props });
-  const text = toPlainText(html);
-  ```
 
 ## Local Database and Deployment
 
@@ -204,8 +196,6 @@ For Coolify and Nixpacks:
 - If `pnpm-workspace.yaml` exists in a single-package app, keep a non-empty `packages` list with `.` included.
 - Use `engines.node` and `nixpacks.toml` to pin compatible Node behavior when dependencies require a minimum patch version.
 - Read deployment environment variables from `process.env`. Load `.env` only after checking that the file exists.
-- Validate seed script environment variables before calling Better Auth APIs.
-- Document and enforce minimum seeded account password lengths.
 - Let Nixpacks handle the install phase unless a project-specific reason requires otherwise.
 - Prefer explicit deploy or runtime migration and seed steps when Coolify supports them.
 - Keep build-time migration and seed scripts idempotent when they must run during image builds.
@@ -214,6 +204,8 @@ For Coolify and Nixpacks:
 
 - `src/lib/domain.ts` owns shared types and Zod schemas. Keep API contracts and UI aligned.
 - `src/lib/server/api.ts` dispatches authenticated HTTP endpoints to the per-resource handlers in `src/lib/server/endpoints/`. Never return job payloads, source snapshots, credentials or private filesystem paths in API responses.
+- The interface is English only; write UI strings inline.
+- Model-written text (chat answers, summaries) renders through `Markdown.svelte`, which sanitises the HTML. Never use `{@html}` on it directly.
 - Browser code calls the API through `api()` in `src/lib/ui.ts`; job polling, chunked uploads and pins live in `src/lib/polling.ts`, `src/lib/upload.ts` and `src/lib/pins.svelte.ts`. Reuse them instead of calling `fetch` in components.
 - `src/server/runtime.ts` attaches authenticated WebSockets and starts durable workers. `server.mjs` is the production entrypoint; Vite alone does not run recording sockets or workers.
 - `src/lib/server/jobs.ts` handles ingestion, chat, overviews, quizzes, grading and recovery. Keep source snapshots and validated citations. Preserve idempotency when retrying jobs.

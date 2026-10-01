@@ -20,6 +20,7 @@
 	import { waitForJob } from '$lib/polling';
 	import { api, copyText, downloadText, errorText, plural } from '$lib/ui';
 	import Citations from './Citations.svelte';
+	import Markdown from './Markdown.svelte';
 	import ModelSelect, { availableModel } from './ModelSelect.svelte';
 
 	let {
@@ -238,7 +239,11 @@
 				<h3 class="mb-2 text-xs font-semibold text-muted-foreground">
 					{message.role === 'user' ? 'You' : 'Studyloom'}
 				</h3>
-				<p class="text-sm leading-relaxed break-words whitespace-pre-wrap">{message.content}</p>
+				{#if message.role === 'user'}
+					<p class="text-sm leading-relaxed break-words whitespace-pre-wrap">{message.content}</p>
+				{:else}
+					<Markdown text={message.content} />
+				{/if}
 				<Citations {projectId} citations={message.citations} {materials} />
 				{#if message.modelId}
 					<p class="mt-3 text-xs break-all text-muted-foreground">{message.modelId}</p>

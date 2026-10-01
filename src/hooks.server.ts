@@ -1,7 +1,5 @@
 import { error, redirect, type Handle } from '@sveltejs/kit';
 import { building } from '$app/environment';
-import { getTextDirection } from '$lib/paraglide/runtime';
-import { paraglideMiddleware } from '$lib/paraglide/server';
 import { readSession, SESSION_COOKIE, safeReturnTo } from '$lib/server/auth';
 import { origin } from '$lib/server/config';
 export const handle: Handle = async ({ event, resolve }) => {
@@ -26,13 +24,5 @@ export const handle: Handle = async ({ event, resolve }) => {
 			redirect(303, '/login?returnTo=' + encodeURIComponent(safeReturnTo(path + event.url.search)));
 		}
 	}
-	return paraglideMiddleware(event.request, ({ request, locale }) => {
-		event.request = request;
-		return resolve(event, {
-			transformPageChunk: ({ html }) =>
-				html
-					.replace('%paraglide.lang%', locale)
-					.replace('%paraglide.dir%', getTextDirection(locale))
-		});
-	});
+	return resolve(event);
 };

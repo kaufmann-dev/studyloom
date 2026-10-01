@@ -41,6 +41,9 @@
 	let moving = $state.raw<LibraryEntry | null>(null);
 	let deleting = $state.raw<LibraryEntry | null>(null);
 	let uploading = $state(false);
+	// Drag a row onto a folder row or a breadcrumb to move it there.
+	let dragging = $state.raw<LibraryEntry | null>(null);
+	let dropTarget = $state<string | null | undefined>(undefined);
 
 	let entry = $derived(listing?.entry ?? null);
 	let isFolder = $derived(!entry || entry.kind === 'folder');
@@ -82,6 +85,38 @@
 		toast.success(`Moved “${name}” to ${destination}.`);
 		await load();
 	}
+	/** Drop-zone handlers for one destination; a zone accepts anything except a no-op move. */
+	function dropZone(id: string | null, name: string) {
+		const accepts = () => dragging !== null && dragging.id !== id && dragging.parentId !== id;
+		return {
+			ondragover: (event: DragEvent) => {
+				if (!accepts()) return;
+				event.preventDefault();
+				dropTarget = id;
+			},
+			ondragleave: () => {
+				if (dropTarget === id) dropTarget = undefined;
+			},
+			ondrop: async (event: DragEvent) => {
+				const moved = dragging;
+				if (!moved || !accepts()) return;
+				event.preventDefault();
+				dragging = null;
+				dropTarget = undefined;
+				try {
+					await api(`/api/library/${moved.id}`, { method: 'PATCH', body: { parentId: id } });
+					toast.success(`Moved “${moved.name}” to ${name}.`);
+					await load();
+				} catch (cause) {
+					toast.error(errorText(cause));
+				}
+			}
+		};
+	}
+	function endDrag() {
+		dragging = null;
+		dropTarget = undefined;
+	}
 	async function uploaded(count: number) {
 		uploading = false;
 		if (count) toast.success(`${plural(count, 'file')} uploaded.`);
@@ -106,7 +141,10 @@
 
 <Breadcrumb.Root class="mb-6">
 	<Breadcrumb.List>
-		<Breadcrumb.Item>
+		<Breadcrumb.Item
+			{...dropZone(null, 'Library')}
+			class={[dropTarget === null && 'bg-accent outline-2 outline-primary']}
+		>
 			{#if entryId}
 				<Breadcrumb.Link href={resolve('/library')}>Library</Breadcrumb.Link>
 			{:else}
@@ -115,7 +153,10 @@
 		</Breadcrumb.Item>
 		{#each listing?.ancestors ?? [] as ancestor (ancestor.id)}
 			<Breadcrumb.Separator />
-			<Breadcrumb.Item class="min-w-0">
+			<Breadcrumb.Item
+				{...dropZone(ancestor.id, ancestor.name)}
+				class={['min-w-0', dropTarget === ancestor.id && 'bg-accent outline-2 outline-primary']}
+			>
 				<Breadcrumb.Link href={resolve('/library/[id]', { id: ancestor.id })} class="truncate"
 					>{ancestor.name}</Breadcrumb.Link
 				>
@@ -196,7 +237,20 @@
 			{#each children as child (child.id)}
 				{@const Icon = KIND_ICONS[child.kind]}
 				{@const detail = entryDetail(child)}
-				<li class="relative flex min-w-0 items-center gap-3 p-3 hover:bg-muted/40 sm:px-4">
+				<li
+					draggable="true"
+					ondragstart={(event) => {
+						dragging = child;
+						if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+					}}
+					ondragend={endDrag}
+					{...child.kind === 'folder' ? dropZone(child.id, child.name) : {}}
+					class={[
+						'relative flex min-w-0 items-center gap-3 p-3 hover:bg-muted/40 sm:px-4',
+						dragging?.id === child.id && 'opacity-50',
+						dropTarget === child.id && 'bg-accent outline-2 -outline-offset-2 outline-primary'
+					]}
+				>
 					<Icon class="size-5 shrink-0 text-muted-foreground" />
 					<!-- The stretched link makes the whole row a target; the buttons sit above it. -->
 					<a

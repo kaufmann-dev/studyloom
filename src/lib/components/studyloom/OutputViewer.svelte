@@ -7,6 +7,7 @@
 	import { api, copyText, dateLabel, downloadText, errorText, plural } from '$lib/ui';
 	import Citations from './Citations.svelte';
 	import ErrorAlert from './ErrorAlert.svelte';
+	import Markdown from './Markdown.svelte';
 	import Attempt from './QuizAttempt.svelte';
 
 	let { outputId, materials }: { outputId: string; materials: Material[] } = $props();
@@ -71,7 +72,7 @@
 		{#if quiz}
 			<Attempt {output} attempts={data.attempts} {materials} onRefresh={() => poller.run()} />
 		{:else}
-			<div class="text-sm leading-7 break-words whitespace-pre-wrap">{output.content}</div>
+			<Markdown text={output.content} class="leading-7" />
 			<Citations projectId={output.projectId} citations={output.citations} {materials} />
 		{/if}
 	</article>
