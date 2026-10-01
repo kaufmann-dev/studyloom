@@ -5,6 +5,7 @@
 	import { House, FolderOpen, Library, Settings, SunMoon, LogOut, Menu } from '@lucide/svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
+	import { Toaster } from '$lib/components/ui/sonner';
 	import favicon from '$lib/assets/favicon.svg';
 	import './layout.css';
 	let { children } = $props();
@@ -17,10 +18,14 @@
 		{ href: resolve('/library'), label: 'Library', icon: Library },
 		{ href: resolve('/settings'), label: 'Settings', icon: Settings }
 	];
+	// Nested pages such as a project or a Library folder keep their section highlighted.
+	const isCurrent = (href: string) =>
+		href === resolve('/') ? page.url.pathname === href : page.url.pathname.startsWith(href);
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /><title>Studyloom</title></svelte:head>
 <ModeWatcher />
+<Toaster position="bottom-right" />
 <a
 	href="#main"
 	class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:bg-background focus:p-3"
@@ -43,7 +48,13 @@
 			>
 			<nav aria-label="Main navigation" class="hidden items-center gap-2 md:flex">
 				{#each links as link (link.href)}
-					<Button href={link.href} variant="ghost"><link.icon />{link.label}</Button>
+					<Button
+						href={link.href}
+						variant="ghost"
+						class="aria-[current=page]:bg-muted"
+						aria-current={isCurrent(link.href) ? 'page' : undefined}
+						><link.icon />{link.label}</Button
+					>
 				{/each}
 				<Button variant="ghost" size="icon" aria-label="Toggle color theme" onclick={toggleMode}
 					><SunMoon /></Button
@@ -65,8 +76,8 @@
 							<Button
 								href={link.href}
 								variant="ghost"
-								class="h-11 justify-start"
-								aria-current={page.url.pathname === link.href ? 'page' : undefined}
+								class="h-11 justify-start aria-[current=page]:bg-muted"
+								aria-current={isCurrent(link.href) ? 'page' : undefined}
 								onclick={() => (menuOpen = false)}><link.icon />{link.label}</Button
 							>
 						{/each}

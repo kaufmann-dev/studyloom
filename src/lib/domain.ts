@@ -2,38 +2,53 @@ import { z } from 'zod';
 export const DEFAULT_MODEL = 'muse-spark-1.3-contributor';
 export const TRANSCRIPTION_MODEL = 'muse-voice-transcribe-1.0';
 export const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
+export const MIME_TYPE =
+	/^[A-Za-z0-9][A-Za-z0-9!#$%&'*+.^_`|~-]*\/[A-Za-z0-9][A-Za-z0-9!#$%&'*+.^_`|~-]*$/;
 export const idSchema = z.uuid();
+// Whitespace is kept while typing; only all-blank values are rejected. The length check
+// aborts so an empty value reports the message once rather than once per check.
+const nonBlank = (schema: z.ZodString, message: string) =>
+	schema
+		.min(1, { error: message, abort: true })
+		.refine((value) => value.trim().length > 0, message);
+const modelId = z.string().min(1).max(160).default(DEFAULT_MODEL);
+export const modelInput = z.object({ modelId });
 export const projectInput = z.object({
-	name: z
-		.string()
-		.min(1)
-		.max(160)
-		.refine((value) => value.trim().length > 0, 'Project name is required.'),
+	name: nonBlank(z.string().max(160), 'Project name is required.'),
 	description: z.string().max(4000).default('')
 });
-const libraryName = z
-	.string()
-	.min(1, 'Name is required.')
-	.max(160)
-	.refine((value) => value.trim().length > 0, 'Name is required.');
+export const materialUploadInput = z.object({
+	filename: z.string().min(1).max(255),
+	mimeType: z.string().max(120).regex(MIME_TYPE).default('application/octet-stream'),
+	size: z.number().int().positive()
+});
+export const recordingInput = z.object({
+	name: z.string().trim().min(1).max(160),
+	source: z.enum(['microphone', 'tab', 'both'])
+});
+export const LIBRARY_KIND_LABELS = {
+	folder: 'Folder',
+	file: 'File',
+	link: 'Link',
+	contact: 'Contact',
+	note: 'Note'
+} as const;
+export type LibraryKind = keyof typeof LIBRARY_KIND_LABELS;
+export type EditableLibraryKind = Exclude<LibraryKind, 'file'>;
+function isWebUrl(value: string) {
+	if (!/^https?:\/\//i.test(value)) return false;
+	try {
+		return Boolean(new URL(value).hostname);
+	} catch {
+		return false;
+	}
+}
 const libraryWebUrl = z
 	.string()
 	.max(2048)
-	.refine(
-		(value) =>
-			!value ||
-			(/^https?:\/\//i.test(value) &&
-				(() => {
-					try {
-						return Boolean(new URL(value).hostname);
-					} catch {
-						return false;
-					}
-				})()),
-		'Enter an http or https URL.'
-	);
+	.refine((value) => !value || isWebUrl(value), 'Enter an http or https URL.');
 const libraryFields = {
-	name: libraryName,
+	name: nonBlank(z.string().max(160), 'Name is required.'),
 	parentId: idSchema.nullable(),
 	url: libraryWebUrl,
 	phone: z.string().max(100),
@@ -73,7 +88,7 @@ export const pinInput = z.object({
 export interface LibraryEntry {
 	id: string;
 	parentId: string | null;
-	kind: 'folder' | 'file' | 'link' | 'contact' | 'note';
+	kind: LibraryKind;
 	name: string;
 	url: string;
 	phone: string;
@@ -89,13 +104,18 @@ export interface LibraryEntry {
 	createdAt: string;
 	updatedAt: string;
 }
+export type LibraryFolder = Pick<LibraryEntry, 'id' | 'parentId' | 'name'>;
+export interface LibraryListing {
+	entry: LibraryEntry | null;
+	children: LibraryEntry[];
+	ancestors: { id: string; name: string }[];
+}
 export interface Pin {
 	id: string;
 	targetType: 'project' | 'library';
 	targetId: string;
 	label: string;
 	subtitle: string;
-	href: string;
 	createdAt: string;
 }
 export const sourceSelection = z.array(idSchema).min(1).max(500);
@@ -138,46 +158,30 @@ export const quizSchema = z
 export const generationInput = z.object({
 	kind: z.enum(['summary', 'quiz']),
 	materialIds: sourceSelection,
-	modelId: z.string().min(1).max(160).default(DEFAULT_MODEL),
+	modelId,
 	questionCount: z.number().int().min(1).max(50).default(10),
 	questionMix: z.enum(['mixed', 'multiple_choice', 'written']).default('mixed')
 });
 export const chatInput = z.object({
 	conversationId: idSchema.optional(),
-	message: z
-		.string()
-		.min(1)
-		.max(30000)
-		.refine((value) => value.trim().length > 0, 'Message is required.'),
+	message: nonBlank(z.string().max(30000), 'Message is required.'),
 	materialIds: sourceSelection,
-	modelId: z.string().min(1).max(160).default(DEFAULT_MODEL)
+	modelId
 });
 export const answersSchema = z.object({
 	answers: z
 		.array(
 			z.object({
 				questionId: z.string().min(1),
-				value: z
-					.string()
-					.min(1)
-					.max(12000)
-					.refine((value) => value.trim().length > 0, 'Answer is required.')
+				value: nonBlank(z.string().max(12000), 'Answer is required.')
 			})
 		)
 		.min(1)
 		.max(50)
 });
 export const chunkResultSchema = z.object({
-	locator: z
-		.string()
-		.min(1)
-		.max(300)
-		.refine((value) => value.trim().length > 0, 'A source locator is required.'),
-	text: z
-		.string()
-		.min(1)
-		.max(60000)
-		.refine((value) => value.trim().length > 0, 'Readable source text is required.')
+	locator: nonBlank(z.string().max(300), 'A source locator is required.'),
+	text: nonBlank(z.string().max(60000), 'Readable source text is required.')
 });
 export const ingestionSchema = z
 	.object({
@@ -209,6 +213,8 @@ export type Citation = z.infer<typeof citationSchema>;
 export type Quiz = z.infer<typeof quizSchema>;
 export type Question = z.infer<typeof questionSchema>;
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export const isActiveJob = (job: { status: JobStatus }) =>
+	job.status === 'queued' || job.status === 'running';
 export interface Project {
 	id: string;
 	name: string;
@@ -247,6 +253,20 @@ export interface TranscriptTurn {
 	endMs: number;
 	text: string;
 	speaker: string | null;
+}
+export interface MaterialDetails {
+	material: Material;
+	chunks: SourceChunk[];
+	turns: TranscriptTurn[];
+	assets: Asset[];
+}
+export interface ProjectWorkspace {
+	project: Project;
+	materials: Material[];
+	readableMaterialIds: string[];
+	conversations: Conversation[];
+	outputs: StudyOutput[];
+	jobs: Job[];
 }
 export interface Asset {
 	id: string;
@@ -321,6 +341,11 @@ export interface MuseAccount {
 	state: string;
 	label?: string;
 	credentialRequired: boolean;
+}
+export interface MuseStatus {
+	account: MuseAccount;
+	models: MuseModel[];
+	error?: string;
 }
 export interface MuseModel {
 	modelId: string;

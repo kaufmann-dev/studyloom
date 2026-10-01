@@ -3,25 +3,21 @@
 	import type { Pathname } from '$app/types';
 	import { onMount } from 'svelte';
 	import { Download, Copy, X } from '@lucide/svelte';
-	import type { Material, SourceChunk, TranscriptTurn, Asset } from '$lib/domain';
+	import type { MaterialDetails } from '$lib/domain';
 	import Button from '$lib/components/ui/button/button.svelte';
-	import { api, errorText, downloadText } from '$lib/ui';
+	import { createPoller } from '$lib/polling';
+	import { api, copyText, errorText, downloadText } from '$lib/ui';
+	import ErrorAlert from './ErrorAlert.svelte';
 	let {
 		materialId,
 		locator = '',
 		onClose
 	}: { materialId: string; locator?: string; onClose: () => void } = $props();
-	let data = $state.raw<{
-		material: Material;
-		chunks: SourceChunk[];
-		turns: TranscriptTurn[];
-		assets: Asset[];
-	} | null>(null);
+	const PENDING = ['uploading', 'processing', 'recording', 'paused'];
+	let data = $state.raw<MaterialDetails | null>(null);
 	let error = $state('');
-	let notice = $state('');
 	let media: HTMLMediaElement | undefined;
-	let mounted = false;
-	let timer: ReturnType<typeof setTimeout> | undefined;
+	let fileHref = $derived(`/api/materials/${materialId}/file`);
 	let originalReady = $derived(
 		data
 			? data.material.kind === 'file'
@@ -47,42 +43,28 @@
 					.join('\n\n')
 			: (data?.chunks.map((chunk) => `## ${chunk.locator}\n\n${chunk.text}`).join('\n\n') ?? '')
 	);
-	async function load(interaction = false) {
+	const poller = createPoller(async (interaction) => {
 		error = '';
 		try {
-			const result = await api<{
-				material: Material;
-				chunks: SourceChunk[];
-				turns: TranscriptTurn[];
-				assets: Asset[];
-			}>(`/api/materials/${materialId}`, undefined, 'GET', interaction);
-			if (!mounted) return;
-			data = result;
-			clearTimeout(timer);
-			if (['uploading', 'processing', 'recording', 'paused'].includes(result.material.status))
-				timer = setTimeout(load, 3000);
-		} catch (e) {
-			if (mounted) error = errorText(e);
+			data = await api<MaterialDetails>(`/api/materials/${materialId}`, { interaction });
+			return PENDING.includes(data.material.status);
+		} catch (cause) {
+			error = errorText(cause);
+			return false;
 		}
-	}
-	async function copy() {
-		try {
-			await navigator.clipboard.writeText(transcript);
-			notice = 'Copied.';
-		} catch (e) {
-			error = errorText(e);
-		}
+	});
+	function trackMedia(element: HTMLMediaElement) {
+		media = element;
+		return () => {
+			media = undefined;
+		};
 	}
 	function focusLocator(element: HTMLElement) {
 		if (locator && element.dataset.locator === locator) element.scrollIntoView({ block: 'center' });
 	}
 	onMount(() => {
-		mounted = true;
-		void load(true);
-		return () => {
-			mounted = false;
-			clearTimeout(timer);
-		};
+		void poller.run(true);
+		return poller.stop;
 	});
 </script>
 
@@ -99,9 +81,9 @@
 		>
 	</div>
 	<div class="max-h-[75vh] space-y-5 overflow-y-auto p-5">
-		{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>
-			<Button variant="outline" onclick={() => load(true)}>Retry</Button>
-		{:else if !data}<p role="status" class="text-sm text-muted-foreground">Loading source…</p>
+		<ErrorAlert message={error} onRetry={() => poller.run(true)} />
+		{#if !data}
+			{#if !error}<p role="status" class="text-sm text-muted-foreground">Loading source…</p>{/if}
 		{:else}
 			{#if data.material.notes}<p
 					class="border-l-2 border-primary pl-3 text-sm text-muted-foreground"
@@ -109,12 +91,12 @@
 					{data.material.notes}
 				</p>{/if}
 			<div class="flex flex-wrap gap-2">
-				{#if originalReady}<Button
-						variant="outline"
+				{#if originalReady}<Button variant="outline" size="sm" href={`${fileHref}?download=1`}
+						><Download />Original</Button
+					>{/if}{#if transcript}<Button
+						variant="ghost"
 						size="sm"
-						href={`/api/materials/${materialId}/file?download=1`}><Download />Original</Button
-					>{/if}{#if transcript}<Button variant="ghost" size="sm" onclick={copy}
-						><Copy />Copy text</Button
+						onclick={() => copyText(transcript)}><Copy />Copy text</Button
 					><Button
 						variant="ghost"
 						size="sm"
@@ -122,39 +104,24 @@
 						><Download />Text</Button
 					>{/if}
 			</div>
-			{#if notice}<p role="status" class="text-xs text-muted-foreground">{notice}</p>{/if}
 			{#if originalReady && (data.material.mimeType.startsWith('audio/') || data.material.kind === 'recording')}<audio
 					controls
 					class="w-full"
-					src={`/api/materials/${materialId}/file`}
-					{@attach (element) => {
-						media = element;
-						return () => {
-							media = undefined;
-						};
-					}}
+					src={fileHref}
+					{@attach trackMedia}
 				></audio>
 			{:else if originalReady && data.material.mimeType.startsWith('video/')}
-				<video
-					controls
-					class="max-h-80 w-full"
-					src={`/api/materials/${materialId}/file`}
-					{@attach (element) => {
-						media = element;
-						return () => {
-							media = undefined;
-						};
-					}}
+				<video controls class="max-h-80 w-full" src={fileHref} {@attach trackMedia}
 					><track kind="captions" src={captions} srclang="und" label="Transcript" default /></video
 				>
 			{:else if originalReady && data.material.mimeType.startsWith('image/')}<img
 					class="max-h-96 w-full object-contain"
-					src={`/api/materials/${materialId}/file`}
+					src={fileHref}
 					alt={data.material.name}
 				/>
 			{:else if originalReady && data.material.mimeType === 'application/pdf'}<iframe
 					class="h-96 w-full border"
-					src={`/api/materials/${materialId}/file`}
+					src={fileHref}
 					title={`PDF: ${data.material.name}`}
 				></iframe>{/if}
 			{#if data.turns.length}<div class="space-y-5" aria-label="Transcript">

@@ -1,5 +1,5 @@
 import { mkdir, open, realpath, stat, rm, readFile } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { eq, and, asc, sql } from 'drizzle-orm';
 import { db } from './db';
@@ -35,6 +35,25 @@ export function wavHeader(bytes: number) {
 	h.writeUInt32LE(bytes, 40);
 	return h;
 }
+/** True when `length` is exactly what chunk `sequence` of a `total`-byte upload must hold. */
+export function isExpectedChunk(total: number, sequence: number, length: number) {
+	const offset = sequence * UPLOAD_CHUNK_SIZE;
+	return offset < total && length === Math.min(UPLOAD_CHUNK_SIZE, total - offset);
+}
+/** Writes and fsyncs a chunk, leaving no partial file behind on failure. */
+export async function writeChunkFile(path: string, body: Buffer) {
+	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+	const file = await open(path, 'w', 0o600);
+	try {
+		await file.writeFile(body);
+		await file.sync();
+	} catch (error) {
+		await rm(path, { force: true }).catch(() => {});
+		throw error;
+	} finally {
+		await file.close();
+	}
+}
 export async function putChunk(id: string, sequence: number, body: Buffer, startSample?: number) {
 	if (
 		!Number.isSafeInteger(sequence) ||
@@ -59,10 +78,7 @@ export async function putChunk(id: string, sequence: number, body: Buffer, start
 		if (material.kind === 'file') {
 			if (material.status !== 'uploading')
 				throw new ClientError(409, 'Upload is already complete.');
-			if (
-				sequence * UPLOAD_CHUNK_SIZE >= material.size ||
-				body.length !== Math.min(UPLOAD_CHUNK_SIZE, material.size - sequence * UPLOAD_CHUNK_SIZE)
-			)
+			if (!isExpectedChunk(material.size, sequence, body.length))
 				throw new ClientError(400, 'Unexpected upload chunk size.');
 		} else {
 			if (!['recording', 'paused'].includes(material.status))
@@ -88,20 +104,8 @@ export async function putChunk(id: string, sequence: number, body: Buffer, start
 		}
 		if (material.receivedBytes + body.length > maxUploadBytes())
 			throw new ClientError(413, 'Source exceeds the configured upload limit.');
-		await mkdir(join(materialDir(id), 'chunks'), { recursive: true, mode: 0o700 });
 		const path = chunkPath(id, sequence);
-		const file = await open(path, 'w', 0o600);
-		try {
-			try {
-				await file.writeFile(body);
-				await file.sync();
-			} catch (error) {
-				await rm(path, { force: true }).catch(() => {});
-				throw error;
-			}
-		} finally {
-			await file.close();
-		}
+		await writeChunkFile(path, body);
 		try {
 			await tx.insert(uploadChunks).values({
 				materialId: id,

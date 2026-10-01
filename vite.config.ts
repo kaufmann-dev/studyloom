@@ -1,13 +1,13 @@
-import { paraglideVitePlugin } from '@inlang/paraglide-js';
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import tailwindcss from '@tailwindcss/vite';
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
 
-export default defineConfig(({ command }) => ({
+export default defineConfig({
 	plugins: [
 		tailwindcss(),
+		// Messages are compiled by the `paraglide:compile` script that `dev` and `build` run first.
 		sveltekit({
 			compilerOptions: {
 				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
@@ -20,17 +20,7 @@ export default defineConfig(({ command }) => ({
 					config.include.push('../drizzle.config.ts');
 				}
 			}
-		}),
-
-		...(command === 'serve'
-			? [
-					paraglideVitePlugin({
-						project: './project.inlang',
-						outdir: './src/lib/paraglide',
-						emitTsDeclarations: true
-					})
-				]
-			: [])
+		})
 	],
 	test: {
 		expect: { requireAssertions: true },
@@ -60,4 +50,4 @@ export default defineConfig(({ command }) => ({
 			}
 		]
 	}
-}));
+});

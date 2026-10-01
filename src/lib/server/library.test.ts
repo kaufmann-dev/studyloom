@@ -85,6 +85,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Library and pins', () => {
 			await expect(
 				call(`/api/library/${folder.id}`, 'PATCH', { parentId: child.id })
 			).rejects.toMatchObject({ status: 409 });
+			const { folders } = await parse<{ folders: { id: string; parentId: string | null }[] }>(
+				'/api/library/folders'
+			);
+			expect(folders.find((item) => item.id === child.id)?.parentId).toBe(folder.id);
+			await expect(
+				call(`/api/library/${link.id}`, 'PATCH', { parentId: contact.id })
+			).rejects.toMatchObject({ status: 400 });
+			const { entry: movedLink } = await parse<{ entry: { parentId: string | null; url: string } }>(
+				`/api/library/${link.id}`,
+				'PATCH',
+				{ parentId: null }
+			);
+			expect(movedLink).toMatchObject({ parentId: null, url: 'https://portal.example.edu' });
+			await call(`/api/library/${link.id}`, 'DELETE');
 			const { entry: upload } = await parse<{ entry: { id: string } }>(
 				'/api/library/uploads',
 				'POST',

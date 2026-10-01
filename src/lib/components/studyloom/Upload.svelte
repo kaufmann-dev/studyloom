@@ -2,118 +2,86 @@
 	import { RefreshCw, Upload } from '@lucide/svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { api, errorText } from '$lib/ui';
+	import { sendChunks, uploadPercent, type PendingUpload } from '$lib/upload';
+
 	let {
 		projectId,
 		modelId,
 		onSaved
 	}: { projectId: string; modelId: string; onSaved: () => void | Promise<void> } = $props();
-	let input: HTMLInputElement;
+	let input: HTMLInputElement | undefined;
 	let busy = $state(false);
 	let progress = $state('');
 	let error = $state('');
-	type PendingUpload = {
-		materialId: string;
-		file: File;
-		chunkSize: number;
-		nextSequence: number;
-	};
-	let pending = $state<PendingUpload | null>(null);
+	// The source in flight; it survives a failure so the upload can resume or be discarded.
+	let pending = $state.raw<PendingUpload | null>(null);
 
-	async function sendChunks(upload: PendingUpload) {
-		let next = upload;
-		for (
-			let offset = next.nextSequence * next.chunkSize, sequence = next.nextSequence;
-			offset < next.file.size;
-			offset += next.chunkSize, sequence++
-		) {
-			pending = next;
-			const response = await fetch(`/api/materials/${next.materialId}/chunks/${sequence}`, {
-				method: 'PUT',
-				headers: { 'content-type': 'application/octet-stream', 'x-studyloom-interaction': '1' },
-				body: next.file.slice(offset, offset + next.chunkSize)
-			});
-			if (!response.ok) {
-				const result = await response.json().catch(() => null);
-				throw new Error(
-					result?.message ?? `Upload failed for ${next.file.name}. Please try again.`
-				);
+	/** Sends what is left of the pending upload, then queues it for processing. */
+	async function finish(upload: PendingUpload, processingModel: string) {
+		const sent = await sendChunks(
+			upload,
+			(sequence) => `/api/materials/${upload.id}/chunks/${sequence}`,
+			(next) => {
+				pending = next;
+				progress = `${next.file.name} · ${uploadPercent(next)}%`;
 			}
-			next = { ...next, nextSequence: sequence + 1 };
-			pending = next;
-			progress = `${next.file.name} · ${Math.min(100, Math.round(((offset + next.chunkSize) / next.file.size) * 100))}%`;
-		}
-		return next;
-	}
-
-	async function complete(upload: PendingUpload, processingModel: string) {
-		await api(`/api/materials/${upload.materialId}/complete`, { modelId: processingModel });
+		);
+		await api(`/api/materials/${sent.id}/complete`, { body: { modelId: processingModel } });
 		pending = null;
 		await onSaved();
 	}
-
-	async function upload(files: FileList | null) {
-		if (!files?.length || busy) return;
-		const processingModel = modelId;
+	async function attempt(work: () => Promise<void>) {
 		busy = true;
 		error = '';
 		try {
-			for (const file of Array.from(files)) {
+			await work();
+		} catch (cause) {
+			error = errorText(cause);
+		} finally {
+			busy = false;
+			if (input) input.value = '';
+		}
+	}
+	function upload(files: FileList | null) {
+		if (!files?.length || busy) return;
+		// The model chosen when the upload starts applies to the whole selection.
+		const processingModel = modelId;
+		return attempt(async () => {
+			for (const file of files) {
 				progress = `Preparing ${file.name}…`;
 				const started = await api<{ materialId: string; chunkSize: number }>(
 					`/api/projects/${projectId}/uploads`,
 					{
-						filename: file.name,
-						size: file.size,
-						mimeType: file.type || 'application/octet-stream'
+						body: {
+							filename: file.name,
+							size: file.size,
+							mimeType: file.type || 'application/octet-stream'
+						}
 					}
 				);
-				const upload = {
-					materialId: started.materialId,
-					file,
-					chunkSize: started.chunkSize,
-					nextSequence: 0
-				};
-				pending = upload;
-				await complete(await sendChunks(upload), processingModel);
+				pending = { id: started.materialId, file, chunkSize: started.chunkSize, nextSequence: 0 };
+				await finish(pending, processingModel);
 			}
 			progress = 'Upload complete. Processing your materials…';
-		} catch (e) {
-			error = errorText(e);
-		} finally {
-			busy = false;
-			if (input) input.value = '';
-		}
+		});
 	}
-	async function resumeUpload() {
-		if (!pending || busy) return;
+	function resumeUpload() {
 		const upload = pending;
-		busy = true;
-		error = '';
-		try {
-			await complete(await sendChunks(upload), modelId);
+		if (!upload || busy) return;
+		return attempt(async () => {
+			await finish(upload, modelId);
 			progress = 'Upload complete. Processing your materials…';
-		} catch (e) {
-			error = errorText(e);
-		} finally {
-			busy = false;
-			if (input) input.value = '';
-		}
+		});
 	}
-	async function discardUpload() {
-		if (!pending || busy) return;
-		const materialId = pending.materialId;
-		busy = true;
-		error = '';
-		try {
-			await api(`/api/materials/${materialId}`, undefined, 'DELETE');
+	function discardUpload() {
+		const upload = pending;
+		if (!upload || busy) return;
+		return attempt(async () => {
+			await api(`/api/materials/${upload.id}`, { method: 'DELETE' });
 			pending = null;
 			progress = '';
 			await onSaved();
-		} catch (e) {
-			error = errorText(e);
-		} finally {
-			busy = false;
-		}
+		});
 	}
 </script>
 
@@ -134,17 +102,22 @@
 			variant="outline"
 			class="min-w-0 flex-1"
 			disabled={busy || Boolean(pending)}
-			onclick={() => input.click()}><Upload />{busy ? 'Uploading…' : 'Upload materials'}</Button
+			onclick={() => input?.click()}
 		>
-		{#if pending}<Button variant="ghost" disabled={busy} onclick={resumeUpload}
-				><RefreshCw /><span class="sr-only">Resume upload</span></Button
-			><Button variant="ghost" disabled={busy} onclick={discardUpload}>Discard</Button>{/if}
+			<Upload />{busy ? 'Uploading…' : 'Upload materials'}
+		</Button>
+		{#if pending}
+			<Button variant="ghost" disabled={busy} onclick={resumeUpload}>
+				<RefreshCw /><span class="sr-only">Resume upload</span>
+			</Button>
+			<Button variant="ghost" disabled={busy} onclick={discardUpload}>Discard</Button>
+		{/if}
 	</div>
 	<p class="text-xs leading-relaxed text-muted-foreground">
 		Audio, video, documents, slides, and images.
 	</p>
-	{#if progress}<p role="status" class="text-xs break-words text-muted-foreground">
-			{progress}
-		</p>{/if}
+	{#if progress}
+		<p role="status" class="text-xs break-words text-muted-foreground">{progress}</p>
+	{/if}
 	{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
 </div>

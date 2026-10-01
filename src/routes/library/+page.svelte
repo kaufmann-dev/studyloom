@@ -1,5 +1,5 @@
 <script lang="ts">
-	import LibraryBrowser from '$lib/components/studyloom/LibraryBrowser.svelte';
+	import LibraryBrowser from '$lib/components/studyloom/library/LibraryBrowser.svelte';
 </script>
 
-<LibraryBrowser folderId={null} />
+<LibraryBrowser entryId={null} />

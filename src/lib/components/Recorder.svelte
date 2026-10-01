@@ -4,6 +4,7 @@
 	import { Mic, Pause, Play, Square, RotateCcw } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Label } from '$lib/components/ui/label';
+	import * as NativeSelect from '$lib/components/ui/native-select';
 	import { BrowserRecorder } from '$lib/recording/recorder.svelte';
 	import type { RecordingSource, LocalRecording } from '$lib/recording/storage';
 
@@ -42,9 +43,9 @@
 	}
 </script>
 
-<section aria-labelledby="{uid}-title" class="space-y-4 border-b border-border pb-6">
+<section aria-labelledby="{uid}-title" class="space-y-4">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<h2 id="{uid}-title" class="text-base font-medium">Record audio</h2>
+		<h2 id="{uid}-title" class="text-sm font-semibold">Record audio</h2>
 		<span class="font-mono text-sm tabular-nums" aria-label="Recorded duration"
 			>{recorder.duration}</span
 		>
@@ -52,31 +53,28 @@
 	<div class="flex flex-wrap items-end gap-3">
 		<div class="min-w-0 space-y-1.5">
 			<Label for="{uid}-source">Audio source</Label>
-			<select
-				id="{uid}-source"
-				bind:value={source}
-				disabled={!inactive}
-				class="h-10 max-w-full border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
-			>
-				<option value="microphone">Microphone</option>
-				<option value="tab">Browser tab</option>
-				<option value="both">Microphone and tab</option>
-			</select>
+			<NativeSelect.Root id="{uid}-source" bind:value={source} disabled={!inactive}>
+				<NativeSelect.Option value="microphone">Microphone</NativeSelect.Option>
+				<NativeSelect.Option value="tab">Browser tab</NativeSelect.Option>
+				<NativeSelect.Option value="both">Microphone and tab</NativeSelect.Option>
+			</NativeSelect.Root>
 		</div>
 		{#if source !== 'tab' && recorder.devices.length > 1}
 			<div class="min-w-0 space-y-1.5">
 				<Label for="{uid}-microphone">Microphone</Label>
-				<select
+				<NativeSelect.Root
 					id="{uid}-microphone"
+					class="max-w-64"
 					bind:value={deviceId}
 					disabled={!inactive}
-					class="h-10 max-w-64 truncate border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
 				>
-					<option value="">System default</option>
+					<NativeSelect.Option value="">System default</NativeSelect.Option>
 					{#each recorder.devices as device (device.deviceId)}
-						<option value={device.deviceId}>{device.label || 'Audio input'}</option>
+						<NativeSelect.Option value={device.deviceId}>
+							{device.label || 'Audio input'}
+						</NativeSelect.Option>
 					{/each}
-				</select>
+				</NativeSelect.Root>
 			</div>
 		{/if}
 		{#if inactive}

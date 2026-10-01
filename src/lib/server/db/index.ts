@@ -15,6 +15,7 @@ function createDatabase() {
 export function db() {
 	return (database ??= createDatabase());
 }
+export type Transaction = Parameters<Parameters<ReturnType<typeof db>['transaction']>[0]>[0];
 function migrationsFolder() {
 	const here = dirname(fileURLToPath(import.meta.url));
 	const candidates = [

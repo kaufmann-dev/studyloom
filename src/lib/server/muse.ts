@@ -1,14 +1,13 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import { mkdir, writeFile, copyFile, chmod, rename, access } from 'node:fs/promises';
-import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { ClientError, dataDir } from './config';
 import { runProcess } from './process';
-import type { MuseAccount, MuseModel } from '../domain';
+import type { MuseAccount, MuseModel, MuseStatus } from '../domain';
 const FALLBACK_PATH = '/usr/local/bin:/usr/bin:/bin';
 function musePath(): string {
 	const basePath = process.env.PATH || FALLBACK_PATH;
@@ -27,34 +26,24 @@ export function museEnvironment(configDir: string): NodeJS.ProcessEnv {
 		if (process.env[key]) env[key] = process.env[key];
 	return env;
 }
+const exists = (path: string, mode?: number) =>
+	access(path, mode).then(
+		() => true,
+		() => false
+	);
 export async function resolveMuseBin(): Promise<string> {
 	const configured = process.env.MUSE_BIN;
 	if (configured) {
-		const usable = await access(configured, constants.X_OK).then(
-			() => true,
-			() => false
-		);
-		if (!usable)
+		if (!(await exists(configured, constants.X_OK)))
 			throw new Error(
 				`Muse CLI not found at MUSE_BIN=${configured}. Set MUSE_BIN to the muse executable path or unset it to use automatic detection.`
 			);
 		return configured;
 	}
-	for (const candidate of ['/usr/local/bin/muse', '/usr/bin/muse']) {
-		const usable = await access(candidate, constants.X_OK).then(
-			() => true,
-			() => false
-		);
-		if (usable) return candidate;
-	}
-	for (const dir of musePath().split(':')) {
-		if (!dir) continue;
-		const candidate = join(dir, 'muse');
-		const usable = await access(candidate, constants.X_OK).then(
-			() => true,
-			() => false
-		);
-		if (usable) return candidate;
+	const directories = ['/usr/local/bin', '/usr/bin', ...musePath().split(':').filter(Boolean)];
+	for (const directory of directories) {
+		const candidate = join(directory, 'muse');
+		if (await exists(candidate, constants.X_OK)) return candidate;
 	}
 	throw new Error(
 		'Muse CLI not found. Install it with `bash scripts/install-muse.sh` or set MUSE_BIN to the muse executable path.'
@@ -80,17 +69,9 @@ async function prepareSettings() {
 	await mkdir(dir, { recursive: true, mode: 0o700 });
 	const imported = join(dir, 'import-complete');
 	if (process.env.MUSE_AUTH_IMPORT_PATH) {
-		const didImport = await access(imported).then(
-			() => true,
-			() => false
-		);
-		if (!didImport) {
+		if (!(await exists(imported))) {
 			const auth = join(dir, 'auth.json');
-			const hasAuth = await access(auth).then(
-				() => true,
-				() => false
-			);
-			if (!hasAuth) {
+			if (!(await exists(auth))) {
 				await copyFile(process.env.MUSE_AUTH_IMPORT_PATH, auth);
 				await chmod(auth, 0o600);
 			}
@@ -195,11 +176,6 @@ class MuseHost {
 // The SvelteKit and worker bundles share one process and one account-control connection.
 const processState = globalThis as typeof globalThis & { __studyloomMuseHost?: MuseHost };
 export const museHost = (processState.__studyloomMuseHost ??= new MuseHost());
-export interface MuseStatus {
-	account: MuseAccount;
-	models: MuseModel[];
-	error?: string;
-}
 export const STALE_MUSE_LOGIN =
 	'Your Muse login is no longer valid. Disconnect, then connect your Muse account again.';
 export const MUSE_MODELS_UNREACHABLE =

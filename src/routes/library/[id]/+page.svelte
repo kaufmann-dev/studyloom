@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import LibraryBrowser from '$lib/components/studyloom/LibraryBrowser.svelte';
-	let folderId = $derived(page.params.id ?? '');
+	import LibraryBrowser from '$lib/components/studyloom/library/LibraryBrowser.svelte';
+	let entryId = $derived(page.params.id ?? '');
 </script>
 
-{#key folderId}<LibraryBrowser {folderId} />{/key}
+{#key entryId}<LibraryBrowser {entryId} />{/key}

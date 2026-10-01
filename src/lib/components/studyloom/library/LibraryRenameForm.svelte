@@ -3,6 +3,7 @@
 	import { defaults, superForm } from 'sveltekit-superforms';
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
 	import { libraryPatchInput, type LibraryEntry } from '$lib/domain';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Form from '$lib/components/ui/form';
 	import Input from '$lib/components/ui/input/input.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -13,7 +14,7 @@
 		onSaved,
 		onCancel
 	}: { entry: LibraryEntry; onSaved: () => void | Promise<void>; onCancel: () => void } = $props();
-	const schema = libraryPatchInput.pick({ name: true });
+	const schema = libraryPatchInput.pick({ name: true }).required();
 	const editor = superForm(
 		defaults(
 			untrack(() => ({ name: entry.name })),
@@ -28,13 +29,14 @@
 	const { form } = editor;
 	let busy = $state(false);
 	let error = $state('');
+
 	async function save(event: SubmitEvent) {
 		event.preventDefault();
-		if (!(await editor.validateForm()).valid) return;
+		if (!(await editor.validateForm({ update: true })).valid) return;
 		busy = true;
 		error = '';
 		try {
-			await api(`/api/library/${entry.id}`, $form, 'PATCH');
+			await api(`/api/library/${entry.id}`, { method: 'PATCH', body: $form });
 			await onSaved();
 		} catch (cause) {
 			error = errorText(cause);
@@ -44,22 +46,19 @@
 	}
 </script>
 
-<form onsubmit={save} class="space-y-4 border p-5" aria-label={`Rename ${entry.name}`}>
-	<h2 class="text-lg font-semibold">Rename file</h2>
-	<Form.Field form={editor} name="name"
-		><Form.Control
-			>{#snippet children({ props })}<Form.Label>Name</Form.Label><Input
-					{...props}
-					bind:value={$form.name}
-				/>{/snippet}</Form.Control
-		><Form.FieldErrors /></Form.Field
-	>
+<form onsubmit={save} class="space-y-4" novalidate>
+	<Form.Field form={editor} name="name">
+		<Form.Control>
+			{#snippet children({ props })}
+				<Form.Label>Name</Form.Label>
+				<Input {...props} bind:value={$form.name} autocomplete="off" />
+			{/snippet}
+		</Form.Control>
+		<Form.FieldErrors />
+	</Form.Field>
 	{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
-	<div class="flex gap-2">
-		<Button type="submit" disabled={busy}>Save</Button><Button
-			type="button"
-			variant="ghost"
-			onclick={onCancel}>Cancel</Button
-		>
-	</div>
+	<Dialog.Footer>
+		<Button type="button" variant="ghost" onclick={onCancel}>Cancel</Button>
+		<Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+	</Dialog.Footer>
 </form>

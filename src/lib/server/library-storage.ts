@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { open, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, asc, eq } from 'drizzle-orm';
 import { db } from './db';
 import { libraryEntries, libraryUploadChunks } from './db/schema';
 import { ClientError, dataDir } from './config';
+import { isExpectedChunk, writeChunkFile } from './storage';
 import { idSchema, UPLOAD_CHUNK_SIZE } from '../domain';
 
 export const libraryDir = (id: string) => join(dataDir(), 'library', idSchema.parse(id));
@@ -38,20 +39,10 @@ export async function putLibraryChunk(id: string, sequence: number, bytes: Buffe
 			return;
 		}
 		if (entry.status !== 'uploading') throw new ClientError(409, 'Upload is already complete.');
-		if (
-			sequence * UPLOAD_CHUNK_SIZE >= entry.size ||
-			bytes.length !== Math.min(UPLOAD_CHUNK_SIZE, entry.size - sequence * UPLOAD_CHUNK_SIZE)
-		)
+		if (!isExpectedChunk(entry.size, sequence, bytes.length))
 			throw new ClientError(400, 'Unexpected upload chunk size.');
-		await mkdir(join(libraryDir(id), 'chunks'), { recursive: true, mode: 0o700 });
 		const path = chunkPath(id, sequence);
-		const file = await open(path, 'w', 0o600);
-		try {
-			await file.writeFile(bytes);
-			await file.sync();
-		} finally {
-			await file.close();
-		}
+		await writeChunkFile(path, bytes);
 		try {
 			await tx
 				.insert(libraryUploadChunks)

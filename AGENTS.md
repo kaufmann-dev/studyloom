@@ -213,7 +213,8 @@ For Coolify and Nixpacks:
 ## Studyloom Architecture
 
 - `src/lib/domain.ts` owns shared types and Zod schemas. Keep API contracts and UI aligned.
-- `src/lib/server/api.ts` dispatches authenticated HTTP endpoints. Never return job payloads, source snapshots, credentials or private filesystem paths in API responses.
+- `src/lib/server/api.ts` dispatches authenticated HTTP endpoints to the per-resource handlers in `src/lib/server/endpoints/`. Never return job payloads, source snapshots, credentials or private filesystem paths in API responses.
+- Browser code calls the API through `api()` in `src/lib/ui.ts`; job polling, chunked uploads and pins live in `src/lib/polling.ts`, `src/lib/upload.ts` and `src/lib/pins.svelte.ts`. Reuse them instead of calling `fetch` in components.
 - `src/server/runtime.ts` attaches authenticated WebSockets and starts durable workers. `server.mjs` is the production entrypoint; Vite alone does not run recording sockets or workers.
 - `src/lib/server/jobs.ts` handles ingestion, chat, overviews, quizzes, grading and recovery. Keep source snapshots and validated citations. Preserve idempotency when retrying jobs.
 - Muse selects conversion commands through `src/server/mcp.ts`; do not introduce a file-extension conversion dispatcher. Commands run directly via `src/lib/server/commands.ts` with the workspace as cwd and a secrets-free environment.

@@ -1,19 +1,24 @@
-export async function api<T>(
-	path: string,
-	body?: unknown,
-	method?: string,
-	interaction?: boolean
-): Promise<T> {
-	const requestMethod = method ?? (body === undefined ? 'GET' : 'POST');
+import { toast } from 'svelte-sonner';
+
+interface RequestOptions {
+	method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+	/** Sent as JSON, or as raw bytes when given a Blob. */
+	body?: unknown;
+	/** Counts as user activity for the idle session timeout. Defaults to true for writes only. */
+	interaction?: boolean;
+}
+
+export async function api<T = void>(path: string, options: RequestOptions = {}): Promise<T> {
+	const { body } = options;
+	const method = options.method ?? (body === undefined ? 'GET' : 'POST');
+	const headers: Record<string, string> = {};
+	if (body instanceof Blob) headers['content-type'] = 'application/octet-stream';
+	else if (body !== undefined) headers['content-type'] = 'application/json';
+	if (options.interaction ?? method !== 'GET') headers['x-studyloom-interaction'] = '1';
 	const response = await fetch(path, {
-		method: requestMethod,
-		headers: {
-			...(body === undefined ? {} : { 'content-type': 'application/json' }),
-			...((interaction ?? ['POST', 'PUT', 'PATCH', 'DELETE'].includes(requestMethod))
-				? { 'x-studyloom-interaction': '1' }
-				: {})
-		},
-		body: body === undefined ? undefined : JSON.stringify(body)
+		method,
+		headers,
+		body: body === undefined || body instanceof Blob ? body : JSON.stringify(body)
 	});
 	if (!response.ok) {
 		const detail = await response.json().catch(() => null);
@@ -33,10 +38,26 @@ export function downloadText(filename: string, text: string): void {
 	anchor.click();
 	setTimeout(() => URL.revokeObjectURL(url), 0);
 }
+export async function copyText(text: string, confirmation = 'Copied.'): Promise<void> {
+	try {
+		await navigator.clipboard.writeText(text);
+		toast.success(confirmation);
+	} catch (error) {
+		toast.error(errorText(error));
+	}
+}
 export function dateLabel(value: string | Date): string {
 	return new Date(value).toLocaleDateString(undefined, {
 		month: 'short',
 		day: 'numeric',
 		year: 'numeric'
 	});
+}
+export function fileSize(bytes: number): string {
+	if (bytes < 1024 * 1024) return `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
+	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+/** `plural(2, 'source')` → "2 sources"; pass the plural form when it is irregular. */
+export function plural(count: number, noun: string, many = `${noun}s`): string {
+	return `${count} ${count === 1 ? noun : many}`;
 }

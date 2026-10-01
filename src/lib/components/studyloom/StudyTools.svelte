@@ -1,21 +1,24 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { defaults, superForm } from 'sveltekit-superforms';
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
-	import { Sparkles, ArrowLeft } from '@lucide/svelte';
+	import { ArrowLeft, Sparkles } from '@lucide/svelte';
 	import {
 		generationInput,
 		DEFAULT_MODEL,
 		type StudyOutput,
 		type Material,
-		type MuseModel,
-		type Job
+		type MuseModel
 	} from '$lib/domain';
+	import Button from '$lib/components/ui/button/button.svelte';
 	import * as Form from '$lib/components/ui/form';
 	import Input from '$lib/components/ui/input/input.svelte';
-	import Button from '$lib/components/ui/button/button.svelte';
+	import * as NativeSelect from '$lib/components/ui/native-select';
+	import { waitForJob } from '$lib/polling';
+	import { api, dateLabel, errorText, plural } from '$lib/ui';
+	import ModelSelect, { availableModel } from './ModelSelect.svelte';
 	import OutputViewer from './OutputViewer.svelte';
-	import { api, dateLabel, errorText } from '$lib/ui';
+
 	let {
 		projectId,
 		kind,
@@ -43,44 +46,34 @@
 		}
 	);
 	const { form } = editor;
+	const lifetime = new AbortController();
+	const COPY = {
+		summary: {
+			one: 'summary',
+			many: 'summaries',
+			title: 'Build an overview',
+			intro:
+				'Turn your selected materials into an overview with references to the original sources.'
+		},
+		quiz: {
+			one: 'quiz',
+			many: 'quizzes',
+			title: 'Test your understanding',
+			intro:
+				'Create questions from your selected sources, then get feedback on multiple-choice and written answers.'
+		}
+	};
 	let busy = $state(false);
 	let error = $state('');
 	let notice = $state('');
 	let selectedId = $state('');
 	let activeJob = $state('');
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	let mounted = false;
-	let selectedModel = $derived(
-		models.find((model) => model.modelId === $form.modelId)?.modelId ??
-			models[0]?.modelId ??
-			DEFAULT_MODEL
-	);
+	let copy = $derived(COPY[kind]);
 	let matching = $derived(outputs.filter((output) => output.kind === kind));
-	async function poll(jobId: string) {
-		try {
-			const { job } = await api<{ job: Job }>(`/api/jobs/${jobId}`);
-			if (!mounted) return;
-			if (job.status === 'queued' || job.status === 'running') {
-				notice = job.progress || 'Working with your sources…';
-				timer = setTimeout(() => poll(jobId), 1500);
-				return;
-			}
-			busy = false;
-			activeJob = '';
-			notice = '';
-			if (job.status === 'failed') error = job.error ?? 'Generation failed. Please try again.';
-			else if (job.status === 'cancelled') notice = 'Generation cancelled.';
-			else selectedId = job.outputId ?? '';
-			await onChanged();
-		} catch (e) {
-			error = errorText(e);
-			busy = false;
-			activeJob = '';
-		}
-	}
+
 	async function generate(event: SubmitEvent) {
 		event.preventDefault();
-		if (busy || !(await editor.validateForm()).valid) return;
+		if (busy || !(await editor.validateForm({ update: true })).valid) return;
 		if (!materialIds.length) {
 			error = 'Select at least one ready source.';
 			return;
@@ -89,123 +82,136 @@
 		error = '';
 		notice = '';
 		try {
-			const result = await api<{ jobId: string }>(`/api/projects/${projectId}/generate`, {
-				...$form,
-				modelId: selectedModel,
-				kind,
-				materialIds
+			const { jobId } = await api<{ jobId: string }>(`/api/projects/${projectId}/generate`, {
+				body: { ...$form, modelId: availableModel(models, $form.modelId), kind, materialIds }
 			});
-			activeJob = result.jobId;
+			activeJob = jobId;
 			await onChanged();
-			void poll(result.jobId);
-		} catch (e) {
-			error = errorText(e);
+			const job = await waitForJob(jobId, lifetime.signal, (running) => {
+				notice = running.progress || 'Working with your sources…';
+			});
+			if (!job) return;
+			notice = '';
+			if (job.status === 'failed') error = job.error ?? 'Generation failed. Please try again.';
+			else if (job.status === 'cancelled') notice = 'Generation cancelled.';
+			else selectedId = job.outputId ?? '';
+			await onChanged();
+		} catch (cause) {
+			error = errorText(cause);
+		} finally {
 			busy = false;
+			activeJob = '';
 		}
 	}
 	async function cancel() {
 		try {
-			await api(`/api/jobs/${activeJob}/cancel`, {});
-		} catch (e) {
-			error = errorText(e);
+			await api(`/api/jobs/${activeJob}/cancel`, { body: {} });
+		} catch (cause) {
+			error = errorText(cause);
 		}
 	}
-	onMount(() => {
-		mounted = true;
-		return () => {
-			mounted = false;
-			clearTimeout(timer);
-		};
-	});
+	onDestroy(() => lifetime.abort());
 </script>
 
-{#if selectedId}<div class="space-y-6">
-		<Button variant="ghost" onclick={() => (selectedId = '')}
-			><ArrowLeft />All {kind === 'summary' ? 'summaries' : 'quizzes'}</Button
-		>{#key selectedId}<OutputViewer outputId={selectedId} {materials} />{/key}
+{#if selectedId}
+	<div class="space-y-6">
+		<Button variant="ghost" onclick={() => (selectedId = '')}><ArrowLeft />All {copy.many}</Button>
+		{#key selectedId}<OutputViewer outputId={selectedId} {materials} />{/key}
 	</div>
-{:else}<div class="space-y-8">
+{:else}
+	<div class="space-y-8">
 		<div>
-			<h2 class="text-xl font-medium">
-				{kind === 'summary' ? 'Build an overview' : 'Test your understanding'}
-			</h2>
-			<p class="mt-2 text-sm leading-relaxed text-muted-foreground">
-				{kind === 'summary'
-					? 'Turn your selected materials into an overview with references to the original sources.'
-					: 'Create questions from your selected sources, then get feedback on multiple-choice and written answers.'}
-			</p>
+			<h2 class="text-xl font-medium">{copy.title}</h2>
+			<p class="mt-2 text-sm leading-relaxed text-muted-foreground">{copy.intro}</p>
 		</div>
-		<form onsubmit={generate} class="space-y-4 border p-5">
-			<Form.Field form={editor} name="modelId"
-				><Form.Control
-					>{#snippet children({ props })}<Form.Label>Model</Form.Label><select
-							{...props}
-							class="h-9 w-full border bg-background px-2 text-sm"
-							disabled={busy}
-							bind:value={() => selectedModel, (value) => ($form.modelId = value)}
-							>{#if models.length}{#each models as model (model.modelId)}<option
-										value={model.modelId}>{model.displayLabel}</option
-									>{/each}{:else}<option value={DEFAULT_MODEL}>{DEFAULT_MODEL}</option>{/if}</select
-						>{/snippet}</Form.Control
-				><Form.FieldErrors /></Form.Field
-			>
-			{#if kind === 'quiz'}<div class="grid gap-4 sm:grid-cols-2">
-					<Form.Field form={editor} name="questionCount"
-						><Form.Control
-							>{#snippet children({ props })}<Form.Label>Questions</Form.Label><Input
+		<form onsubmit={generate} class="space-y-4 border p-5" novalidate>
+			<Form.Field form={editor} name="modelId">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label>Model</Form.Label>
+						<ModelSelect {...props} {models} bind:value={$form.modelId} disabled={busy} />
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
+			{#if kind === 'quiz'}
+				<div class="grid gap-4 sm:grid-cols-2">
+					<Form.Field form={editor} name="questionCount">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label>Questions</Form.Label>
+								<Input
 									{...props}
 									type="number"
 									min="1"
 									max="50"
 									bind:value={$form.questionCount}
 									disabled={busy}
-								/>{/snippet}</Form.Control
-						><Form.FieldErrors /></Form.Field
-					><Form.Field form={editor} name="questionMix"
-						><Form.Control
-							>{#snippet children({ props })}<Form.Label>Question types</Form.Label><select
+								/>
+							{/snippet}
+						</Form.Control>
+						<Form.FieldErrors />
+					</Form.Field>
+					<Form.Field form={editor} name="questionMix">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label>Question types</Form.Label>
+								<NativeSelect.Root
 									{...props}
+									class="w-full"
 									bind:value={$form.questionMix}
-									class="h-9 w-full border bg-background px-2 text-sm"
 									disabled={busy}
-									><option value="mixed">Multiple choice and written</option><option
-										value="multiple_choice">Multiple choice</option
-									><option value="written">Written answers</option></select
-								>{/snippet}</Form.Control
-						><Form.FieldErrors /></Form.Field
-					>
-				</div>{/if}
+								>
+									<NativeSelect.Option value="mixed"
+										>Multiple choice and written</NativeSelect.Option
+									>
+									<NativeSelect.Option value="multiple_choice">Multiple choice</NativeSelect.Option>
+									<NativeSelect.Option value="written">Written answers</NativeSelect.Option>
+								</NativeSelect.Root>
+							{/snippet}
+						</Form.Control>
+						<Form.FieldErrors />
+					</Form.Field>
+				</div>
+			{/if}
 			<p class="text-xs text-muted-foreground">
-				{materialIds.length} source{materialIds.length === 1 ? '' : 's'} selected{!models.length
-					? ' · Connect Muse in Settings to continue.'
-					: ''}
+				{plural(materialIds.length, 'source')} selected{models.length
+					? ''
+					: ' · Connect Muse in Settings to continue.'}
 			</p>
 			<div class="flex flex-wrap gap-2">
-				<Button type="submit" disabled={busy || !materialIds.length || !models.length}
-					><Sparkles />{busy
-						? 'Generating…'
-						: `Create ${kind === 'summary' ? 'summary' : 'quiz'}`}</Button
-				>{#if activeJob}<Button variant="ghost" onclick={cancel}>Cancel</Button>{/if}
+				<Button type="submit" disabled={busy || !materialIds.length || !models.length}>
+					<Sparkles />{busy ? 'Generating…' : `Create ${copy.one}`}
+				</Button>
+				{#if activeJob}<Button variant="ghost" onclick={cancel}>Cancel</Button>{/if}
 			</div>
-			{#if notice}<p role="status" class="text-sm text-muted-foreground">
-					{notice}
-				</p>{/if}{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
+			{#if notice}
+				<p role="status" class="line-clamp-3 text-sm break-words text-muted-foreground">{notice}</p>
+			{/if}
+			{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
 		</form>
 		<section>
-			<h3 class="mb-4 text-sm font-semibold">
-				Saved {kind === 'summary' ? 'summaries' : 'quizzes'}
-			</h3>
-			{#if matching.length}<div class="divide-y border">
-					{#each matching as output (output.id)}<button
+			<h3 class="mb-4 text-sm font-semibold">Saved {copy.many}</h3>
+			{#if matching.length}
+				<div class="divide-y border">
+					{#each matching as output (output.id)}
+						<button
+							type="button"
 							class="block w-full min-w-0 p-4 text-left hover:bg-muted/50"
 							onclick={() => (selectedId = output.id)}
-							><span class="block truncate font-medium">{output.title}</span><span
-								class="mt-1 block text-xs text-muted-foreground"
-								>{dateLabel(output.createdAt)} · {output.materialIds.length} sources</span
-							></button
-						>{/each}
-				</div>{:else}<p class="border border-dashed p-5 text-sm text-muted-foreground">
-					Your {kind === 'summary' ? 'summaries' : 'quizzes'} will appear here.
-				</p>{/if}
+						>
+							<span class="block truncate font-medium">{output.title}</span>
+							<span class="mt-1 block text-xs text-muted-foreground">
+								{dateLabel(output.createdAt)} · {plural(output.materialIds.length, 'source')}
+							</span>
+						</button>
+					{/each}
+				</div>
+			{:else}
+				<p class="border border-dashed p-5 text-sm text-muted-foreground">
+					Your {copy.many} will appear here.
+				</p>
+			{/if}
 		</section>
-	</div>{/if}
+	</div>
+{/if}

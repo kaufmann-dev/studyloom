@@ -1,72 +1,61 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { ExternalLink, Link, Unplug, RefreshCw } from '@lucide/svelte';
+	import { ExternalLink, Link, RefreshCw, Unplug } from '@lucide/svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
+	import ErrorAlert from '$lib/components/studyloom/ErrorAlert.svelte';
+	import type { MuseStatus } from '$lib/domain';
+	import { createPoller } from '$lib/polling';
 	import { api, errorText } from '$lib/ui';
-	type MuseState = {
-		account: { state: string; label?: string; credentialRequired: boolean };
-		models: {
-			modelId: string;
-			displayLabel: string;
-			contextLimit?: number;
-			description?: string;
-		}[];
-		error?: string;
+
+	const STATE_LABELS: Record<string, string> = {
+		accountLogin: 'Connected',
+		notLoggedIn: 'Not connected'
 	};
-	let data = $state.raw<MuseState | null>(null);
+	let data = $state.raw<MuseStatus | null>(null);
 	let loading = $state(true);
 	let busy = $state(false);
 	let error = $state('');
 	let login = $state.raw<{ verificationUrl: string; userCode: string } | null>(null);
-	let mounted = false;
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	async function refresh(interaction = false) {
+	let connected = $derived(data?.account.state === 'accountLogin');
+
+	// Keeps checking while a device login is waiting for approval.
+	const poller = createPoller(async (interaction) => {
 		try {
-			data = await api<MuseState>('/api/muse', undefined, 'GET', interaction);
+			data = await api<MuseStatus>('/api/muse', { interaction });
 			if (data.account.state === 'accountLogin') login = null;
-		} catch (e) {
-			error = errorText(e);
+		} catch (cause) {
+			error = errorText(cause);
 		} finally {
 			loading = false;
 		}
-	}
-	async function poll() {
-		await refresh();
-		if (mounted && login) timer = setTimeout(poll, 3000);
-	}
-	async function connect() {
+		return login !== null;
+	});
+	async function attempt(work: () => Promise<void>) {
 		busy = true;
 		error = '';
 		try {
-			login = await api('/api/muse/login', {});
-			void poll();
-		} catch (e) {
-			error = errorText(e);
+			await work();
+		} catch (cause) {
+			error = errorText(cause);
 		} finally {
 			busy = false;
 		}
 	}
-	async function disconnect(cancel = false) {
-		busy = true;
-		error = '';
-		try {
-			await api(cancel ? '/api/muse/cancel-login' : '/api/muse/logout', {});
+	const connect = () =>
+		attempt(async () => {
+			login = await api('/api/muse/login', { body: {} });
+			void poller.run();
+		});
+	const disconnect = (cancelLogin = false) =>
+		attempt(async () => {
+			await api(cancelLogin ? '/api/muse/cancel-login' : '/api/muse/logout', { body: {} });
 			login = null;
-			clearTimeout(timer);
-			await refresh();
-		} catch (e) {
-			error = errorText(e);
-		} finally {
-			busy = false;
-		}
-	}
+			await poller.run();
+		});
+
 	onMount(() => {
-		mounted = true;
-		void refresh(true);
-		return () => {
-			mounted = false;
-			clearTimeout(timer);
-		};
+		void poller.run(true);
+		return poller.stop;
 	});
 </script>
 
@@ -74,7 +63,7 @@
 <div class="max-w-3xl">
 	<h1 class="text-3xl font-semibold tracking-tight">Settings</h1>
 	<p class="mt-2 text-muted-foreground">Connect the Muse account that holds your subscription.</p>
-	{#if error}<p role="alert" class="mt-6 text-sm text-destructive">{error}</p>{/if}
+	<ErrorAlert message={error} class="mt-6" />
 	<section class="mt-8 border p-6" aria-labelledby="muse-heading">
 		<div class="flex flex-wrap items-start justify-between gap-4">
 			<div>
@@ -83,18 +72,15 @@
 					Your Studyloom sign-in and Muse connection are separate.
 				</p>
 			</div>
-			<Button variant="ghost" aria-label="Refresh connection" onclick={() => refresh(true)}
+			<Button variant="ghost" aria-label="Refresh connection" onclick={() => poller.run(true)}
 				><RefreshCw /></Button
 			>
 		</div>
 		{#if loading}<p role="status" class="mt-6 text-muted-foreground">Checking connection…</p>
 		{:else if data}<p class="mt-6 text-sm">
 				<span class="font-medium">Status:</span>
-				{data.account.state === 'accountLogin'
-					? 'Connected'
-					: data.account.state === 'notLoggedIn'
-						? 'Not connected'
-						: data.account.state.replaceAll('_', ' ')}{data.account.label
+				{STATE_LABELS[data.account.state] ?? data.account.state.replaceAll('_', ' ')}{data.account
+					.label
 					? ` · ${data.account.label}`
 					: ''}
 			</p>
@@ -111,7 +97,7 @@
 					</div>
 					<p role="status" class="text-sm text-muted-foreground">Waiting for approval…</p>
 				</div>
-			{:else if data.account.state === 'accountLogin'}<Button
+			{:else if connected}<Button
 					class="mt-5"
 					variant="outline"
 					disabled={busy}

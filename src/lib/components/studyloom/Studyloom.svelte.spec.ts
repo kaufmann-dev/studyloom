@@ -2,9 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import Upload from './Upload.svelte';
-import type { Conversation, Message, MuseModel } from '$lib/domain';
+import type { Conversation, LibraryEntry, LibraryFolder, Message, MuseModel } from '$lib/domain';
 import Chat from './Chat.svelte';
-import Projects from '../../../routes/+page.svelte';
+import MoveDialog from './library/MoveDialog.svelte';
+import Projects from '../../../routes/projects/+page.svelte';
 
 function response(body: unknown, status = 200) {
 	return new Response(JSON.stringify(body), {
@@ -215,20 +216,99 @@ describe('Chat', () => {
 });
 
 describe('Projects page', () => {
-	it('shows the first-project prompt only after a successful empty response', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-			new Response(JSON.stringify({ projects: [] }), { status: 200 })
+	function serve(projects: Response | (() => Response)) {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) =>
+			String(input) === '/api/pins'
+				? response({ pins: [] })
+				: typeof projects === 'function'
+					? projects()
+					: projects
 		);
+	}
+
+	it('shows the first-project prompt only after a successful empty response', async () => {
+		serve(response({ projects: [] }));
 		render(Projects);
 		await expect.element(page.getByText('Your first project starts here')).toBeInTheDocument();
 	});
 
 	it('shows a load error without claiming there are no projects', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-			new Response(JSON.stringify({ message: 'Projects unavailable' }), { status: 500 })
-		);
+		serve(() => response({ message: 'Projects unavailable' }, 500));
 		render(Projects);
 		await expect.element(page.getByRole('alert')).toHaveTextContent('Projects unavailable');
 		await expect.element(page.getByText('Your first project starts here')).not.toBeInTheDocument();
+	});
+});
+
+const folders: LibraryFolder[] = [
+	{ id: 'uni', parentId: null, name: 'University' },
+	{ id: 'docs', parentId: 'uni', name: 'Documents' },
+	{ id: 'archive', parentId: 'docs', name: 'Archive' },
+	{ id: 'travel', parentId: null, name: 'Travel' }
+];
+
+function libraryEntry(overrides: Partial<LibraryEntry>): LibraryEntry {
+	return {
+		id: 'entry',
+		parentId: null,
+		kind: 'note',
+		name: 'Entry',
+		url: '',
+		phone: '',
+		email: '',
+		website: '',
+		notes: '',
+		text: '',
+		filename: null,
+		mimeType: null,
+		size: 0,
+		receivedBytes: 0,
+		status: null,
+		createdAt: '2026-01-01T00:00:00Z',
+		updatedAt: '2026-01-01T00:00:00Z',
+		...overrides
+	};
+}
+
+describe('Library move dialog', () => {
+	it('opens at the current location and moves the item to the chosen folder', async () => {
+		const onMoved = vi.fn();
+		const fetchMock = vi
+			.spyOn(globalThis, 'fetch')
+			.mockImplementation(async (input) =>
+				String(input) === '/api/library/folders' ? response({ folders }) : response({ entry: {} })
+			);
+		render(MoveDialog, {
+			entry: libraryEntry({ id: 'note-1', name: 'Deadline', parentId: 'docs' }),
+			onClose: vi.fn(),
+			onMoved
+		});
+
+		await expect
+			.element(page.getByRole('radio', { name: 'Documents' }))
+			.toHaveAttribute('aria-checked', 'true');
+		await expect.element(page.getByRole('button', { name: 'Move here' })).toBeDisabled();
+
+		await page.getByRole('radio', { name: 'Travel' }).click();
+		await page.getByRole('button', { name: 'Move to Travel' }).click();
+		await vi.waitFor(() => expect(onMoved).toHaveBeenCalledWith('Travel'));
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/library/note-1',
+			expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ parentId: 'travel' }) })
+		);
+	});
+
+	it('never offers a folder its own subtree as a destination', async () => {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => response({ folders }));
+		render(MoveDialog, {
+			entry: libraryEntry({ id: 'docs', kind: 'folder', name: 'Documents', parentId: 'uni' }),
+			onClose: vi.fn(),
+			onMoved: vi.fn()
+		});
+
+		await expect.element(page.getByRole('radio', { name: 'University' })).toBeInTheDocument();
+		await expect.element(page.getByRole('radio', { name: 'Travel' })).toBeInTheDocument();
+		await expect.element(page.getByRole('radio', { name: 'Documents' })).not.toBeInTheDocument();
+		await expect.element(page.getByRole('radio', { name: 'Archive' })).not.toBeInTheDocument();
 	});
 });
