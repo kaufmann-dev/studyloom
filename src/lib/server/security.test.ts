@@ -82,6 +82,7 @@ describe('source and tool boundaries', () => {
 			libraryInput.parse({ kind: 'link', name: 'My Link ', url: 'https://example.edu' }).name
 		).toBe('My Link ');
 		expect(libraryPatchInput.parse({ name: 'hello ' }).name).toBe('hello ');
+		expect(libraryPatchInput.parse({ parentId: id })).toEqual({ parentId: id });
 		expect(() => projectInput.parse({ name: '   ', description: '' })).toThrow();
 		expect(() => chatInput.parse({ message: '\t\n', materialIds: [id] })).toThrow();
 		expect(() => answersSchema.parse({ answers: [{ questionId: 'q1', value: '' }] })).toThrow();

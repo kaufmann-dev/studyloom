@@ -32,22 +32,34 @@ const libraryWebUrl = z
 				})()),
 		'Enter an http or https URL.'
 	);
-const libraryBaseInput = z.object({
-	kind: z.enum(['folder', 'link', 'contact', 'note']),
+const libraryFields = {
 	name: libraryName,
-	parentId: idSchema.nullable().default(null),
-	url: libraryWebUrl.default(''),
-	phone: z.string().max(100).default(''),
-	email: z.union([z.email(), z.literal('')]).default(''),
-	website: libraryWebUrl.default(''),
-	notes: z.string().max(10000).default(''),
-	text: z.string().max(100000).default('')
-});
-export const libraryInput = libraryBaseInput.superRefine((value, context) => {
-	if (value.kind === 'link' && !value.url)
-		context.addIssue({ code: 'custom', path: ['url'], message: 'URL is required.' });
-});
-export const libraryPatchInput = libraryBaseInput.omit({ kind: true }).partial();
+	parentId: idSchema.nullable(),
+	url: libraryWebUrl,
+	phone: z.string().max(100),
+	email: z.union([z.email(), z.literal('')]),
+	website: libraryWebUrl,
+	notes: z.string().max(10000),
+	text: z.string().max(100000)
+};
+export const libraryInput = z
+	.object({
+		kind: z.enum(['folder', 'link', 'contact', 'note']),
+		name: libraryFields.name,
+		parentId: libraryFields.parentId.default(null),
+		url: libraryFields.url.default(''),
+		phone: libraryFields.phone.default(''),
+		email: libraryFields.email.default(''),
+		website: libraryFields.website.default(''),
+		notes: libraryFields.notes.default(''),
+		text: libraryFields.text.default('')
+	})
+	.superRefine((value, context) => {
+		if (value.kind === 'link' && !value.url)
+			context.addIssue({ code: 'custom', path: ['url'], message: 'URL is required.' });
+	});
+// Patch fields carry no defaults: an omitted field must leave the stored value untouched.
+export const libraryPatchInput = z.object(libraryFields).partial();
 export const libraryUploadInput = z.object({
 	parentId: idSchema.nullable().default(null),
 	filename: z.string().trim().min(1).max(255),
