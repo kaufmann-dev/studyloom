@@ -3,6 +3,7 @@
 	import { ExternalLink, Link, RefreshCw, Unplug } from '@lucide/svelte';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import ErrorAlert from '#lib/components/studyloom/ErrorAlert.svelte';
+	import FeedSettings from '#lib/components/studyloom/calendar/FeedSettings.svelte';
 	import type { MuseStatus } from '#lib/domain.js';
 	import { createPoller } from '#lib/polling.js';
 	import { api, errorText } from '#lib/ui.js';
@@ -62,7 +63,9 @@
 <svelte:head><title>Settings · Studyloom</title></svelte:head>
 <div class="max-w-3xl">
 	<h1 class="text-3xl font-semibold tracking-tight">Settings</h1>
-	<p class="mt-2 text-muted-foreground">Connect the Muse account that holds your subscription.</p>
+	<p class="mt-2 text-muted-foreground">
+		Connect your Muse account and share your calendar with other devices.
+	</p>
 	<ErrorAlert message={error} class="mt-6" />
 	<section class="mt-8 border p-6" aria-labelledby="muse-heading">
 		<div class="flex flex-wrap items-start justify-between gap-4">
@@ -107,6 +110,7 @@
 					><Link />{busy ? 'Starting login…' : 'Connect Muse account'}</Button
 				>{/if}{/if}
 	</section>
+	<FeedSettings />
 	<section class="mt-8" aria-labelledby="models-heading">
 		<h2 id="models-heading" class="text-lg font-semibold">Available models</h2>
 		<p class="mt-2 text-sm text-muted-foreground">

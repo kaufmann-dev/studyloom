@@ -118,6 +118,166 @@ export interface Pin {
 	subtitle: string;
 	createdAt: string;
 }
+const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const dateField = z.iso.date('Choose a date.');
+// An empty string means "no time", which is what an empty time input yields.
+const timeField = z.union([z.literal(''), z.string().regex(CLOCK_TIME, 'Enter a time as HH:MM.')]);
+const taskFields = {
+	title: nonBlank(z.string().max(200), 'Title is required.'),
+	notes: z.string().max(4000),
+	dueDate: dateField,
+	dueTime: timeField,
+	projectId: idSchema.nullable()
+};
+export const taskInput = z.object({
+	...taskFields,
+	notes: taskFields.notes.default(''),
+	dueTime: taskFields.dueTime.default(''),
+	projectId: taskFields.projectId.default(null)
+});
+// Patch fields carry no defaults: an omitted field must leave the stored value untouched.
+export const taskPatchInput = z.object({ ...taskFields, done: z.boolean() }).partial();
+export const REPEAT_LABELS = {
+	none: 'Does not repeat',
+	daily: 'Every day',
+	weekly: 'Every week',
+	biweekly: 'Every 2 weeks',
+	monthly: 'Every month',
+	yearly: 'Every year'
+} as const;
+export type Repeat = keyof typeof REPEAT_LABELS;
+const REPEATS = Object.keys(REPEAT_LABELS) as [Repeat, ...Repeat[]];
+const spanFields = {
+	title: nonBlank(z.string().max(200), 'Title is required.'),
+	location: z.string().max(300),
+	notes: z.string().max(4000),
+	startDate: dateField,
+	startTime: timeField,
+	endDate: dateField,
+	endTime: timeField
+};
+type Span = { startDate: string; startTime: string; endDate: string; endTime: string };
+function checkSpan(value: Span, context: z.RefinementCtx) {
+	if (!value.startTime !== !value.endTime)
+		context.addIssue({
+			code: 'custom',
+			path: [value.startTime ? 'endTime' : 'startTime'],
+			message: 'Set both a start and an end time, or neither.'
+		});
+	else if (`${value.endDate}T${value.endTime}` < `${value.startDate}T${value.startTime}`)
+		context.addIssue({
+			code: 'custom',
+			path: [value.endDate < value.startDate ? 'endDate' : 'endTime'],
+			message: 'The end cannot be before the start.'
+		});
+}
+const eventFields = {
+	...spanFields,
+	repeat: z.enum(REPEATS),
+	repeatUntil: z.union([z.literal(''), dateField]),
+	projectId: idSchema.nullable()
+};
+export const eventInput = z
+	.object({
+		...eventFields,
+		location: eventFields.location.default(''),
+		notes: eventFields.notes.default(''),
+		startTime: eventFields.startTime.default(''),
+		endTime: eventFields.endTime.default(''),
+		repeat: eventFields.repeat.default('none'),
+		repeatUntil: eventFields.repeatUntil.default(''),
+		projectId: eventFields.projectId.default(null)
+	})
+	.superRefine((value, context) => {
+		checkSpan(value, context);
+		if (value.repeatUntil && value.repeat !== 'none' && value.repeatUntil < value.startDate)
+			context.addIssue({
+				code: 'custom',
+				path: ['repeatUntil'],
+				message: 'The repeat cannot end before the first event.'
+			});
+	});
+export const eventPatchInput = z.object(eventFields).partial();
+export const occurrenceInput = z.object(spanFields).superRefine(checkSpan);
+export const exceptionInput = z.union([z.object({ cancelled: z.literal(true) }), occurrenceInput]);
+export const feedInput = z.object({ timeZone: z.string().min(1).max(100) });
+export const importInput = z.object({
+	ics: z.string().min(1),
+	timeZone: z.string().min(1).max(100),
+	projectId: idSchema.nullable().default(null),
+	commit: z.boolean().default(false)
+});
+export interface Task {
+	id: string;
+	projectId: string | null;
+	projectName: string | null;
+	title: string;
+	notes: string;
+	dueDate: string;
+	dueTime: string | null;
+	completedAt: string | null;
+	createdAt: string;
+	updatedAt: string;
+}
+export interface EventException {
+	occurrenceDate: string;
+	cancelled: boolean;
+	title: string | null;
+	location: string | null;
+	notes: string | null;
+	startDate: string | null;
+	startTime: string | null;
+	endDate: string | null;
+	endTime: string | null;
+}
+export interface CalendarEvent {
+	id: string;
+	projectId: string | null;
+	projectName: string | null;
+	title: string;
+	location: string;
+	notes: string;
+	startDate: string;
+	/** Null on both ends means the event lasts all day. */
+	startTime: string | null;
+	endDate: string;
+	endTime: string | null;
+	repeat: Repeat;
+	repeatUntil: string | null;
+	exceptions: EventException[];
+	createdAt: string;
+	updatedAt: string;
+}
+/** One concrete occurrence of an event, with any single-occurrence change applied. */
+export interface Occurrence {
+	key: string;
+	eventId: string;
+	/** The original start date of this occurrence within its series. */
+	occurrenceDate: string;
+	title: string;
+	location: string;
+	notes: string;
+	startDate: string;
+	startTime: string | null;
+	endDate: string;
+	endTime: string | null;
+	repeating: boolean;
+	modified: boolean;
+	projectId: string | null;
+	projectName: string | null;
+}
+export interface CalendarFeed {
+	/** Null while the feed is disabled. */
+	url: string | null;
+	timeZone: string | null;
+}
+export interface ImportSummary {
+	events: number;
+	tasks: number;
+	/** How many of the events and tasks replace items that already exist. */
+	updated: number;
+	skipped: { reason: string; count: number }[];
+}
 export const sourceSelection = z.array(idSchema).min(1).max(500);
 export const citationSchema = z.object({
 	materialId: idSchema,

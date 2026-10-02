@@ -1,0 +1,32 @@
+{
+	"permissions": {
+		"allow": [
+			"mcp__massive__call_api",
+			"mcp__massive__query_data",
+			"Bash(agent-browser wait *)",
+			"Bash(npm view *)",
+			"Bash(pnpm check)",
+			"Bash(pnpm lint)",
+			"mcp__claude_ai_AI_Portfolios__get_strategy",
+			"mcp__claude_ai_AI_Portfolios__get_prices",
+			"mcp__claude_ai_AI_Portfolios__get_portfolio",
+			"Bash(podman ps *)",
+			"Bash(pnpm test)",
+			"Bash(pnpm audit)",
+			"Bash(agent-browser snapshot *)",
+			"Bash(npm audit)",
+			"Bash(pnpm why *)",
+			"Bash(npm ls *)",
+			"mcp__massive__search_endpoints",
+			"mcp__svelte__svelte-autofixer",
+			"mcp__ai-portfolios__get_strategy",
+			"mcp__portfolio_arena__get_arena_overview",
+			"mcp__portfolio_arena__get_prompt",
+			"Bash(podman logs *)",
+			"Bash(pnpm test:components)",
+			"mcp__purelymail__list_available_accounts",
+			"mcp__purelymail__list_allowed_recipients",
+			"mcp__purelymail__list_emails_metadata"
+		]
+	}
+}

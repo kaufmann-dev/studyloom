@@ -5,6 +5,8 @@ import {
 	timestamp,
 	bigint,
 	integer,
+	boolean,
+	date,
 	jsonb,
 	index,
 	uniqueIndex,
@@ -12,7 +14,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { Citation, Quiz, Grade } from '../../domain';
+import type { Citation, Quiz, Grade, Repeat } from '../../domain';
 const time = (name: string) => timestamp(name, { withTimezone: true }).notNull().defaultNow();
 const pk = () => uuid('id').primaryKey().defaultRandom();
 export const sessions = pgTable(
@@ -101,6 +103,100 @@ export const pins = pgTable(
 		uniqueIndex('pins_library_idx').on(t.libraryId),
 		check('pins_one_target_check', sql`(${t.projectId} is null) <> (${t.libraryId} is null)`)
 	]
+);
+const CLOCK_TIME = sql.raw(`'^([01][0-9]|2[0-3]):[0-5][0-9]$'`);
+export const tasks = pgTable(
+	'tasks',
+	{
+		id: pk(),
+		uid: text('uid').notNull(),
+		projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+		title: text('title').notNull(),
+		notes: text('notes').notNull().default(''),
+		dueDate: date('due_date', { mode: 'string' }).notNull(),
+		dueTime: text('due_time'),
+		completedAt: timestamp('completed_at', { withTimezone: true }),
+		createdAt: time('created_at'),
+		updatedAt: time('updated_at')
+	},
+	(t) => [
+		uniqueIndex('tasks_uid_idx').on(t.uid),
+		index('tasks_due_idx').on(t.completedAt, t.dueDate),
+		index('tasks_project_idx').on(t.projectId),
+		check('tasks_due_time_check', sql`${t.dueTime} is null or ${t.dueTime} ~ ${CLOCK_TIME}`)
+	]
+);
+export const events = pgTable(
+	'events',
+	{
+		id: pk(),
+		uid: text('uid').notNull(),
+		projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+		title: text('title').notNull(),
+		location: text('location').notNull().default(''),
+		notes: text('notes').notNull().default(''),
+		startDate: date('start_date', { mode: 'string' }).notNull(),
+		startTime: text('start_time'),
+		endDate: date('end_date', { mode: 'string' }).notNull(),
+		endTime: text('end_time'),
+		repeat: text('repeat').$type<Repeat>().notNull().default('none'),
+		repeatUntil: date('repeat_until', { mode: 'string' }),
+		createdAt: time('created_at'),
+		updatedAt: time('updated_at')
+	},
+	(t) => [
+		uniqueIndex('events_uid_idx').on(t.uid),
+		index('events_range_idx').on(t.startDate, t.endDate),
+		index('events_project_idx').on(t.projectId),
+		check(
+			'events_repeat_check',
+			sql`${t.repeat} in ('none', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly')`
+		),
+		check(
+			'events_time_check',
+			sql`(${t.startTime} is null) = (${t.endTime} is null) and (${t.startTime} is null or (${t.startTime} ~ ${CLOCK_TIME} and ${t.endTime} ~ ${CLOCK_TIME}))`
+		),
+		check(
+			'events_order_check',
+			sql`(${t.endDate}, coalesce(${t.endTime}, '')) >= (${t.startDate}, coalesce(${t.startTime}, ''))`
+		),
+		check('events_until_check', sql`${t.repeatUntil} is null or ${t.repeat} <> 'none'`)
+	]
+);
+export const eventExceptions = pgTable(
+	'event_exceptions',
+	{
+		id: pk(),
+		eventId: uuid('event_id')
+			.notNull()
+			.references(() => events.id, { onDelete: 'cascade' }),
+		occurrenceDate: date('occurrence_date', { mode: 'string' }).notNull(),
+		cancelled: boolean('cancelled').notNull().default(false),
+		title: text('title'),
+		location: text('location'),
+		notes: text('notes'),
+		startDate: date('start_date', { mode: 'string' }),
+		startTime: text('start_time'),
+		endDate: date('end_date', { mode: 'string' }),
+		endTime: text('end_time')
+	},
+	(t) => [
+		uniqueIndex('event_exceptions_occurrence_idx').on(t.eventId, t.occurrenceDate),
+		check(
+			'event_exceptions_override_check',
+			sql`${t.cancelled} or (${t.title} is not null and ${t.startDate} is not null and ${t.endDate} is not null)`
+		)
+	]
+);
+export const calendarFeed = pgTable(
+	'calendar_feed',
+	{
+		id: integer('id').primaryKey().default(1),
+		token: text('token'),
+		timeZone: text('time_zone').notNull(),
+		updatedAt: time('updated_at')
+	},
+	(t) => [check('calendar_feed_single_check', sql`${t.id} = 1`)]
 );
 export const materials = pgTable(
 	'materials',

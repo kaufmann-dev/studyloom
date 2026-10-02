@@ -3,11 +3,19 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { ArrowLeft, ListChecks, MessageSquare, NotebookText } from '@lucide/svelte';
+	import {
+		ArrowLeft,
+		CalendarPlus,
+		ListChecks,
+		ListPlus,
+		MessageSquare,
+		NotebookText
+	} from '@lucide/svelte';
 	import {
 		DEFAULT_MODEL,
 		isActiveJob,
 		type Material,
+		type Occurrence,
 		type MuseModel,
 		type MuseStatus,
 		type ProjectWorkspace
@@ -16,9 +24,14 @@
 	import { Label } from '#lib/components/ui/label/index.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import Recorder from '#lib/components/Recorder.svelte';
+	import { addDays, localDate, occurrences } from '#lib/calendar.js';
+	import { Events } from '#lib/calendar.svelte.js';
 	import { Pins } from '#lib/pins.svelte.js';
+	import { getTasks } from '#lib/tasks.svelte.js';
 	import { createPoller } from '#lib/polling.js';
 	import { api, errorText } from '#lib/ui.js';
+	import EventDialog from './calendar/EventDialog.svelte';
+	import EventList from './calendar/EventList.svelte';
 	import Chat from './Chat.svelte';
 	import ErrorAlert from './ErrorAlert.svelte';
 	import JobActivity from './JobActivity.svelte';
@@ -27,12 +40,27 @@
 	import ProjectSettings from './ProjectSettings.svelte';
 	import SourceList from './SourceList.svelte';
 	import SourceViewer from './SourceViewer.svelte';
+	import TaskDialog from './tasks/TaskDialog.svelte';
+	import TaskList from './tasks/TaskList.svelte';
 	import StudyTools from './StudyTools.svelte';
 	import Upload from './Upload.svelte';
 
 	let { projectId }: { projectId: string } = $props();
 	const uid = $props.id();
 	const pins = new Pins();
+	const SCHEDULE_DAYS = 60;
+	const VISIBLE_EVENTS = 5;
+	const tasks = getTasks();
+	const events = new Events();
+	let addingTask = $state(false);
+	/** The event dialog: an occurrence to edit, or `true` for a new event. */
+	let eventOpen = $state.raw<Occurrence | true | null>(null);
+	let now = $derived(tasks.clock.now);
+	let today = $derived(localDate(now));
+	let projectTasks = $derived(tasks.open.filter((task) => task.projectId === projectId));
+	let projectEvents = $derived(
+		occurrences(events.items, today, addDays(today, SCHEDULE_DAYS)).slice(0, VISIBLE_EVENTS)
+	);
 	let data = $state.raw<ProjectWorkspace | null>(null);
 	let models = $state.raw<MuseModel[]>([]);
 	let museNotice = $state('');
@@ -107,6 +135,9 @@
 		void refresh(true);
 		void loadModels();
 		void pins.load().catch(() => {});
+		// The schedule is a side panel; the calendar and task pages report loading failures.
+		const start = localDate(new Date());
+		void events.load(start, addDays(start, SCHEDULE_DAYS), projectId).catch(() => {});
 		return poller.stop;
 	});
 </script>
@@ -169,6 +200,30 @@
 					<Recorder {projectId} onSaved={() => void refresh()} />
 				</div>
 			</section>
+			<section class="space-y-3 border p-4" aria-labelledby="{uid}-schedule">
+				<h2 id="{uid}-schedule" class="text-sm font-semibold">Schedule</h2>
+				{#if projectTasks.length === 0 && projectEvents.length === 0}
+					<p class="text-sm text-muted-foreground">No open tasks or upcoming events.</p>
+				{/if}
+				{#if projectTasks.length}<TaskList tasks={projectTasks} showProject={false} />{/if}
+				{#if projectEvents.length}
+					<EventList
+						occurrences={projectEvents}
+						{now}
+						showDay
+						showProject={false}
+						onSelect={(occurrence) => (eventOpen = occurrence)}
+					/>
+				{/if}
+				<div class="flex flex-wrap gap-2">
+					<Button variant="outline" size="sm" onclick={() => (addingTask = true)}>
+						<ListPlus />Add task
+					</Button>
+					<Button variant="outline" size="sm" onclick={() => (eventOpen = true)}>
+						<CalendarPlus />Add event
+					</Button>
+				</div>
+			</section>
 			<SourceList
 				{projectId}
 				materials={data.materials}
@@ -227,4 +282,17 @@
 			</Tabs.Root>
 		</div>
 	</div>
+{/if}
+{#if addingTask}
+	<TaskDialog initial={{ dueDate: today, projectId }} onClose={() => (addingTask = false)} />
+{/if}
+{#if eventOpen}
+	{@const occurrence = eventOpen === true ? undefined : eventOpen}
+	<EventDialog
+		{events}
+		event={occurrence && events.find(occurrence.eventId)}
+		{occurrence}
+		initial={{ startDate: today, endDate: today, projectId }}
+		onClose={() => (eventOpen = null)}
+	/>
 {/if}

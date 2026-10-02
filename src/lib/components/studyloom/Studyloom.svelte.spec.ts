@@ -2,7 +2,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import Upload from './Upload.svelte';
-import type { Conversation, LibraryEntry, LibraryFolder, Message, MuseModel } from '#lib/domain.js';
+import type {
+	Conversation,
+	LibraryEntry,
+	LibraryFolder,
+	Message,
+	MuseModel,
+	Occurrence,
+	Task
+} from '#lib/domain.js';
+import { addDays, localDate, monthGrid } from '#lib/calendar.js';
+import MonthView from './calendar/MonthView.svelte';
+import TaskListFixture from './tasks/TaskListFixture.svelte';
 import Chat from './Chat.svelte';
 import LibraryBrowser from './library/LibraryBrowser.svelte';
 import MoveDialog from './library/MoveDialog.svelte';
@@ -366,5 +377,78 @@ describe('Library browser', () => {
 				expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ parentId: 'travel' }) })
 			)
 		);
+	});
+});
+
+describe('Tasks and calendar', () => {
+	const today = localDate(new Date());
+	const task = (extra: Partial<Task> = {}): Task => ({
+		id: 'task-1',
+		projectId: null,
+		projectName: null,
+		title: 'Hand in essay',
+		notes: '',
+		dueDate: today,
+		dueTime: null,
+		completedAt: null,
+		createdAt: '2026-09-01T00:00:00.000Z',
+		updatedAt: '2026-09-01T00:00:00.000Z',
+		...extra
+	});
+
+	it('flags a task due today and completes it from the list', async () => {
+		const fetchMock = vi
+			.spyOn(globalThis, 'fetch')
+			.mockImplementation(async () =>
+				response({ task: task({ completedAt: '2026-10-01T10:00:00.000Z' }) })
+			);
+		render(TaskListFixture, { tasks: [task()] });
+		await expect.element(page.getByText('Today', { exact: true })).toBeVisible();
+		await page.getByRole('checkbox', { name: 'Mark Hand in essay as done' }).click();
+		// Components of earlier tests may still be loading their own data.
+		const patches = () =>
+			fetchMock.mock.calls.filter(([path]) => String(path) === '/api/tasks/task-1');
+		await vi.waitFor(() => expect(patches()).toHaveLength(1));
+		const [, init] = patches()[0];
+		expect(init).toMatchObject({ method: 'PATCH', body: JSON.stringify({ done: true }) });
+		await expect.element(page.getByText('Hand in essay')).not.toBeInTheDocument();
+	});
+
+	it('shows events and deadlines on their day in the month', async () => {
+		const occurrence: Occurrence = {
+			key: 'event-1:' + today,
+			eventId: 'event-1',
+			occurrenceDate: today,
+			title: 'Lecture',
+			location: '',
+			notes: '',
+			startDate: today,
+			startTime: '09:00',
+			endDate: today,
+			endTime: '10:00',
+			repeating: true,
+			modified: false,
+			projectId: null,
+			projectName: null
+		};
+		const onEvent = vi.fn();
+		const onTask = vi.fn();
+		render(MonthView, {
+			props: {
+				weeks: monthGrid(today, 'en-US'),
+				anchor: today,
+				occurrences: [occurrence],
+				tasks: [task(), task({ id: 'task-2', title: 'Later task', dueDate: addDays(today, 40) })],
+				now: new Date(),
+				onOpenDay: vi.fn(),
+				onEvent,
+				onTask
+			}
+		});
+		await page.getByRole('button', { name: 'Event: Lecture, 09:00 – 10:00' }).click();
+		expect(onEvent).toHaveBeenCalledWith(occurrence);
+		await page.getByRole('button', { name: 'Task: Hand in essay, Today' }).click();
+		expect(onTask).toHaveBeenCalledOnce();
+		await expect.element(page.getByText('Later task')).not.toBeInTheDocument();
 	});
 });

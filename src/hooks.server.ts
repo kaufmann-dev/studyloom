@@ -19,6 +19,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 			!event.locals.session &&
 			path !== '/login' &&
 			!path.startsWith('/auth/') &&
+			// The calendar feed is authorised by the secret token in its path.
+			!path.startsWith('/feed/') &&
 			path !== '/api/health'
 		) {
 			if (path.startsWith('/api/')) error(401, 'Please sign in.');

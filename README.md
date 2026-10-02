@@ -1,12 +1,16 @@
 # Studyloom
 
-A private learning workspace at **studyloom.kaufmann.dev**. The home page greets you and shows pinned projects and Library items. Organize study materials into projects, and keep important files and information in the separate Library.
+A private learning workspace at **studyloom.kaufmann.dev**. The home page greets you and shows open tasks, upcoming events, and pinned projects and Library items. Organize study materials into projects, and keep important files and information in the separate Library.
 
 - Pause and resume recording; finalized transcript turns are saved with speaker labels and approximate timestamps. Audio is persisted in the browser before transmission and retained on the server until you delete the source.
 - Upload any file type. Muse inspects it and chooses conversion tools or scripts. Unsupported or partly readable files retain their originals and show the extraction limitations.
 - Combine readable materials for source-cited chat, summaries, multiple-choice questions and written-answer quizzes. Answers, grading feedback and the model used are saved.
 - Choose models from Muse's live catalog. Text generation and file processing use your Muse Code subscription login. Audio transcription uses the separate Meta transcription API and incurs API charges.
 - Save files, web links, contacts and notes at the Library root or in nested folders. Library files retain their originals for private viewing or download; they are not sent through Muse processing.
+- Track tasks with a deadline (a date, optionally a time). Red means overdue or due today, amber means due within three days. Open tasks appear on the home page, the Tasks page, the calendar and their project; finished ones move to the Done tab. Reminders are visual only.
+- Plan events in the calendar's month, week and agenda views. Events can last all day, span several days and repeat daily, weekly, every two weeks, monthly or yearly; a single occurrence can be skipped or changed without touching the series. Tasks and events can belong to a project.
+- Subscribe to the calendar from a phone: Settings → Calendar feed creates a secret address (`/feed/<token>/studyloom.ics`) with your events and open tasks. Anyone holding the address can read the calendar; create a new address or turn the feed off there. Calendar apps refresh subscriptions on their own schedule.
+- Export everything as an `.ics` file and import `.ics` files from other calendars (Calendar → ⋯). Importing shows a preview first, and importing the same file again updates instead of duplicating. Repeat rules without an equivalent (for example "first Monday of the month") import as single events; weekly rules on several weekdays become one series per weekday.
 
 ## Development
 
@@ -97,6 +101,6 @@ Application secrets are not needed during the build. Complete the Pocket ID clie
 
 ## Verification
 
-`pnpm test` covers recorder resampling and recovery ordering, session expiry and redirect validation, credential environment isolation, workspace path confinement, WAV validation, citation checks and quiz scoring. `pnpm check` checks Svelte and TypeScript; `pnpm build` creates both the SvelteKit application and runtime/MCP bundles.
+`pnpm test` covers task urgency, repeating-event expansion, iCalendar feed/export/import, recorder resampling and recovery ordering, session expiry and redirect validation, credential environment isolation, workspace path confinement, WAV validation, citation checks and quiz scoring. `pnpm check` checks Svelte and TypeScript; `pnpm build` creates both the SvelteKit application and runtime/MCP bundles.
 
-After deployment, verify Pocket ID login/logout, microphone and tab capture, pause/resume, interrupted recording recovery, one representative upload, a cited overview and quiz grading with your configured services. Unit tests do not replace those browser/device and deployed-service checks.
+After deployment, verify Pocket ID login/logout, a calendar feed subscription from a phone, microphone and tab capture, pause/resume, interrupted recording recovery, one representative upload, a cited overview and quiz grading with your configured services. Unit tests do not replace those browser/device and deployed-service checks.

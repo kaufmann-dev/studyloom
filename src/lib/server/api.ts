@@ -2,12 +2,15 @@ import { error, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { ClientError, safeError } from './config';
 import { museHost, museStatus } from './muse';
+import { calendar } from './endpoints/calendar';
+import { events } from './endpoints/events';
 import type { Handler } from './endpoints/http';
 import { library } from './endpoints/library';
 import { assets, materials, recordings } from './endpoints/materials';
 import { pins } from './endpoints/pins';
 import { projects } from './endpoints/projects';
 import { conversations, jobs, outputs } from './endpoints/study';
+import { tasks } from './endpoints/tasks';
 
 async function museAction<T>(operation: Promise<T>): Promise<T> {
 	try {
@@ -32,6 +35,9 @@ const resources = new Map<string, Handler>(
 	Object.entries({
 		library,
 		pins,
+		tasks,
+		events,
+		calendar,
 		muse,
 		projects,
 		materials,
