@@ -4,7 +4,7 @@ import { db } from '../db';
 import * as t from '../db/schema';
 import { answersSchema, idSchema, quizSchema } from '../../domain';
 import { gradeChoice } from '../jobs';
-import { validateModel } from '../muse';
+import { gradingModel } from '../muse';
 import { accepted, ok, readJson, type Handler } from './http';
 import { jobIsActive, lockProject, type Job } from './queries';
 
@@ -36,38 +36,51 @@ export const publicOutput = (output: typeof t.outputs.$inferSelect) => ({
 	createdAt: output.createdAt
 });
 
-export const conversations: Handler = async ({ method, id, action }) => {
-	if (action || method !== 'GET') return;
+/** A conversation with its messages, oldest first. */
+export async function conversationDetails(id: string | undefined) {
 	const [conversation] = await db()
 		.select()
 		.from(t.conversations)
 		.where(eq(t.conversations.id, idSchema.parse(id)));
-	if (!conversation) error(404);
-	return Response.json({
+	if (!conversation) error(404, 'Conversation not found.');
+	return {
 		conversation,
 		messages: await db()
 			.select()
 			.from(t.messages)
 			.where(eq(t.messages.conversationId, conversation.id))
 			.orderBy(asc(t.messages.createdAt))
-	});
-};
-
-export const outputs: Handler = async ({ event, method, id, action }) => {
+	};
+}
+async function findOutput(id: string | undefined) {
 	const [output] = await db()
 		.select()
 		.from(t.outputs)
 		.where(eq(t.outputs.id, idSchema.parse(id)));
-	if (!output) error(404);
-	if (!action && method === 'GET')
-		return Response.json({
-			output: publicOutput(output),
-			attempts: await db()
-				.select()
-				.from(t.attempts)
-				.where(eq(t.attempts.outputId, output.id))
-				.orderBy(desc(t.attempts.createdAt))
-		});
+	if (!output) error(404, 'Overview or quiz not found.');
+	return output;
+}
+/** An overview or quiz with its quiz attempts, newest first. */
+export async function outputDetails(id: string | undefined) {
+	const output = await findOutput(id);
+	return {
+		output: publicOutput(output),
+		attempts: await db()
+			.select()
+			.from(t.attempts)
+			.where(eq(t.attempts.outputId, output.id))
+			.orderBy(desc(t.attempts.createdAt))
+	};
+}
+
+export const conversations: Handler = async ({ method, id, action }) => {
+	if (action || method !== 'GET') return;
+	return Response.json(await conversationDetails(id));
+};
+
+export const outputs: Handler = async ({ event, method, id, action }) => {
+	if (!action && method === 'GET') return Response.json(await outputDetails(id));
+	const output = await findOutput(id);
 	if (action === 'attempts' && method === 'POST') {
 		const { answers } = answersSchema.parse(await readJson(event));
 		const quiz = quizSchema.parse(output.quiz);
@@ -81,7 +94,7 @@ export const outputs: Handler = async ({ event, method, id, action }) => {
 		const grades = gradeChoice(quiz, answers);
 		// Multiple-choice answers are graded here; written answers need a Muse grading job.
 		const written = quiz.questions.some((question) => question.type === 'written');
-		if (written) await validateModel(output.modelId);
+		const modelId = written ? await gradingModel(output.modelId) : output.modelId;
 		const { attempt, job } = await db().transaction(async (tx) => {
 			await lockProject(tx, output.projectId);
 			const [attempt] = await tx
@@ -103,7 +116,7 @@ export const outputs: Handler = async ({ event, method, id, action }) => {
 					kind: 'grade',
 					queue: 'interactive',
 					attemptId: attempt.id,
-					payload: { snapshot: output.sourceSnapshot, modelId: output.modelId }
+					payload: { snapshot: output.sourceSnapshot, modelId }
 				})
 				.returning();
 			return { attempt, job };

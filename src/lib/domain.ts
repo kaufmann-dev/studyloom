@@ -199,6 +199,7 @@ export const eventInput = z
 	});
 export const eventPatchInput = z.object(eventFields).partial();
 export const occurrenceInput = z.object(spanFields).superRefine(checkSpan);
+export const occurrencePatchInput = z.object(spanFields).partial();
 export const exceptionInput = z.union([z.object({ cancelled: z.literal(true) }), occurrenceInput]);
 export const feedInput = z.object({ timeZone: z.string().min(1).max(100) });
 export const importInput = z.object({
@@ -369,6 +370,65 @@ export const ingestionSchema = z
 				message: 'Unreadable sources cannot contain readable content.'
 			});
 	});
+/** A cited markdown text: a chat answer or an overview. */
+export const citedTextSchema = z.object({
+	title: z.string().min(1).max(200),
+	content: z.string().min(1).max(200000),
+	citations: z.array(citationSchema).min(1).max(500)
+});
+export const sourceSearchInput = z.object({
+	query: nonBlank(z.string().max(500), 'A search query is required.').describe(
+		'Words to find. Matching uses exact word forms without stemming, so try variants and synonyms. Supports "quoted phrases", OR and -exclusions.'
+	),
+	projectId: idSchema.optional().describe('Only search this project.'),
+	materialIds: z.array(idSchema).min(1).max(500).optional().describe('Only search these sources.'),
+	limit: z.number().int().min(1).max(50).default(10)
+});
+export const sourceReadInput = z.object({
+	materialId: idSchema.describe('Source ID from get_project or search_sources.'),
+	locator: z.string().max(300).optional().describe('Start reading at this locator.'),
+	offset: z
+		.number()
+		.int()
+		.nonnegative()
+		.default(0)
+		.describe('Start at this chunk position; pass nextOffset from a previous read to continue.'),
+	maxChars: z.number().int().min(1000).max(100000).default(30000)
+});
+const MAX_TEXT_SOURCE_CHARS = 2_000_000;
+export const textSourceInput = z
+	.object({
+		name: nonBlank(z.string().max(160), 'Source name is required.'),
+		sections: z
+			.array(chunkResultSchema)
+			.min(1)
+			.max(2000)
+			.describe(
+				'The text in logical sections. Each locator is a unique, citable section name such as "section:Definitions".'
+			)
+	})
+	.superRefine((value, context) => {
+		if (new Set(value.sections.map((s) => s.locator)).size !== value.sections.length)
+			context.addIssue({ code: 'custom', path: ['sections'], message: 'Locators must be unique.' });
+		if (value.sections.reduce((n, s) => n + s.text.length, 0) > MAX_TEXT_SOURCE_CHARS)
+			context.addIssue({
+				code: 'custom',
+				path: ['sections'],
+				message: 'A text source can hold at most 2,000,000 characters.'
+			});
+	});
+export const librarySearchInput = z.object({
+	query: nonBlank(z.string().max(200), 'A search query is required.'),
+	kind: z.enum(['folder', 'file', 'link', 'contact', 'note']).optional()
+});
+export interface Connection {
+	id: string;
+	clientName: string;
+	/** Who signed in to approve the connection. */
+	userName: string;
+	createdAt: string;
+	lastUsedAt: string;
+}
 export type Citation = z.infer<typeof citationSchema>;
 export type Quiz = z.infer<typeof quizSchema>;
 export type Question = z.infer<typeof questionSchema>;

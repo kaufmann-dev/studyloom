@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ClientError, safeError } from './config';
 import { museHost, museStatus } from './muse';
 import { calendar } from './endpoints/calendar';
+import { connections } from './endpoints/connections';
 import { events } from './endpoints/events';
 import type { Handler } from './endpoints/http';
 import { library } from './endpoints/library';
@@ -33,6 +34,7 @@ const muse: Handler = async ({ method, id }) => {
 
 const resources = new Map<string, Handler>(
 	Object.entries({
+		connections,
 		library,
 		pins,
 		tasks,

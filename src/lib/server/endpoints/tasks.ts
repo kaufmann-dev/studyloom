@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { randomUUID } from 'node:crypto';
 import { asc, desc, eq, getTableColumns, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
+import type { z } from 'zod';
 import { db } from '../db';
 import * as t from '../db/schema';
 import { idSchema, taskInput, taskPatchInput } from '../../domain';
@@ -39,63 +40,71 @@ async function findTask(id: string | undefined) {
 	return row;
 }
 
-export const tasks: Handler = async ({ event, method, id }) => {
-	if (!id && method === 'GET') {
-		const rows =
-			event.url.searchParams.get('status') === 'done'
-				? await selectTasks(isNotNull(t.tasks.completedAt))
-						.orderBy(desc(t.tasks.completedAt))
-						.limit(DONE_LIMIT)
-				: await selectTasks(isNull(t.tasks.completedAt)).orderBy(
-						asc(t.tasks.dueDate),
-						sql`${t.tasks.dueTime} asc nulls last`,
-						asc(t.tasks.createdAt)
-					);
-		return Response.json({ tasks: rows.map(publicTask) });
-	}
-	if (!id && method === 'POST') {
-		const input = taskInput.parse(await readJson(event));
-		if (input.projectId) await findProject(input.projectId);
-		const [inserted] = await db()
-			.insert(t.tasks)
-			.values({
-				uid: `${randomUUID()}@studyloom`,
-				projectId: input.projectId,
-				title: input.title.trim(),
-				notes: input.notes,
-				dueDate: input.dueDate,
-				dueTime: input.dueTime || null
-			})
-			.returning({ id: t.tasks.id });
-		return created({ task: publicTask(await findTask(inserted.id)) });
-	}
-	if (!id) return;
-
+export async function listTasks(status: 'open' | 'done') {
+	const rows =
+		status === 'done'
+			? await selectTasks(isNotNull(t.tasks.completedAt))
+					.orderBy(desc(t.tasks.completedAt))
+					.limit(DONE_LIMIT)
+			: await selectTasks(isNull(t.tasks.completedAt)).orderBy(
+					asc(t.tasks.dueDate),
+					sql`${t.tasks.dueTime} asc nulls last`,
+					asc(t.tasks.createdAt)
+				);
+	return rows.map(publicTask);
+}
+export async function createTask(input: z.infer<typeof taskInput>) {
+	if (input.projectId) await findProject(input.projectId);
+	const [inserted] = await db()
+		.insert(t.tasks)
+		.values({
+			uid: `${randomUUID()}@studyloom`,
+			projectId: input.projectId,
+			title: input.title.trim(),
+			notes: input.notes,
+			dueDate: input.dueDate,
+			dueTime: input.dueTime || null
+		})
+		.returning({ id: t.tasks.id });
+	return publicTask(await findTask(inserted.id));
+}
+export async function updateTask(id: string | undefined, patch: z.infer<typeof taskPatchInput>) {
 	const task = await findTask(id);
-	if (method === 'PATCH') {
-		const patch = taskPatchInput.parse(await readJson(event));
-		if (patch.projectId) await findProject(patch.projectId);
-		await db()
-			.update(t.tasks)
-			.set({
-				title: patch.title?.trim(),
-				notes: patch.notes,
-				dueDate: patch.dueDate,
-				dueTime: patch.dueTime === undefined ? undefined : patch.dueTime || null,
-				projectId: patch.projectId,
-				completedAt:
-					patch.done === undefined
-						? undefined
-						: patch.done
-							? (task.completedAt ?? new Date())
-							: null,
-				updatedAt: new Date()
-			})
-			.where(eq(t.tasks.id, task.id));
-		return Response.json({ task: publicTask(await findTask(task.id)) });
-	}
+	if (patch.projectId) await findProject(patch.projectId);
+	await db()
+		.update(t.tasks)
+		.set({
+			title: patch.title?.trim(),
+			notes: patch.notes,
+			dueDate: patch.dueDate,
+			dueTime: patch.dueTime === undefined ? undefined : patch.dueTime || null,
+			projectId: patch.projectId,
+			completedAt:
+				patch.done === undefined ? undefined : patch.done ? (task.completedAt ?? new Date()) : null,
+			updatedAt: new Date()
+		})
+		.where(eq(t.tasks.id, task.id));
+	return publicTask(await findTask(task.id));
+}
+export async function deleteTask(id: string | undefined) {
+	const task = await findTask(id);
+	await db().delete(t.tasks).where(eq(t.tasks.id, task.id));
+}
+
+export const tasks: Handler = async ({ event, method, id }) => {
+	if (!id && method === 'GET')
+		return Response.json({
+			tasks: await listTasks(event.url.searchParams.get('status') === 'done' ? 'done' : 'open')
+		});
+	if (!id && method === 'POST')
+		return created({ task: await createTask(taskInput.parse(await readJson(event))) });
+	if (!id) return;
+	if (method === 'PATCH')
+		return Response.json({
+			task: await updateTask(id, taskPatchInput.parse(await readJson(event)))
+		});
 	if (method === 'DELETE') {
-		await db().delete(t.tasks).where(eq(t.tasks.id, task.id));
+		await deleteTask(id);
 		return ok();
 	}
 };

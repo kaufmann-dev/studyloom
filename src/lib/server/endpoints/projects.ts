@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { and, desc, eq, inArray } from 'drizzle-orm';
+import type { z } from 'zod';
 import { db } from '../db';
 import * as t from '../db/schema';
 import {
@@ -23,58 +24,63 @@ const cleaned = (input: { name: string; description: string }) => ({
 	description: input.description.trim()
 });
 
-export const projects: Handler = async ({ event, method, id: rawId, action }) => {
-	if (!rawId && method === 'GET')
-		return Response.json({
-			projects: await db().select().from(t.projects).orderBy(desc(t.projects.updatedAt))
-		});
-	if (!rawId && method === 'POST') {
-		const input = projectInput.parse(await readJson(event));
-		const [project] = await db().insert(t.projects).values(cleaned(input)).returning();
-		return created({ project });
-	}
-
+export const listProjects = () =>
+	db().select().from(t.projects).orderBy(desc(t.projects.updatedAt));
+export async function createProject(input: z.infer<typeof projectInput>) {
+	const [project] = await db().insert(t.projects).values(cleaned(input)).returning();
+	return project;
+}
+/** A project with its sources, conversations, generated outputs and recent jobs. */
+export async function projectWorkspace(rawId: string | undefined) {
 	const project = await findProject(rawId);
 	const id = project.id;
-	if (!action && method === 'GET') {
-		const [materials, conversations, outputs, jobs, readableChunks] = await Promise.all([
-			db()
-				.select()
-				.from(t.materials)
-				.where(eq(t.materials.projectId, id))
-				.orderBy(desc(t.materials.createdAt)),
-			db()
-				.select()
-				.from(t.conversations)
-				.where(eq(t.conversations.projectId, id))
-				.orderBy(desc(t.conversations.updatedAt)),
-			db()
-				.select()
-				.from(t.outputs)
-				.where(eq(t.outputs.projectId, id))
-				.orderBy(desc(t.outputs.createdAt)),
-			db()
-				.select()
-				.from(t.jobs)
-				.where(eq(t.jobs.projectId, id))
-				.orderBy(desc(t.jobs.createdAt))
-				.limit(100),
-			db()
-				.select({ materialId: t.sourceChunks.materialId })
-				.from(t.sourceChunks)
-				.innerJoin(t.materials, eq(t.materials.id, t.sourceChunks.materialId))
-				.where(eq(t.materials.projectId, id))
-				.groupBy(t.sourceChunks.materialId)
-		]);
-		return Response.json({
-			project,
-			materials,
-			readableMaterialIds: readableChunks.map((chunk) => chunk.materialId),
-			conversations,
-			outputs: outputs.map(publicOutput),
-			jobs: jobs.map(publicJob)
-		});
-	}
+	const [materials, conversations, outputs, jobs, readableChunks] = await Promise.all([
+		db()
+			.select()
+			.from(t.materials)
+			.where(eq(t.materials.projectId, id))
+			.orderBy(desc(t.materials.createdAt)),
+		db()
+			.select()
+			.from(t.conversations)
+			.where(eq(t.conversations.projectId, id))
+			.orderBy(desc(t.conversations.updatedAt)),
+		db()
+			.select()
+			.from(t.outputs)
+			.where(eq(t.outputs.projectId, id))
+			.orderBy(desc(t.outputs.createdAt)),
+		db()
+			.select()
+			.from(t.jobs)
+			.where(eq(t.jobs.projectId, id))
+			.orderBy(desc(t.jobs.createdAt))
+			.limit(100),
+		db()
+			.select({ materialId: t.sourceChunks.materialId })
+			.from(t.sourceChunks)
+			.innerJoin(t.materials, eq(t.materials.id, t.sourceChunks.materialId))
+			.where(eq(t.materials.projectId, id))
+			.groupBy(t.sourceChunks.materialId)
+	]);
+	return {
+		project,
+		materials,
+		readableMaterialIds: readableChunks.map((chunk) => chunk.materialId),
+		conversations,
+		outputs: outputs.map(publicOutput),
+		jobs: jobs.map(publicJob)
+	};
+}
+
+export const projects: Handler = async ({ event, method, id: rawId, action }) => {
+	if (!rawId && method === 'GET') return Response.json({ projects: await listProjects() });
+	if (!rawId && method === 'POST')
+		return created({ project: await createProject(projectInput.parse(await readJson(event))) });
+
+	if (!action && method === 'GET') return Response.json(await projectWorkspace(rawId));
+	const project = await findProject(rawId);
+	const id = project.id;
 	if (!action && method === 'PATCH') {
 		const input = projectInput.parse(await readJson(event));
 		const [updated] = await db()

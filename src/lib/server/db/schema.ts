@@ -37,6 +37,60 @@ export const authFlows = pgTable('auth_flows', {
 	returnTo: text('return_to').notNull(),
 	expiresAt: time('expires_at')
 });
+/** MCP clients registered through OAuth dynamic client registration. */
+export const oauthClients = pgTable('oauth_clients', {
+	id: text('id').primaryKey(),
+	secretHash: text('secret_hash'),
+	authMethod: text('auth_method', {
+		enum: ['none', 'client_secret_post', 'client_secret_basic']
+	}).notNull(),
+	name: text('name').notNull(),
+	redirectUris: jsonb('redirect_uris').$type<string[]>().notNull(),
+	createdAt: time('created_at'),
+	authorizedAt: timestamp('authorized_at', { withTimezone: true })
+});
+export const oauthCodes = pgTable('oauth_codes', {
+	id: text('id').primaryKey(),
+	clientId: text('client_id')
+		.notNull()
+		.references(() => oauthClients.id, { onDelete: 'cascade' }),
+	subject: text('subject').notNull(),
+	name: text('name').notNull(),
+	redirectUri: text('redirect_uri').notNull(),
+	codeChallenge: text('code_challenge').notNull(),
+	expiresAt: time('expires_at')
+});
+/** One consented MCP connection; its refresh token rotates on every use. */
+export const oauthGrants = pgTable(
+	'oauth_grants',
+	{
+		id: pk(),
+		clientId: text('client_id')
+			.notNull()
+			.references(() => oauthClients.id, { onDelete: 'cascade' }),
+		subject: text('subject').notNull(),
+		name: text('name').notNull(),
+		refreshHash: text('refresh_hash').notNull(),
+		refreshExpiresAt: time('refresh_expires_at'),
+		createdAt: time('created_at'),
+		lastUsedAt: time('last_used_at')
+	},
+	(t) => [
+		uniqueIndex('oauth_grants_refresh_idx').on(t.refreshHash),
+		index('oauth_grants_client_idx').on(t.clientId)
+	]
+);
+export const oauthTokens = pgTable(
+	'oauth_tokens',
+	{
+		id: text('id').primaryKey(),
+		grantId: uuid('grant_id')
+			.notNull()
+			.references(() => oauthGrants.id, { onDelete: 'cascade' }),
+		expiresAt: time('expires_at')
+	},
+	(t) => [index('oauth_tokens_expiry_idx').on(t.expiresAt)]
+);
 export const projects = pgTable('projects', {
 	id: pk(),
 	name: text('name').notNull(),

@@ -3,7 +3,7 @@ import { safeReturnTo, sessionAlive, hashToken } from './auth';
 import { museEnvironment } from './muse';
 import { scopedFile, wavHeader } from './storage';
 import { validateWav } from './transcribe';
-import { validateCitations, gradeChoice, readArtifact } from './jobs';
+import { findInvalidCitation, validateCitations, gradeChoice, readArtifact } from './jobs';
 import { safeError } from './config';
 import {
 	answersSchema,
@@ -174,6 +174,9 @@ describe('source and tool boundaries', () => {
 		expect(() => validateCitations([{ ...citation, quote: 'Invented' }], snapshot)).toThrow(
 			'citation'
 		);
+		const unknown = { ...citation, locator: 'page:9' };
+		expect(findInvalidCitation([citation, unknown], snapshot)).toEqual(unknown);
+		expect(findInvalidCitation([citation], snapshot)).toBeUndefined();
 	});
 	it('rejects ambiguous quiz options and scores choices on the server', () => {
 		const quiz = quizSchema.parse({ title: 'Quiz', questions: [question] });

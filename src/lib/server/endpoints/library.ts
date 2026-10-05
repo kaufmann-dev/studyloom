@@ -1,11 +1,12 @@
 import { error } from '@sveltejs/kit';
-import { asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db, type Transaction } from '../db';
 import * as t from '../db/schema';
 import {
 	libraryInput,
 	libraryPatchInput,
+	librarySearchInput,
 	libraryUploadInput,
 	UPLOAD_CHUNK_SIZE,
 	type LibraryKind
@@ -80,6 +81,73 @@ function contentOf(input: z.infer<typeof libraryInput>) {
 	};
 }
 
+/** A folder (or the Library root) with its children, or a single item. */
+export async function libraryListing(id?: string | null) {
+	if (!id) return { entry: null, children: await childrenOf(null), ancestors: [] };
+	const entry = await findLibraryEntry(id);
+	const [ancestors, children] = await Promise.all([
+		folderPath(entry.parentId),
+		entry.kind === 'folder' ? childrenOf(entry.id) : []
+	]);
+	return { entry, children, ancestors: ancestors.map(({ id, name }) => ({ id, name })) };
+}
+const SEARCH_LIMIT = 50;
+/** Items whose name or text fields contain the query, with a short excerpt. */
+export async function searchLibrary({ query, kind }: z.infer<typeof librarySearchInput>) {
+	const pattern = `%${query.trim().replace(/[\\%_]/g, (c) => '\\' + c)}%`;
+	const e = t.libraryEntries;
+	const rows = await db()
+		.select()
+		.from(e)
+		.where(
+			and(
+				or(
+					...[e.name, e.notes, e.text, e.url, e.email, e.phone, e.website, e.filename].map(
+						(column) => ilike(column, pattern)
+					)
+				),
+				kind ? eq(e.kind, kind) : undefined
+			)
+		)
+		.orderBy(asc(e.name))
+		.limit(SEARCH_LIMIT);
+	return rows.map((row) => ({
+		id: row.id,
+		parentId: row.parentId,
+		kind: row.kind,
+		name: row.name,
+		excerpt: (row.text || row.notes || row.url || row.email || row.website).slice(0, 300),
+		updatedAt: row.updatedAt
+	}));
+}
+export async function createLibraryEntry(input: z.infer<typeof libraryInput>) {
+	await checkParent(input.parentId);
+	const [entry] = await db()
+		.insert(t.libraryEntries)
+		.values({ kind: input.kind, parentId: input.parentId, ...contentOf(input) })
+		.returning();
+	return entry;
+}
+/** Edits or moves an item; files can only be renamed or moved. */
+export async function updateLibraryEntry(
+	id: string | undefined,
+	patch: z.infer<typeof libraryPatchInput>
+) {
+	const entry = await findLibraryEntry(id);
+	const parentId = patch.parentId === undefined ? entry.parentId : patch.parentId;
+	await checkParent(parentId, entry.kind === 'folder' ? entry.id : undefined);
+	const content =
+		entry.kind === 'file'
+			? { name: patch.name?.trim() ?? entry.name }
+			: contentOf(libraryInput.parse({ ...entry, ...patch }));
+	const [updated] = await db()
+		.update(t.libraryEntries)
+		.set({ ...content, parentId, updatedAt: new Date() })
+		.where(eq(t.libraryEntries.id, entry.id))
+		.returning();
+	return updated;
+}
+
 export const library: Handler = async ({ event, method, id, action, seq }) => {
 	if (id === 'folders' && method === 'GET')
 		return Response.json({
@@ -112,45 +180,16 @@ export const library: Handler = async ({ event, method, id, action, seq }) => {
 			.returning();
 		return created({ entry, chunkSize: UPLOAD_CHUNK_SIZE });
 	}
-	if (!id && method === 'GET')
-		return Response.json({ entry: null, children: await childrenOf(null), ancestors: [] });
-	if (!id && method === 'POST') {
-		const input = libraryInput.parse(await readJson(event));
-		await checkParent(input.parentId);
-		const [entry] = await db()
-			.insert(t.libraryEntries)
-			.values({ kind: input.kind, parentId: input.parentId, ...contentOf(input) })
-			.returning();
-		return created({ entry });
-	}
+	if (!id && method === 'GET') return Response.json(await libraryListing(null));
+	if (!id && method === 'POST')
+		return created({ entry: await createLibraryEntry(libraryInput.parse(await readJson(event))) });
 
-	const entry = await findLibraryEntry(id);
-	if (!action && method === 'GET') {
-		const [ancestors, children] = await Promise.all([
-			folderPath(entry.parentId),
-			entry.kind === 'folder' ? childrenOf(entry.id) : []
-		]);
+	if (!action && method === 'GET') return Response.json(await libraryListing(id));
+	if (!action && method === 'PATCH')
 		return Response.json({
-			entry,
-			children,
-			ancestors: ancestors.map(({ id, name }) => ({ id, name }))
+			entry: await updateLibraryEntry(id, libraryPatchInput.parse(await readJson(event)))
 		});
-	}
-	if (!action && method === 'PATCH') {
-		const patch = libraryPatchInput.parse(await readJson(event));
-		const parentId = patch.parentId === undefined ? entry.parentId : patch.parentId;
-		await checkParent(parentId, entry.kind === 'folder' ? entry.id : undefined);
-		const content =
-			entry.kind === 'file'
-				? { name: patch.name?.trim() ?? entry.name }
-				: contentOf(libraryInput.parse({ ...entry, ...patch }));
-		const [updated] = await db()
-			.update(t.libraryEntries)
-			.set({ ...content, parentId, updatedAt: new Date() })
-			.where(eq(t.libraryEntries.id, entry.id))
-			.returning();
-		return Response.json({ entry: updated });
-	}
+	const entry = await findLibraryEntry(id);
 	if (!action && method === 'DELETE') {
 		const fileIds = await db().transaction(async (tx) => {
 			await tx

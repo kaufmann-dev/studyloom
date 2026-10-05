@@ -12,7 +12,7 @@ import { findProject } from './queries';
 
 const MAX_RANGE_DAYS = 400;
 const day = z.iso.date('Enter dates as YYYY-MM-DD.');
-const rangeInput = z.object({ from: day, to: day, projectId: idSchema.optional() });
+export const rangeInput = z.object({ from: day, to: day, projectId: idSchema.optional() });
 const columns = { ...getTableColumns(t.events), projectName: t.projects.name };
 
 /** Events with the name of their project and their single-occurrence changes. */
@@ -93,112 +93,142 @@ function touching(from: string, to: string) {
 	);
 }
 
-export const events: Handler = async ({ event, method, id, action, seq }) => {
-	if (!id && method === 'GET') {
-		const range = rangeInput.parse(Object.fromEntries(event.url.searchParams));
-		const span = diffDays(range.to, range.from);
-		if (span < 0 || span > MAX_RANGE_DAYS)
-			throw new ClientError(400, `Choose a range of at most ${MAX_RANGE_DAYS} days.`);
-		const rows = await selectEvents(
-			and(
-				touching(range.from, range.to),
-				range.projectId ? eq(t.events.projectId, range.projectId) : undefined
-			)
-		);
-		return Response.json({ events: rows.map(publicEvent) });
-	}
-	if (!id && method === 'POST') {
-		const input = eventInput.parse(await readJson(event));
-		if (input.projectId) await findProject(input.projectId);
-		const [inserted] = await db()
-			.insert(t.events)
-			.values({ uid: `${randomUUID()}@studyloom`, ...stored(input) })
-			.returning({ id: t.events.id });
-		return created({ event: publicEvent(await findEvent(inserted.id)) });
-	}
-	if (!id) return;
-
+export const getEvent = async (id: string | undefined) => publicEvent(await findEvent(id));
+/** Event series touching the range, with their single-occurrence changes. */
+export async function listEvents(range: z.infer<typeof rangeInput>) {
+	const span = diffDays(range.to, range.from);
+	if (span < 0 || span > MAX_RANGE_DAYS)
+		throw new ClientError(400, `Choose a range of at most ${MAX_RANGE_DAYS} days.`);
+	const rows = await selectEvents(
+		and(
+			touching(range.from, range.to),
+			range.projectId ? eq(t.events.projectId, range.projectId) : undefined
+		)
+	);
+	return rows.map(publicEvent);
+}
+export async function createEvent(input: z.infer<typeof eventInput>) {
+	if (input.projectId) await findProject(input.projectId);
+	const [inserted] = await db()
+		.insert(t.events)
+		.values({ uid: `${randomUUID()}@studyloom`, ...stored(input) })
+		.returning({ id: t.events.id });
+	return publicEvent(await findEvent(inserted.id));
+}
+/** Changes the whole series. A new start date or repeat drops its single-occurrence changes. */
+export async function updateEvent(id: string | undefined, patch: z.infer<typeof eventPatchInput>) {
 	const row = await findEvent(id);
-	if (!action && method === 'PATCH') {
-		const patch = eventPatchInput.parse(await readJson(event));
-		const input = eventInput.parse({ ...asInput(row), ...patch });
-		if (input.projectId) await findProject(input.projectId);
-		const next = stored(input);
-		await db().transaction(async (tx) => {
+	const input = eventInput.parse({ ...asInput(row), ...patch });
+	if (input.projectId) await findProject(input.projectId);
+	const next = stored(input);
+	await db().transaction(async (tx) => {
+		await tx
+			.update(t.events)
+			.set({ ...next, updatedAt: new Date() })
+			.where(eq(t.events.id, row.id));
+		// Single-occurrence changes are tied to the dates of the old schedule.
+		const rescheduled = next.startDate !== row.startDate || next.repeat !== row.repeat;
+		if (rescheduled || next.repeatUntil)
 			await tx
-				.update(t.events)
-				.set({ ...next, updatedAt: new Date() })
-				.where(eq(t.events.id, row.id));
-			// Single-occurrence changes are tied to the dates of the old schedule.
-			const rescheduled = next.startDate !== row.startDate || next.repeat !== row.repeat;
-			if (rescheduled || next.repeatUntil)
-				await tx
-					.delete(t.eventExceptions)
-					.where(
-						and(
-							eq(t.eventExceptions.eventId, row.id),
-							rescheduled ? undefined : gt(t.eventExceptions.occurrenceDate, next.repeatUntil!)
-						)
-					);
+				.delete(t.eventExceptions)
+				.where(
+					and(
+						eq(t.eventExceptions.eventId, row.id),
+						rescheduled ? undefined : gt(t.eventExceptions.occurrenceDate, next.repeatUntil!)
+					)
+				);
+	});
+	return publicEvent(await findEvent(row.id));
+}
+export async function deleteEvent(id: string | undefined) {
+	const row = await findEvent(id);
+	await db().delete(t.events).where(eq(t.events.id, row.id));
+}
+type Tx = Parameters<Parameters<ReturnType<typeof db>['transaction']>[0]>[0];
+const touch = (tx: Tx, id: string) =>
+	tx.update(t.events).set({ updatedAt: new Date() }).where(eq(t.events.id, id));
+/** Cancels or changes one occurrence of a repeating event. */
+export async function setOccurrence(
+	id: string | undefined,
+	occurrenceDate: string | undefined,
+	input: z.infer<typeof exceptionInput>
+) {
+	const row = await findEvent(id);
+	const date = day.parse(occurrenceDate);
+	if (row.repeat === 'none' || !isOccurrence(row, date))
+		throw new ClientError(400, 'That date is not part of this repeating event.');
+	const change =
+		'cancelled' in input
+			? {
+					cancelled: true,
+					title: null,
+					location: null,
+					notes: null,
+					startDate: null,
+					startTime: null,
+					endDate: null,
+					endTime: null
+				}
+			: {
+					cancelled: false,
+					title: input.title.trim(),
+					location: input.location,
+					notes: input.notes,
+					startDate: input.startDate,
+					startTime: input.startTime || null,
+					endDate: input.endDate,
+					endTime: input.endTime || null
+				};
+	await db().transaction(async (tx) => {
+		await tx
+			.insert(t.eventExceptions)
+			.values({ eventId: row.id, occurrenceDate: date, ...change })
+			.onConflictDoUpdate({
+				target: [t.eventExceptions.eventId, t.eventExceptions.occurrenceDate],
+				set: change
+			});
+		await touch(tx, row.id);
+	});
+	return publicEvent(await findEvent(row.id));
+}
+/** Drops the change to one occurrence, restoring it as the series defines it. */
+export async function restoreOccurrence(
+	id: string | undefined,
+	occurrenceDate: string | undefined
+) {
+	const row = await findEvent(id);
+	const date = day.parse(occurrenceDate);
+	await db().transaction(async (tx) => {
+		await tx
+			.delete(t.eventExceptions)
+			.where(
+				and(eq(t.eventExceptions.eventId, row.id), eq(t.eventExceptions.occurrenceDate, date))
+			);
+		await touch(tx, row.id);
+	});
+	return publicEvent(await findEvent(row.id));
+}
+
+export const events: Handler = async ({ event, method, id, action, seq }) => {
+	if (!id && method === 'GET')
+		return Response.json({
+			events: await listEvents(rangeInput.parse(Object.fromEntries(event.url.searchParams)))
 		});
-		return Response.json({ event: publicEvent(await findEvent(row.id)) });
-	}
+	if (!id && method === 'POST')
+		return created({ event: await createEvent(eventInput.parse(await readJson(event))) });
+	if (!id) return;
+	if (!action && method === 'PATCH')
+		return Response.json({
+			event: await updateEvent(id, eventPatchInput.parse(await readJson(event)))
+		});
 	if (!action && method === 'DELETE') {
-		await db().delete(t.events).where(eq(t.events.id, row.id));
+		await deleteEvent(id);
 		return ok();
 	}
 	if (action !== 'exceptions') return;
-
-	const date = day.parse(seq);
-	const target = and(
-		eq(t.eventExceptions.eventId, row.id),
-		eq(t.eventExceptions.occurrenceDate, date)
-	);
-	const touch = (tx: Parameters<Parameters<ReturnType<typeof db>['transaction']>[0]>[0]) =>
-		tx.update(t.events).set({ updatedAt: new Date() }).where(eq(t.events.id, row.id));
-	if (method === 'PUT') {
-		if (row.repeat === 'none' || !isOccurrence(row, date))
-			throw new ClientError(400, 'That date is not part of this repeating event.');
-		const input = exceptionInput.parse(await readJson(event));
-		const change =
-			'cancelled' in input
-				? {
-						cancelled: true,
-						title: null,
-						location: null,
-						notes: null,
-						startDate: null,
-						startTime: null,
-						endDate: null,
-						endTime: null
-					}
-				: {
-						cancelled: false,
-						title: input.title.trim(),
-						location: input.location,
-						notes: input.notes,
-						startDate: input.startDate,
-						startTime: input.startTime || null,
-						endDate: input.endDate,
-						endTime: input.endTime || null
-					};
-		await db().transaction(async (tx) => {
-			await tx
-				.insert(t.eventExceptions)
-				.values({ eventId: row.id, occurrenceDate: date, ...change })
-				.onConflictDoUpdate({
-					target: [t.eventExceptions.eventId, t.eventExceptions.occurrenceDate],
-					set: change
-				});
-			await touch(tx);
+	if (method === 'PUT')
+		return Response.json({
+			event: await setOccurrence(id, seq, exceptionInput.parse(await readJson(event)))
 		});
-		return Response.json({ event: publicEvent(await findEvent(row.id)) });
-	}
-	if (method === 'DELETE') {
-		await db().transaction(async (tx) => {
-			await tx.delete(t.eventExceptions).where(target);
-			await touch(tx);
-		});
-		return Response.json({ event: publicEvent(await findEvent(row.id)) });
-	}
+	if (method === 'DELETE') return Response.json({ event: await restoreOccurrence(id, seq) });
 };

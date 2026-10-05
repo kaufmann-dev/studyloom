@@ -9,7 +9,7 @@ import { ClientError, dataDir, safeError } from './config';
 import { originalPath, materialDir, scopedFile, assemble, chunkPath, wavHeader } from './storage';
 import {
 	DEFAULT_MODEL,
-	citationSchema,
+	citedTextSchema,
 	ingestionSchema,
 	quizSchema,
 	type Citation,
@@ -19,7 +19,7 @@ import {
 import { museRun, type MuseResult } from './muse';
 import { transcribeFile } from './transcribe';
 type Job = typeof t.jobs.$inferSelect;
-type Snapshot = typeof t.outputs.$inferSelect.sourceSnapshot;
+export type Snapshot = typeof t.outputs.$inferSelect.sourceSnapshot;
 type Progress = (text: string) => void;
 type Queue = Job['queue'];
 const LEASE_MS = 60_000;
@@ -89,13 +89,17 @@ export async function sourceSnapshot(projectId: string, ids: string[]): Promise<
 		chunks: (chunksByMaterial.get(m.id) ?? []).map((c) => ({ locator: c.locator, text: c.text }))
 	}));
 }
-export function validateCitations(citations: Citation[], snapshot: Snapshot) {
-	for (const citation of citations) {
+/** The first citation whose locator is unknown or whose quote is not in that source chunk. */
+export function findInvalidCitation(citations: Citation[], snapshot: Snapshot) {
+	return citations.find((citation) => {
 		const material = snapshot.find((m) => m.id === citation.materialId);
 		const chunk = material?.chunks.find((c) => c.locator === citation.locator);
-		if (!chunk || (citation.quote && !chunk.text.includes(citation.quote)))
-			throw new Error('Muse returned a citation that does not match the source.');
-	}
+		return !chunk || (citation.quote && !chunk.text.includes(citation.quote));
+	});
+}
+export function validateCitations(citations: Citation[], snapshot: Snapshot) {
+	if (findInvalidCitation(citations, snapshot))
+		throw new Error('Muse returned a citation that does not match the source.');
 }
 export function gradeChoice(quiz: Quiz, answers: { questionId: string; value: string }[]): Grade[] {
 	return quiz.questions
@@ -109,11 +113,6 @@ export function gradeChoice(quiz: Quiz, answers: { questionId: string; value: st
 			citations: q.citations
 		}));
 }
-const outputSchema = z.object({
-	title: z.string().min(1).max(200),
-	content: z.string().min(1).max(200000),
-	citations: z.array(citationSchema).min(1).max(500)
-});
 const gradeSchema = z.object({
 	grades: z.array(
 		z.object({
@@ -189,7 +188,7 @@ export async function runMuseWithArtifact(
 async function writeData(workspace: string, name: string, value: unknown) {
 	await writeFile(join(workspace, 'files', name), JSON.stringify(value), { mode: 0o600 });
 }
-async function replaceSourceChunks(
+export async function replaceSourceChunks(
 	tx: Transaction,
 	materialId: string,
 	chunks: { locator: string; text: string }[]
@@ -338,7 +337,7 @@ async function answerChat(run: GenerationRun) {
 	const result = await museResult(
 		run,
 		`${systemPrompt}\nAnswer the last user message in conversation.json using the selected sources.json. Preserve conversation context, but ground claims in the currently selected sources.`,
-		outputSchema
+		citedTextSchema
 	);
 	validateCitations(result.citations, snapshot);
 	run.signal.throwIfAborted();
@@ -406,7 +405,7 @@ async function createSummary(run: GenerationRun) {
 	const result = await museResult(
 		run,
 		`${systemPrompt}\nCreate a clear AI overview of all selected sources.json. Include key ideas, connections, definitions and takeaways. Cite the evidence and disclose gaps or contradictions.`,
-		outputSchema
+		citedTextSchema
 	);
 	validateCitations(result.citations, run.snapshot);
 	await saveOutput(run, { kind: 'summary', ...result });

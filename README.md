@@ -60,11 +60,19 @@ The integration uses Muse CLI's experimental MSP account/model methods and `muse
 
 `server.mjs` hosts SvelteKit, the authenticated recording WebSocket and two durable PostgreSQL job queues: one interactive job and one background job at a time. Run **one application replica**. Failed jobs can be retried; cancelled jobs retain saved source audio and files. Completed generated outputs use stable job IDs to avoid duplicates after a restart.
 
-Muse runs as a trusted service for this single-user app and receives a job workspace and MCP tools. The app does not route file extensions through a fixed conversion pipeline. Commands run directly with the job workspace as the working directory and a restricted environment that never contains app secrets; output and time limits apply. The transcription MCP tool brokers authenticated requests without exposing the API key to conversion commands.
+Muse runs as a trusted service for this single-user app and receives a job workspace and the stdio MCP tools in `build/runtime/muse-tools.js`. The app does not route file extensions through a fixed conversion pipeline. Commands run directly with the job workspace as the working directory and a restricted environment that never contains app secrets; output and time limits apply. The transcription MCP tool brokers authenticated requests without exposing the API key to conversion commands.
 
 Project sources are stored under `DATA_DIR/materials`; Library files are stored under `DATA_DIR/library`. Temporary job workspaces are removed after processing. Transcripts and extracted chunks live in PostgreSQL, with a full-text index. Generated study tools keep source snapshots so later grading uses the original evidence and rubric. Back up PostgreSQL **and** the persistent data volume together.
 
 Uploads default to 2 GiB per source, using 8 MiB HTTP chunks. Audio is mono signed 16-bit PCM at 24 kHz. Live streams send audio at recording speed; interrupted audio uses the file transcription API before a new live stream starts. Browser support for tab/system audio varies; microphone capture is also available. Recording requires HTTPS outside localhost and browser permission to capture the chosen audio source.
+
+## MCP Server
+
+`https://studyloom.kaufmann.dev/mcp` (Streamable HTTP) lets AI apps use the workspace. Connect it with Claude (Settings → Connectors → Add custom connector), `claude mcp add -s user --transport http studyloom https://studyloom.kaufmann.dev/mcp` or `codex mcp add studyloom --url https://studyloom.kaufmann.dev/mcp` followed by `codex mcp login studyloom`.
+
+Studyloom is its own OAuth 2.1 authorization server: discovery at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`, dynamic client registration, S256 PKCE and a consent page after Pocket ID sign-in. Access tokens last one hour, refresh tokens rotate and last 30 days; Settings → Connected apps disconnects an app immediately. No extra environment variables are needed.
+
+Tools: `list_projects`, `get_project`, `search_sources`, `read_source`, `get_output`, `get_conversation`, `create_project`, `add_text_source`, `save_overview`, `save_quiz` (citations are validated against the source text), `list_tasks`, `create_task`, `update_task`, `delete_task`, `list_events`, `create_event`, `update_event`, `update_occurrence`, `delete_event`, `browse_library`, `search_library`, `create_library_item`, `update_library_item`.
 
 ## Coolify Deployment
 
@@ -101,6 +109,6 @@ Application secrets are not needed during the build. Complete the Pocket ID clie
 
 ## Verification
 
-`pnpm test` covers task urgency, repeating-event expansion, iCalendar feed/export/import, recorder resampling and recovery ordering, session expiry and redirect validation, credential environment isolation, workspace path confinement, WAV validation, citation checks and quiz scoring. `pnpm check` checks Svelte and TypeScript; `pnpm build` creates both the SvelteKit application and runtime/MCP bundles.
+`pnpm test` covers task urgency, repeating-event expansion, iCalendar feed/export/import, recorder resampling and recovery ordering, session expiry and redirect validation, credential environment isolation, workspace path confinement, WAV validation, citation checks and quiz scoring. `pnpm check` checks Svelte and TypeScript; `pnpm build` creates both the SvelteKit application and the runtime and Muse tool bundles.
 
-After deployment, verify Pocket ID login/logout, a calendar feed subscription from a phone, microphone and tab capture, pause/resume, interrupted recording recovery, one representative upload, a cited overview and quiz grading with your configured services. Unit tests do not replace those browser/device and deployed-service checks.
+After deployment, verify Pocket ID login/logout, a calendar feed subscription from a phone, microphone and tab capture, pause/resume, interrupted recording recovery, one representative upload, a cited overview and quiz grading with your configured services, and connecting, using and disconnecting an MCP client. Unit tests do not replace those browser/device and deployed-service checks.

@@ -23,7 +23,8 @@
 	import { plural } from '#lib/ui.js';
 	import './layout.css';
 	let { children } = $props();
-	let isLogin = $derived(page.url.pathname === '/login');
+	// Sign-in and app consent render as standalone screens without the workspace chrome.
+	let bare = $derived(['/login', '/oauth/authorize'].includes(page.url.pathname));
 	let column = $derived(page.route.id === '/projects/[id]' ? 'max-w-[1600px]' : 'max-w-5xl');
 	let menuOpen = $state(false);
 	const tasks = setTasks(new Tasks());
@@ -45,7 +46,7 @@
 		href === resolve('/') ? page.url.pathname === href : page.url.pathname.startsWith(href);
 
 	onMount(() => {
-		if (!isLogin) void tasks.load();
+		if (!bare) void tasks.load();
 	});
 </script>
 
@@ -69,7 +70,7 @@
 		</Badge>
 	{/if}
 {/snippet}
-{#if !isLogin}
+{#if !bare}
 	<header class="border-b bg-background">
 		<div class={['mx-auto flex items-center justify-between gap-3 px-4 py-4 sm:px-8', column]}>
 			<a href={resolve('/')} class="flex items-center gap-2 text-lg font-semibold tracking-tight"
@@ -128,6 +129,6 @@
 		</div>
 	</header>
 {/if}
-<main id="main" class={isLogin ? 'min-h-screen' : ['mx-auto px-4 py-8 sm:px-8', column]}>
+<main id="main" class={bare ? 'min-h-screen' : ['mx-auto px-4 py-8 sm:px-8', column]}>
 	{@render children()}
 </main>

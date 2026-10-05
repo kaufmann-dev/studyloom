@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { ClientError, dataDir } from './config';
 import { runProcess } from './process';
-import type { MuseAccount, MuseModel, MuseStatus } from '../domain';
+import { DEFAULT_MODEL, type MuseAccount, type MuseModel, type MuseStatus } from '../domain';
 const FALLBACK_PATH = '/usr/local/bin:/usr/bin:/bin';
 function musePath(): string {
 	const basePath = process.env.PATH || FALLBACK_PATH;
@@ -50,12 +50,14 @@ export async function resolveMuseBin(): Promise<string> {
 	);
 }
 const configPath = () => join(dataDir(), 'muse-config');
-export function resolveMcpPath() {
-	const colocated = fileURLToPath(new URL('./mcp.js', import.meta.url));
+export function resolveMuseToolsPath() {
+	const colocated = fileURLToPath(new URL('./muse-tools.js', import.meta.url));
 	if (existsSync(colocated)) return colocated;
-	const sourceBuild = fileURLToPath(new URL('../../../build/runtime/mcp.js', import.meta.url));
+	const sourceBuild = fileURLToPath(
+		new URL('../../../build/runtime/muse-tools.js', import.meta.url)
+	);
 	if (existsSync(sourceBuild)) return sourceBuild;
-	return resolve('build/runtime/mcp.js');
+	return resolve('build/runtime/muse-tools.js');
 }
 let settingsReady: Promise<void> | undefined;
 function museSettings() {
@@ -84,7 +86,7 @@ async function prepareSettings() {
 			studyloom: {
 				transport: 'stdio',
 				command: process.execPath,
-				args: [resolveMcpPath()],
+				args: [resolveMuseToolsPath()],
 				env: { TRANSCRIPTION_API_KEY: process.env.TRANSCRIPTION_API_KEY ?? '' },
 				mode: 'required',
 				enabled: true
@@ -197,7 +199,7 @@ export async function museStatus(): Promise<MuseStatus> {
 	}
 	return museStatusFromCatalog(account, models);
 }
-export async function validateModel(modelId: string) {
+async function availableModels() {
 	let account: MuseAccount;
 	let models: MuseModel[];
 	try {
@@ -208,8 +210,19 @@ export async function validateModel(modelId: string) {
 	if (account.state !== 'accountLogin')
 		throw new ClientError(409, 'Sign into Muse with your subscription in Settings.');
 	if (models.length === 0) throw new ClientError(409, STALE_MUSE_LOGIN);
+	return models;
+}
+export async function validateModel(modelId: string) {
+	if (!(await availableModels()).some((m) => m.modelId === modelId))
+		throw new ClientError(409, 'This model is no longer available. Refresh the model list.');
+}
+/** The quiz's own model while Muse offers it; quizzes written by MCP clients use the default. */
+export async function gradingModel(preferred: string) {
+	const models = await availableModels();
+	const modelId = models.some((m) => m.modelId === preferred) ? preferred : DEFAULT_MODEL;
 	if (!models.some((m) => m.modelId === modelId))
 		throw new ClientError(409, 'This model is no longer available. Refresh the model list.');
+	return modelId;
 }
 export interface MuseResult {
 	text: string;
