@@ -9,14 +9,17 @@ import { ClientError, origin } from './config';
 import { findMaterial, findProject, lockProject } from './endpoints/queries';
 import { publicOutput } from './endpoints/study';
 import { findInvalidCitation, replaceSourceChunks, sourceSnapshot } from './jobs';
+import { validateModel } from './muse';
 import { materialDir, originalPath, removeMaterialFiles } from './storage';
+import { fetchWebPage } from './web-page';
 import type {
 	Citation,
 	Quiz,
 	citedTextSchema,
 	sourceReadInput,
 	sourceSearchInput,
-	textSourceInput
+	textSourceInput,
+	webSourceInput
 } from '../domain';
 
 const READ_BATCH = 100;
@@ -30,6 +33,7 @@ const publicMaterial = (material: typeof t.materials.$inferSelect) => ({
 	mimeType: material.mimeType,
 	status: material.status,
 	durationMs: material.durationMs,
+	sourceUrl: material.sourceUrl,
 	notes: material.notes,
 	createdAt: material.createdAt
 });
@@ -138,6 +142,57 @@ export async function addTextSource(
 			return material;
 		});
 		return { material: publicMaterial(material), url: projectUrl(project.id) };
+	} catch (cause) {
+		await removeMaterialFiles(id).catch(() => {});
+		throw cause;
+	}
+}
+
+/**
+ * Downloads a web page, keeps the copy as the source's original and queues extraction, so it is
+ * read exactly like an upload. The download happens first: a bad address fails before any
+ * source exists.
+ */
+export async function addWebSource(
+	projectId: string,
+	input: z.infer<typeof webSourceInput> & { modelId: string }
+) {
+	const project = await findProject(projectId);
+	await validateModel(input.modelId);
+	const page = await fetchWebPage(input.url);
+	const id = randomUUID();
+	try {
+		await mkdir(materialDir(id), { recursive: true, mode: 0o700 });
+		await writeFile(originalPath(id), page.body, { mode: 0o600 });
+		return await db().transaction(async (tx) => {
+			if (!(await lockProject(tx, project.id))) error(404, 'Project not found.');
+			const [material] = await tx
+				.insert(t.materials)
+				.values({
+					id,
+					projectId: project.id,
+					name: page.name,
+					filename: page.filename,
+					mimeType: page.mimeType,
+					kind: 'file',
+					status: 'processing',
+					size: page.body.length,
+					receivedBytes: page.body.length,
+					sourceUrl: page.url
+				})
+				.returning();
+			const [job] = await tx
+				.insert(t.jobs)
+				.values({
+					projectId: project.id,
+					materialId: id,
+					kind: 'ingest',
+					queue: 'background',
+					payload: { modelId: input.modelId }
+				})
+				.returning();
+			return { material, job };
+		});
 	} catch (cause) {
 		await removeMaterialFiles(id).catch(() => {});
 		throw cause;

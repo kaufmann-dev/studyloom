@@ -104,7 +104,7 @@
 	{/if}
 	{#if !materials.length}
 		<p class="border border-dashed p-4 text-sm leading-relaxed text-muted-foreground">
-			Add a file or record audio to give this project its first source.
+			Add a file, a web page or a recording to give this project its first source.
 		</p>
 	{:else}
 		<ul class="divide-y border">
@@ -134,6 +134,11 @@
 								>
 								{#if material.size}
 									<span>· {fileSize(material.size)}</span>
+								{/if}
+								{#if material.sourceUrl}
+									<span class="truncate" title={material.sourceUrl}>
+										· {new URL(material.sourceUrl).hostname}
+									</span>
 								{/if}
 							</p>
 							{#if material.notes && (material.status === 'partial' || material.status === 'failed')}

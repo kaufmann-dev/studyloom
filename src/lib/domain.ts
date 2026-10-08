@@ -81,6 +81,13 @@ export const libraryUploadInput = z.object({
 	mimeType: z.string().max(120).default('application/octet-stream'),
 	size: z.number().int().positive()
 });
+/** A web page to download and read as a project source. */
+export const webSourceInput = z.object({
+	url: nonBlank(z.string().trim().max(2048), 'Web address is required.').refine(
+		isWebUrl,
+		'Enter an http or https web address.'
+	)
+});
 export const pinInput = z.object({
 	targetType: z.enum(['project', 'library']),
 	targetId: idSchema
@@ -453,6 +460,8 @@ export interface Material {
 	size: number;
 	receivedBytes: number;
 	durationMs: number;
+	/** Where a web page source was downloaded from; null for uploads and recordings. */
+	sourceUrl: string | null;
 	notes: string;
 	createdAt: string;
 	updatedAt: string;

@@ -62,6 +62,7 @@ export function registerStudyTools(server: McpServer, author: string) {
 						status: m.status,
 						readable: readable.has(m.id),
 						durationMs: m.durationMs,
+						sourceUrl: m.sourceUrl,
 						notes: m.notes,
 						createdAt: m.createdAt
 					})),

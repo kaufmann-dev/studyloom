@@ -44,6 +44,7 @@
 	import TaskList from './tasks/TaskList.svelte';
 	import StudyTools from './StudyTools.svelte';
 	import Upload from './Upload.svelte';
+	import WebSource from './WebSource.svelte';
 
 	let { projectId }: { projectId: string } = $props();
 	const uid = $props.id();
@@ -195,6 +196,10 @@
 				</div>
 
 				<Upload {projectId} modelId={processingModel} onSaved={refresh} />
+
+				<div class="border-t pt-4">
+					<WebSource {projectId} modelId={processingModel} onSaved={refresh} />
+				</div>
 
 				<div class="border-t pt-4">
 					<Recorder {projectId} onSaved={() => void refresh()} />

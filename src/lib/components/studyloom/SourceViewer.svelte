@@ -2,7 +2,7 @@
 	import { resolve } from '$app/paths';
 	import type { Path } from '$app/types';
 	import { onMount } from 'svelte';
-	import { Download, Copy, X } from '@lucide/svelte';
+	import { Download, Copy, ExternalLink, X } from '@lucide/svelte';
 	import type { MaterialDetails } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import { createPoller } from '#lib/polling.js';
@@ -93,8 +93,16 @@
 					{data.material.notes}
 				</p>{/if}
 			<div class="flex flex-wrap gap-2">
-				{#if originalReady}<Button variant="outline" size="sm" href={`${fileHref}?download=1`}
-						><Download />Original</Button
+				{#if data.material.sourceUrl}<Button
+						variant="outline"
+						size="sm"
+						href={data.material.sourceUrl}
+						target="_blank"
+						rel="noopener noreferrer"><ExternalLink />Open page</Button
+					>{/if}{#if originalReady}<Button
+						variant="outline"
+						size="sm"
+						href={`${fileHref}?download=1`}><Download />Original</Button
 					>{/if}{#if transcript}<Button
 						variant="ghost"
 						size="sm"

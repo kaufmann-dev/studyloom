@@ -4,6 +4,7 @@ A private learning workspace at **studyloom.kaufmann.dev**. The home page greets
 
 - Pause and resume recording; finalized transcript turns are saved with speaker labels and approximate timestamps. Audio is persisted in the browser before transmission and retained on the server until you delete the source.
 - Upload any file type. Muse inspects it and chooses conversion tools or scripts. Unsupported or partly readable files retain their originals and show the extraction limitations.
+- Paste a web address to add a page as a source. Studyloom downloads it, keeps the HTML as the original, and Muse extracts the article text like any other file. A link straight to a PDF or another file works too.
 - Combine readable materials for source-cited chat, summaries, multiple-choice questions and written-answer quizzes. Answers, grading feedback and the model used are saved.
 - Choose models from Muse's live catalog. Text generation and file processing use your Muse Code subscription login. Audio transcription uses the separate Meta transcription API and incurs API charges.
 - Save files, web links, contacts and notes at the Library root or in nested folders. Library files retain their originals for private viewing or download; they are not sent through Muse processing.
@@ -64,6 +65,8 @@ Muse runs as a trusted service for this single-user app and receives a job works
 
 Project sources are stored under `DATA_DIR/materials`; Library files are stored under `DATA_DIR/library`. Temporary job workspaces are removed after processing. Transcripts and extracted chunks live in PostgreSQL, with a full-text index. Generated study tools keep source snapshots so later grading uses the original evidence and rubric. Back up PostgreSQL **and** the persistent data volume together.
 
+Web pages are downloaded by the server, never by Muse. Only `http` and `https` addresses on the public internet are accepted: every address a request resolves to, including each redirect, must be public, so private, loopback, link-local and cloud-metadata addresses are refused and the connection uses exactly the addresses that were checked. A download follows at most 5 redirects, stops after 25 seconds and is limited to 50 MB (or `MAX_UPLOAD_BYTES`, if lower). The server sees only what a plain request receives: pages that need a sign-in, or that build their text in the browser with JavaScript, come back partly readable or unreadable and say so in the source's notes. Retrying a failed web source reads the stored copy and does not download the page again.
+
 Uploads default to 2 GiB per source, using 8 MiB HTTP chunks. Audio is mono signed 16-bit PCM at 24 kHz. Live streams send audio at recording speed; interrupted audio uses the file transcription API before a new live stream starts. Browser support for tab/system audio varies; microphone capture is also available. Recording requires HTTPS outside localhost and browser permission to capture the chosen audio source.
 
 ## MCP Server
@@ -109,6 +112,6 @@ Application secrets are not needed during the build. Complete the Pocket ID clie
 
 ## Verification
 
-`pnpm test` covers task urgency, repeating-event expansion, iCalendar feed/export/import, recorder resampling and recovery ordering, session expiry and redirect validation, credential environment isolation, workspace path confinement, WAV validation, citation checks and quiz scoring. `pnpm check` checks Svelte and TypeScript; `pnpm build` creates both the SvelteKit application and the runtime and Muse tool bundles.
+`pnpm test` covers web page address checks and downloads, task urgency, repeating-event expansion, iCalendar feed/export/import, recorder resampling and recovery ordering, session expiry and redirect validation, credential environment isolation, workspace path confinement, WAV validation, citation checks and quiz scoring. `pnpm check` checks Svelte and TypeScript; `pnpm build` creates both the SvelteKit application and the runtime and Muse tool bundles.
 
-After deployment, verify Pocket ID login/logout, a calendar feed subscription from a phone, microphone and tab capture, pause/resume, interrupted recording recovery, one representative upload, a cited overview and quiz grading with your configured services, and connecting, using and disconnecting an MCP client. Unit tests do not replace those browser/device and deployed-service checks.
+After deployment, verify Pocket ID login/logout, a calendar feed subscription from a phone, microphone and tab capture, pause/resume, interrupted recording recovery, one representative upload and one web page, a cited overview and quiz grading with your configured services, and connecting, using and disconnecting an MCP client. Unit tests do not replace those browser/device and deployed-service checks.

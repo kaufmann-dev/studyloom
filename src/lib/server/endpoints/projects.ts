@@ -7,13 +7,16 @@ import {
 	chatInput,
 	generationInput,
 	materialUploadInput,
+	modelInput,
 	projectInput,
 	recordingInput,
-	UPLOAD_CHUNK_SIZE
+	UPLOAD_CHUNK_SIZE,
+	webSourceInput
 } from '../../domain';
 import { maxUploadBytes, safeError } from '../config';
 import { sourceSnapshot } from '../jobs';
 import { validateModel } from '../muse';
+import { addWebSource } from '../sources';
 import { removeMaterialFiles } from '../storage';
 import { accepted, created, ok, readJson, type Handler } from './http';
 import { findProject, hasActiveJob, lockProject } from './queries';
@@ -126,6 +129,11 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 			.values({ ...input, name: input.filename, projectId: id, kind: 'file', status: 'uploading' })
 			.returning();
 		return created({ materialId: source.id, chunkSize: UPLOAD_CHUNK_SIZE });
+	}
+	if (action === 'web-sources' && method === 'POST') {
+		const input = webSourceInput.extend(modelInput.shape).parse(await readJson(event));
+		const { material, job } = await addWebSource(id, input);
+		return accepted({ materialId: material.id, jobId: job.id });
 	}
 	if (action === 'recordings' && method === 'POST') {
 		const input = recordingInput.parse(await readJson(event));

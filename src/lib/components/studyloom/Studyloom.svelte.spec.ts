@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import Upload from './Upload.svelte';
+import WebSource from './WebSource.svelte';
 import type {
 	Conversation,
 	LibraryEntry,
@@ -94,6 +95,51 @@ describe('Upload', () => {
 		await vi.waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
 		expect(chunkCalls).toBe(2);
 		expect(completeCalls).toBe(2);
+	});
+});
+
+describe('WebSource', () => {
+	it('rejects addresses that are not web addresses without calling the server', async () => {
+		const fetchMock = vi.spyOn(globalThis, 'fetch');
+		render(WebSource, { projectId: 'project-1', modelId: 'model-1', onSaved: vi.fn() });
+		await page.getByLabelText('Web page').fill('ftp://example.com/file');
+		await page.getByRole('button', { name: 'Add web page' }).click();
+		await expect.element(page.getByText('Enter an http or https web address.')).toBeInTheDocument();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('sends the address with the processing model and clears the field', async () => {
+		const onSaved = vi.fn();
+		const fetchMock = vi
+			.spyOn(globalThis, 'fetch')
+			.mockImplementation(async () => response({ materialId: 'material-1', jobId: 'job-1' }, 202));
+		render(WebSource, { projectId: 'project-1', modelId: 'model-1', onSaved });
+		await page.getByLabelText('Web page').fill('https://example.com/article');
+		await page.getByRole('button', { name: 'Add web page' }).click();
+		await vi.waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/projects/project-1/web-sources',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ url: 'https://example.com/article', modelId: 'model-1' })
+			})
+		);
+		await expect.element(page.getByLabelText('Web page')).toHaveValue('');
+	});
+
+	it('reports a page that cannot be downloaded and keeps the address', async () => {
+		const onSaved = vi.fn();
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+			response({ message: 'The page was not found (HTTP 404).' }, 400)
+		);
+		render(WebSource, { projectId: 'project-1', modelId: 'model-1', onSaved });
+		await page.getByLabelText('Web page').fill('https://example.com/gone');
+		await page.getByRole('button', { name: 'Add web page' }).click();
+		await expect
+			.element(page.getByRole('alert'))
+			.toHaveTextContent('The page was not found (HTTP 404).');
+		await expect.element(page.getByLabelText('Web page')).toHaveValue('https://example.com/gone');
+		expect(onSaved).not.toHaveBeenCalled();
 	});
 });
 

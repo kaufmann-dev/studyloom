@@ -269,6 +269,8 @@ export const materials = pgTable(
 		size: bigint('size', { mode: 'number' }).notNull().default(0),
 		receivedBytes: bigint('received_bytes', { mode: 'number' }).notNull().default(0),
 		durationMs: bigint('duration_ms', { mode: 'number' }).notNull().default(0),
+		/** The address a web page source was downloaded from. */
+		sourceUrl: text('source_url'),
 		notes: text('notes').notNull().default(''),
 		createdAt: time('created_at'),
 		updatedAt: time('updated_at')
