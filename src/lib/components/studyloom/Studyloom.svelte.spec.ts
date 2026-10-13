@@ -20,6 +20,8 @@ import LibraryBrowser from './library/LibraryBrowser.svelte';
 import MoveDialog from './library/MoveDialog.svelte';
 import Markdown from './Markdown.svelte';
 import StudyTools from './StudyTools.svelte';
+import StudyPlayer from './StudyPlayer.svelte';
+import type { TutorSession } from '#lib/study/tutor.svelte.js';
 import Projects from '../../../routes/projects/+page.svelte';
 
 function response(body: unknown, status = 200) {
@@ -428,6 +430,36 @@ describe('Audio summary form', () => {
 			learnerVoiceId: 'voice2',
 			speechModelId: 'm1'
 		});
+	});
+});
+
+describe('Study player', () => {
+	it('uses Space to skip speech or finish an answer, but not while typing', async () => {
+		const tutor = {
+			phase: 'listening',
+			speaking: false,
+			segment: 0,
+			segments: 4,
+			title: 'Water follows salt',
+			caption: '',
+			partial: 'Water moves',
+			verdict: null,
+			error: '',
+			primary: vi.fn(),
+			end: vi.fn()
+		};
+		render(StudyPlayer, { tutor: tutor as unknown as TutorSession, onResume: () => {} });
+		await expect.element(page.getByText('Part 1 of 4 · Water follows salt')).toBeVisible();
+		await expect.element(page.getByRole('button', { name: "I'm done" })).toBeEnabled();
+		document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }));
+		expect(tutor.primary).toHaveBeenCalledOnce();
+		const input = document.createElement('input');
+		document.body.append(input);
+		input.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }));
+		expect(tutor.primary).toHaveBeenCalledOnce();
+		input.remove();
+		await page.getByRole('button', { name: 'End session' }).click();
+		expect(tutor.end).toHaveBeenCalledOnce();
 	});
 });
 

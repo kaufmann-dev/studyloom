@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import { db } from '../db';
 import * as t from '../db/schema';
-import { answersSchema, idSchema, quizSchema } from '../../domain';
+import { answersSchema, idSchema, quizSchema, type StudyAnswer, type StudyRun } from '../../domain';
 import { gradeChoice } from '../jobs';
 import { gradingModel } from '../muse';
 import { audioFile } from '../audio';
@@ -32,6 +32,7 @@ export const publicOutput = (output: typeof t.outputs.$inferSelect) => ({
 	content: output.content,
 	quiz: output.quiz,
 	audio: output.audio,
+	study: output.study,
 	citations: output.citations,
 	materialIds: output.materialIds,
 	modelId: output.modelId,
@@ -59,10 +60,51 @@ async function findOutput(id: string | undefined) {
 		.select()
 		.from(t.outputs)
 		.where(eq(t.outputs.id, idSchema.parse(id)));
-	if (!output) error(404, 'Overview, quiz or audio summary not found.');
+	if (!output) error(404, 'Overview, quiz, audio summary or study session not found.');
 	return output;
 }
-/** An overview or quiz with its quiz attempts, newest first. */
+export const publicAnswer = (row: typeof t.studyAnswers.$inferSelect): StudyAnswer => ({
+	id: row.id,
+	segmentIndex: row.segmentIndex,
+	attempt: row.attempt,
+	answer: row.answer,
+	verdict: row.verdict,
+	next: row.next,
+	gap: row.gap,
+	feedback: row.feedback,
+	createdAt: row.createdAt.toISOString()
+});
+/** A study session's runs with their answers, newest run first and answers in order. */
+export async function studyRuns(outputId: string): Promise<StudyRun[]> {
+	const runs = await db()
+		.select()
+		.from(t.studyRuns)
+		.where(eq(t.studyRuns.outputId, outputId))
+		.orderBy(desc(t.studyRuns.createdAt));
+	const answers = runs.length
+		? await db()
+				.select()
+				.from(t.studyAnswers)
+				.where(
+					inArray(
+						t.studyAnswers.runId,
+						runs.map((run) => run.id)
+					)
+				)
+				.orderBy(asc(t.studyAnswers.segmentIndex), asc(t.studyAnswers.attempt))
+		: [];
+	return runs.map((run) => ({
+		id: run.id,
+		outputId: run.outputId,
+		status: run.status,
+		segmentIndex: run.segmentIndex,
+		attempt: run.attempt,
+		createdAt: run.createdAt.toISOString(),
+		completedAt: run.completedAt?.toISOString() ?? null,
+		answers: answers.filter((answer) => answer.runId === run.id).map(publicAnswer)
+	}));
+}
+/** An overview, quiz, audio summary or study session with its attempts or runs, newest first. */
 export async function outputDetails(id: string | undefined) {
 	const output = await findOutput(id);
 	return {
@@ -71,7 +113,8 @@ export async function outputDetails(id: string | undefined) {
 			.select()
 			.from(t.attempts)
 			.where(eq(t.attempts.outputId, output.id))
-			.orderBy(desc(t.attempts.createdAt))
+			.orderBy(desc(t.attempts.createdAt)),
+		runs: output.kind === 'session' ? await studyRuns(output.id) : []
 	};
 }
 
@@ -86,6 +129,25 @@ export const outputs: Handler = async ({ event, method, id, action }) => {
 	if (action === 'audio' && method === 'GET') {
 		if (output.kind !== 'audio') error(404, 'This output has no audio.');
 		return download(event, audioFile(output.id), 'audio/mpeg', `${output.title}.mp3`);
+	}
+	if (action === 'runs' && method === 'POST') {
+		if (output.kind !== 'session') error(404, 'This output is not a study session.');
+		// Resuming continues the open run, so its position and answers carry over.
+		const run = await db().transaction(async (tx) => {
+			await lockProject(tx, output.projectId);
+			const [active] = await tx
+				.select({ id: t.studyRuns.id })
+				.from(t.studyRuns)
+				.where(and(eq(t.studyRuns.outputId, output.id), eq(t.studyRuns.status, 'active')))
+				.limit(1);
+			if (active) return active;
+			const [created] = await tx
+				.insert(t.studyRuns)
+				.values({ outputId: output.id })
+				.returning({ id: t.studyRuns.id });
+			return created;
+		});
+		return Response.json({ runId: run.id });
 	}
 	if (action === 'attempts' && method === 'POST') {
 		const { answers } = answersSchema.parse(await readJson(event));

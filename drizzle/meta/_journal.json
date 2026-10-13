@@ -57,6 +57,13 @@
       "when": 1791916283527,
       "tag": "0007_audio_voices",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791916997694,
+      "tag": "0008_study_sessions",
+      "breakpoints": true
     }
   ]
 }

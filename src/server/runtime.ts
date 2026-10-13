@@ -1,43 +1,26 @@
-import type { Server, IncomingMessage } from 'node:http';
+import type { Server } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, closeDatabase, migrateDatabase } from '../lib/server/db';
 import * as t from '../lib/server/db/schema';
-import { origin, required, safeError } from '../lib/server/config';
-import { readSession, SESSION_COOKIE } from '../lib/server/auth';
+import { origin, safeError } from '../lib/server/config';
+import { readSession } from '../lib/server/auth';
 import { putChunk } from '../lib/server/storage';
 import { finishRecording, startWorkers } from '../lib/server/jobs';
-import { TRANSCRIPTION_MODEL } from '../lib/domain';
+import {
+	openRealtimeAsr,
+	requireTranscription,
+	type RealtimeAsr
+} from '../lib/server/realtime-asr';
 import { museHost } from '../lib/server/muse';
+import { send, tokenFrom, watchSession } from './socket';
+import { studySession } from './study-socket';
 const startSchema = z.object({
 	type: z.literal('start'),
 	segmentId: z.uuid(),
 	startSample: z.number().int().nonnegative()
 });
-function tokenFrom(req: IncomingMessage) {
-	return req.headers.cookie
-		?.split(';')
-		.map((s) => s.trim())
-		.find((s) => s.startsWith(SESSION_COOKIE + '='))
-		?.slice(SESSION_COOKIE.length + 1);
-}
-const send = (client: WebSocket, value: unknown) => {
-	if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(value));
-};
-export function providerErrorMessage(event: unknown): string {
-	const detail =
-		event && typeof event === 'object'
-			? (['errorType', 'message'] as const)
-					.map((key) => (event as Record<string, unknown>)[key])
-					.filter((value): value is string => typeof value === 'string' && value.length > 0)
-					.join(' — ')
-					.slice(0, 300)
-			: '';
-	return detail
-		? `Transcription stream interrupted: ${detail}.`
-		: 'Transcription API rejected the stream. Check the API key and usage limits.';
-}
 export async function attachRuntime(server: Server) {
 	// This app runs one process. Apply pending migrations before touching tables:
 	// on a fresh database, or when this process starts before the post-deploy
@@ -60,13 +43,19 @@ export async function attachRuntime(server: Server) {
 	server.on('upgrade', async (req, socket, head) => {
 		try {
 			const path = new URL(req.url || '/', origin()).pathname;
-			const match = /^\/api\/recordings\/([0-9a-f-]{36})\/stream$/.exec(path);
-			if (!match || req.headers.origin !== origin() || !(await readSession(tokenFrom(req)))) {
+			const recording = /^\/api\/recordings\/([0-9a-f-]{36})\/stream$/.exec(path);
+			const study = /^\/api\/outputs\/([0-9a-f-]{36})\/runs\/([0-9a-f-]{36})\/stream$/.exec(path);
+			if (
+				!(recording || study) ||
+				req.headers.origin !== origin() ||
+				!(await readSession(tokenFrom(req)))
+			) {
 				socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
 				return;
 			}
 			wss.handleUpgrade(req, socket, head, (client) => {
-				void live(client, match[1], tokenFrom(req));
+				if (recording) void live(client, recording[1], tokenFrom(req));
+				else if (study) void studySession(client, study[1], study[2], tokenFrom(req));
 			});
 		} catch {
 			socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
@@ -82,7 +71,7 @@ export async function attachRuntime(server: Server) {
 	};
 }
 async function live(client: WebSocket, id: string, sessionToken: string | undefined) {
-	let provider: WebSocket | undefined,
+	let provider: RealtimeAsr | undefined,
 		segmentId: string | undefined,
 		startSample = 0,
 		cursor = 0,
@@ -91,8 +80,7 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 		finishing = false,
 		completed = false;
 	let fatal: Error | undefined;
-	let chain = Promise.resolve(),
-		providerChain = Promise.resolve();
+	let chain = Promise.resolve();
 	let queuedBytes = 0;
 	let liveStart = 0;
 	let currentTurn: number | undefined;
@@ -107,14 +95,12 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 	const timer = setTimeout(() => {
 		if (!ready) fail(new Error('Recording handshake timed out.'));
 	}, 18000);
-	const heartbeat = setInterval(() => {
-		void readSession(sessionToken)
-			.then((session) => {
-				if (!session) fail(new Error('Your session expired. Sign in to save or resume recording.'));
-				else client.ping();
-			})
-			.catch(fail);
-	}, 30000);
+	const stopWatching = watchSession(
+		client,
+		sessionToken,
+		'Your session expired. Sign in to save or resume recording.',
+		(e) => fail(e)
+	);
 	const fail = (e: unknown) => {
 		fatal = e instanceof Error ? e : new Error('Transcription failed.');
 		send(client, { type: 'error', message: safeError(e) });
@@ -135,7 +121,7 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 	}
 	client.on('close', () => {
 		clearTimeout(timer);
-		clearInterval(heartbeat);
+		stopWatching();
 		provider?.terminate();
 		void chain.finally(() => markInterrupted()).catch(() => {});
 	});
@@ -169,11 +155,9 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 						throw new Error('Duplicate live audio must be recovered before resuming.');
 					cursor += pcm.length / 2;
 					nextSequence++;
-					if (provider?.readyState !== WebSocket.OPEN || provider.bufferedAmount > 48000 * 4)
+					if (!provider?.open || provider.bufferedAmount > 48000 * 4)
 						throw new Error('Transcription connection interrupted.');
-					await new Promise<void>((resolve, reject) =>
-						provider!.send(pcm, (error) => (error ? reject(error) : resolve()))
-					);
+					await provider.send(pcm);
 					send(client, { type: 'ack', sequence });
 					return;
 				}
@@ -181,7 +165,7 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 				if (event.type === 'start') {
 					if (segmentId) throw new Error('Already recording.');
 					const input = startSchema.parse(event);
-					required('TRANSCRIPTION_API_KEY');
+					requireTranscription();
 					await db().transaction(async (tx) => {
 						const [material] = await tx
 							.select()
@@ -232,124 +216,87 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 					segmentId = input.segmentId;
 					startSample = input.startSample;
 					cursor = startSample;
-					provider = new WebSocket('wss://api.meta.ai/v1/asr/realtime', {
-						maxPayload: 4 * 1024 * 1024,
-						handshakeTimeout: 10000
-					});
-					provider.on('open', () =>
-						provider!.send(
-							JSON.stringify({
-								authorization: { accessToken: 'Bearer ' + required('TRANSCRIPTION_API_KEY') },
-								audioEncoding: 'PCM_24KHZ',
-								model: TRANSCRIPTION_MODEL,
-								mode: 'DIARIZATION',
-								partialMode: 'CUMULATIVE',
-								emitAudioProgress: true
-							})
-						)
-					);
-					provider.on('error', (e) => {
-						providerDoneReject?.(new Error('Transcription connection failed.'));
-						fail(e);
-					});
-					provider.on('close', (code) => {
-						if (finishing && code === 1000) providerDoneResolve?.();
-						else {
-							providerDoneReject?.(new Error('Transcription stream ended unexpectedly.'));
-							if (!completed)
-								fail(new Error('Transcription disconnected. Audio is saved for recovery.'));
+					const msAt = (offsetMs: number | undefined) =>
+						offsetMs !== undefined
+							? Math.round(startSample / 24 + offsetMs)
+							: Math.round(cursor / 24);
+					provider = openRealtimeAsr({
+						onReady() {
+							ready = true;
+							clearTimeout(timer);
+							liveStart = Date.now();
+							send(client, { type: 'ready', nextSequence });
+						},
+						onSpeechStart(turnId, offsetMs) {
+							currentTurn = turnId;
+							turns.set(turnId, { start: msAt(offsetMs) });
+						},
+						onSpeechEnd(turnId, offsetMs) {
+							const turn = turns.get(turnId);
+							if (turn) turn.end = msAt(offsetMs);
+						},
+						onSpeaker(label) {
+							const turn = currentTurn !== undefined ? turns.get(currentTurn) : undefined;
+							if (turn) turn.speaker = label;
+						},
+						onPartial(text) {
+							send(client, {
+								type: 'transcript',
+								text,
+								final: false,
+								turnId: `${segmentId}:${currentTurn ?? 'pending'}`,
+								speaker: currentTurn !== undefined ? turns.get(currentTurn)?.speaker : undefined
+							});
+						},
+						async onComplete(turnId, text, offsetMs) {
+							const turn = turns.get(turnId) ?? { start: Math.round(startSample / 24) };
+							const values = {
+								materialId: id,
+								segmentId: segmentId!,
+								turnId,
+								startMs: turn.start,
+								endMs: turn.end ?? msAt(offsetMs),
+								text,
+								speaker: turn.speaker ?? null
+							};
+							if (text.trim())
+								await db()
+									.insert(t.transcriptTurns)
+									.values(values)
+									.onConflictDoUpdate({
+										target: [t.transcriptTurns.segmentId, t.transcriptTurns.turnId],
+										set: { text: values.text, endMs: values.endMs, speaker: values.speaker }
+									});
+							send(client, {
+								type: 'transcript',
+								text,
+								final: true,
+								turnId: `${segmentId}:${turnId}`,
+								speaker: turn.speaker,
+								startMs: values.startMs,
+								endMs: values.endMs
+							});
+							turns.delete(turnId);
+						},
+						onError(e) {
+							providerDoneReject?.(new Error('Transcription connection failed.'));
+							fail(e);
+						},
+						onClose(code) {
+							if (finishing && code === 1000) providerDoneResolve?.();
+							else {
+								providerDoneReject?.(new Error('Transcription stream ended unexpectedly.'));
+								if (!completed)
+									fail(new Error('Transcription disconnected. Audio is saved for recovery.'));
+							}
 						}
-					});
-					provider.on('message', (raw) => {
-						providerChain = providerChain
-							.then(async () => {
-								const event = JSON.parse(raw.toString());
-								if (typeof event.sessionId === 'string' && !event.type) {
-									ready = true;
-									clearTimeout(timer);
-									liveStart = Date.now();
-									send(client, { type: 'ready', nextSequence });
-									return;
-								}
-								if (event.type === 'error') {
-									console.error(
-										'Transcription provider error:',
-										JSON.stringify(event).slice(0, 1000)
-									);
-									throw new Error(providerErrorMessage(event));
-								}
-								const offset = Number(event.audioProcessedMs);
-								const ms = Number.isFinite(offset)
-									? Math.round(startSample / 24 + offset)
-									: Math.round(cursor / 24);
-								if (event.type === 'speechStart' && Number.isInteger(event.turnId)) {
-									currentTurn = event.turnId;
-									turns.set(event.turnId, { start: ms });
-								}
-								if (event.type === 'speechEnd' && Number.isInteger(event.turnId)) {
-									const turn = turns.get(event.turnId);
-									if (turn) turn.end = ms;
-								}
-								if (
-									event.type === 'speaker' &&
-									typeof event.label === 'string' &&
-									currentTurn !== undefined
-								) {
-									const turn = turns.get(currentTurn);
-									if (turn) turn.speaker = event.label;
-								}
-								if (event.type === 'transcript' && typeof event.transcript === 'string') {
-									send(client, {
-										type: 'transcript',
-										text: event.transcript,
-										final: false,
-										turnId: `${segmentId}:${currentTurn ?? 'pending'}`,
-										speaker: currentTurn !== undefined ? turns.get(currentTurn)?.speaker : undefined
-									});
-								}
-								if (
-									event.type === 'speechComplete' &&
-									typeof event.transcript === 'string' &&
-									Number.isInteger(event.turnId)
-								) {
-									const turn = turns.get(event.turnId) ?? { start: Math.round(startSample / 24) };
-									const values = {
-										materialId: id,
-										segmentId: segmentId!,
-										turnId: event.turnId,
-										startMs: turn.start,
-										endMs: turn.end ?? ms,
-										text: event.transcript,
-										speaker: turn.speaker ?? null
-									};
-									if (event.transcript.trim())
-										await db()
-											.insert(t.transcriptTurns)
-											.values(values)
-											.onConflictDoUpdate({
-												target: [t.transcriptTurns.segmentId, t.transcriptTurns.turnId],
-												set: { text: values.text, endMs: values.endMs, speaker: values.speaker }
-											});
-									send(client, {
-										type: 'transcript',
-										text: event.transcript,
-										final: true,
-										turnId: `${segmentId}:${event.turnId}`,
-										speaker: turn.speaker,
-										startMs: values.startMs,
-										endMs: values.endMs
-									});
-									turns.delete(event.turnId);
-								}
-							})
-							.catch(fail);
 					});
 					return;
 				}
 				if (event.type === 'pause' || event.type === 'stop') {
 					if (!ready || finishing) throw new Error('Recording is not active.');
 					finishing = true;
-					provider!.send(JSON.stringify({ type: 'endStream' }));
+					provider!.end();
 					let timeout: NodeJS.Timeout | undefined;
 					try {
 						await Promise.race([
@@ -364,7 +311,7 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 					} finally {
 						clearTimeout(timeout);
 					}
-					await providerChain;
+					await provider!.settled();
 					if (fatal) throw fatal;
 					await db()
 						.update(t.recordingSegments)

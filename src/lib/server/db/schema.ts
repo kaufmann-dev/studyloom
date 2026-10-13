@@ -14,7 +14,16 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { AudioInfo, Citation, Quiz, Grade, Repeat } from '../../domain';
+import type {
+	AudioInfo,
+	Citation,
+	FeedbackHeader,
+	Quiz,
+	Grade,
+	Repeat,
+	StudyInfo,
+	StudyVerdict
+} from '../../domain';
 const time = (name: string) => timestamp(name, { withTimezone: true }).notNull().defaultNow();
 const pk = () => uuid('id').primaryKey().defaultRandom();
 export const sessions = pgTable(
@@ -396,11 +405,12 @@ export const outputs = pgTable(
 		projectId: uuid('project_id')
 			.notNull()
 			.references(() => projects.id, { onDelete: 'cascade' }),
-		kind: text('kind').$type<'summary' | 'quiz' | 'audio'>().notNull(),
+		kind: text('kind').$type<'summary' | 'quiz' | 'audio' | 'session'>().notNull(),
 		title: text('title').notNull(),
 		content: text('content').notNull(),
 		quiz: jsonb('quiz').$type<Quiz>(),
 		audio: jsonb('audio').$type<AudioInfo>(),
+		study: jsonb('study').$type<StudyInfo>(),
 		citations: jsonb('citations').$type<Citation[]>().notNull().default([]),
 		materialIds: jsonb('material_ids').$type<string[]>().notNull(),
 		sourceSnapshot: jsonb('source_snapshot')
@@ -427,6 +437,42 @@ export const attempts = pgTable(
 	},
 	(t) => [index('attempts_output_idx').on(t.outputId)]
 );
+/** One spoken pass through a study session; its position survives disconnects. */
+export const studyRuns = pgTable(
+	'study_runs',
+	{
+		id: pk(),
+		outputId: uuid('output_id')
+			.notNull()
+			.references(() => outputs.id, { onDelete: 'cascade' }),
+		status: text('status').$type<'active' | 'complete'>().notNull().default('active'),
+		segmentIndex: integer('segment_index').notNull().default(0),
+		attempt: integer('attempt').notNull().default(1),
+		createdAt: time('created_at'),
+		updatedAt: time('updated_at'),
+		completedAt: timestamp('completed_at', { withTimezone: true })
+	},
+	(t) => [index('study_runs_output_idx').on(t.outputId)]
+);
+/** A spoken answer's transcript and the tutor's graded feedback; answer audio is never kept. */
+export const studyAnswers = pgTable(
+	'study_answers',
+	{
+		id: pk(),
+		runId: uuid('run_id')
+			.notNull()
+			.references(() => studyRuns.id, { onDelete: 'cascade' }),
+		segmentIndex: integer('segment_index').notNull(),
+		attempt: integer('attempt').notNull(),
+		answer: text('answer').notNull(),
+		verdict: text('verdict').$type<StudyVerdict>().notNull(),
+		next: text('next').$type<FeedbackHeader['next']>().notNull(),
+		gap: text('gap').notNull().default(''),
+		feedback: text('feedback').notNull(),
+		createdAt: time('created_at')
+	},
+	(t) => [uniqueIndex('study_answers_turn_idx').on(t.runId, t.segmentIndex, t.attempt)]
+);
 export const jobs = pgTable(
 	'jobs',
 	{
@@ -436,7 +482,7 @@ export const jobs = pgTable(
 			.references(() => projects.id, { onDelete: 'cascade' }),
 		materialId: uuid('material_id').references(() => materials.id, { onDelete: 'cascade' }),
 		kind: text('kind')
-			.$type<'ingest' | 'chat' | 'summary' | 'quiz' | 'audio' | 'grade' | 'recover'>()
+			.$type<'ingest' | 'chat' | 'summary' | 'quiz' | 'audio' | 'session' | 'grade' | 'recover'>()
 			.notNull(),
 		queue: text('queue').$type<'interactive' | 'background'>().notNull(),
 		status: text('status')

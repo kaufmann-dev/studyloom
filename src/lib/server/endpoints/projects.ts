@@ -140,7 +140,7 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 			const audio = await tx
 				.select({ id: t.jobs.id })
 				.from(t.jobs)
-				.where(and(eq(t.jobs.projectId, id), eq(t.jobs.kind, 'audio')));
+				.where(and(eq(t.jobs.projectId, id), inArray(t.jobs.kind, ['audio', 'session'])));
 			await tx.delete(t.projects).where(eq(t.projects.id, id));
 			return { sources, audio };
 		});
@@ -186,7 +186,12 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 	if (action === 'generate' && method === 'POST') {
 		const input = generationInput.parse(await readJson(event));
 		await validateModel(input.modelId);
-		const speech = input.kind === 'audio' ? await audioChoice(input) : {};
+		const speech =
+			input.kind === 'audio' || input.kind === 'session'
+				? await audioChoice(
+						input.kind === 'session' ? { ...input, audioStyle: 'narration' } : input
+					)
+				: {};
 		const snapshot = await sourceSnapshot(id, input.materialIds);
 		const job = await db().transaction(async (tx) => {
 			if (!(await lockProject(tx, id))) error(404, 'Project not found.');

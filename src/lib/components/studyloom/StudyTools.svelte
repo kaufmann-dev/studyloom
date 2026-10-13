@@ -6,6 +6,8 @@
 	import {
 		AUDIO_LENGTHS,
 		AUDIO_STYLES,
+		SESSION_LENGTHS,
+		THINKING_TIMES,
 		generationInput,
 		DEFAULT_MODEL,
 		type StudyOutput,
@@ -34,7 +36,7 @@
 		onChanged
 	}: {
 		projectId: string;
-		kind: 'summary' | 'quiz' | 'audio';
+		kind: 'summary' | 'quiz' | 'audio' | 'session';
 		materialIds: string[];
 		materials: Material[];
 		models: MuseModel[];
@@ -49,7 +51,9 @@
 		learnerVoiceId: true,
 		speechModelId: true,
 		audioLength: true,
-		audioStyle: true
+		audioStyle: true,
+		sessionLength: true,
+		thinkingTime: true
 	});
 	const editor = superForm(
 		defaults(
@@ -61,7 +65,9 @@
 				learnerVoiceId: '',
 				speechModelId: '',
 				audioLength: 'short',
-				audioStyle: 'narration'
+				audioStyle: 'narration',
+				sessionLength: 'standard',
+				thinkingTime: 'normal'
 			},
 			zod4(schema)
 		),
@@ -87,6 +93,13 @@
 			title: 'Listen to your sources',
 			intro:
 				'Turn your selected materials into a narrated summary or a tutor and learner conversation, with pauses to think along.'
+		},
+		session: {
+			one: 'study session',
+			many: 'study sessions',
+			title: 'Study out loud',
+			intro:
+				'A voice tutor explains each part, asks you a question and responds to your spoken answer. Once it starts, you only need to talk.'
 		},
 		quiz: {
 			one: 'quiz',
@@ -114,7 +127,8 @@
 	let voiceId = $derived(
 		offered(catalog?.voices.map((voice) => voice.voiceId) ?? [], $form.voiceId)
 	);
-	let dialogue = $derived($form.audioStyle === 'dialogue');
+	let spoken = $derived(kind === 'audio' || kind === 'session');
+	let dialogue = $derived(kind === 'audio' && $form.audioStyle === 'dialogue');
 	/** The learner needs a voice of their own, so the tutor's voice is not offered. */
 	let learnerVoices = $derived(catalog?.voices.filter((voice) => voice.voiceId !== voiceId) ?? []);
 	let learnerVoiceId = $derived(
@@ -127,7 +141,7 @@
 		offered(catalog?.models.map((model) => model.modelId) ?? [], $form.speechModelId)
 	);
 	let ready = $derived(
-		kind !== 'audio' || Boolean(voiceId && speechModelId && (!dialogue || learnerVoiceId))
+		!spoken || Boolean(voiceId && speechModelId && (!dialogue || learnerVoiceId))
 	);
 	async function loadCatalog() {
 		catalogError = '';
@@ -138,7 +152,7 @@
 		}
 	}
 	onMount(() => {
-		if (kind === 'audio') void loadCatalog();
+		if (kind === 'audio' || kind === 'session') void loadCatalog();
 	});
 
 	async function generate(event: SubmitEvent) {
@@ -210,6 +224,9 @@
 						<ModelSelect {...props} {models} bind:value={$form.modelId} disabled={busy} />
 					{/snippet}
 				</Form.Control>
+				{#if kind === 'session'}
+					<Form.Description>Plans the session and gives the live feedback.</Form.Description>
+				{/if}
 				<Form.FieldErrors />
 			</Form.Field>
 			{#if kind === 'quiz'}
@@ -252,27 +269,29 @@
 					</Form.Field>
 				</div>
 			{/if}
-			{#if kind === 'audio'}
+			{#if spoken}
 				<ErrorAlert message={catalogError} onRetry={loadCatalog} />
 				<div class="grid gap-4 sm:grid-cols-2">
-					<Form.Field form={editor} name="audioStyle" class="sm:col-span-2">
-						<Form.Control>
-							{#snippet children({ props })}
-								<Form.Label>Style</Form.Label>
-								<NativeSelect.Root
-									{...props}
-									class="w-full"
-									bind:value={$form.audioStyle}
-									disabled={busy}
-								>
-									{#each Object.entries(AUDIO_STYLES) as [value, style] (value)}
-										<NativeSelect.Option {value}>{style.label}</NativeSelect.Option>
-									{/each}
-								</NativeSelect.Root>
-							{/snippet}
-						</Form.Control>
-						<Form.FieldErrors />
-					</Form.Field>
+					{#if kind === 'audio'}
+						<Form.Field form={editor} name="audioStyle" class="sm:col-span-2">
+							<Form.Control>
+								{#snippet children({ props })}
+									<Form.Label>Style</Form.Label>
+									<NativeSelect.Root
+										{...props}
+										class="w-full"
+										bind:value={$form.audioStyle}
+										disabled={busy}
+									>
+										{#each Object.entries(AUDIO_STYLES) as [value, style] (value)}
+											<NativeSelect.Option {value}>{style.label}</NativeSelect.Option>
+										{/each}
+									</NativeSelect.Root>
+								{/snippet}
+							</Form.Control>
+							<Form.FieldErrors />
+						</Form.Field>
+					{/if}
 					{#snippet voiceOptions(voices: Voice[])}
 						{#each voices as voice (voice.voiceId)}
 							<NativeSelect.Option value={voice.voiceId}>
@@ -287,7 +306,13 @@
 					<Form.Field form={editor} name="voiceId" class={[!dialogue && 'sm:col-span-2']}>
 						<Form.Control>
 							{#snippet children({ props })}
-								<Form.Label>{dialogue ? 'Tutor voice' : 'Narrator voice'}</Form.Label>
+								<Form.Label
+									>{kind === 'session'
+										? 'Voice'
+										: dialogue
+											? 'Tutor voice'
+											: 'Narrator voice'}</Form.Label
+								>
 								<NativeSelect.Root
 									{...props}
 									class="w-full"
@@ -340,26 +365,71 @@
 								</NativeSelect.Root>
 							{/snippet}
 						</Form.Control>
+						{#if kind === 'session'}
+							<Form.Description>Flash models answer fastest.</Form.Description>
+						{/if}
 						<Form.FieldErrors />
 					</Form.Field>
-					<Form.Field form={editor} name="audioLength">
-						<Form.Control>
-							{#snippet children({ props })}
-								<Form.Label>Length</Form.Label>
-								<NativeSelect.Root
-									{...props}
-									class="w-full"
-									bind:value={$form.audioLength}
-									disabled={busy}
-								>
-									{#each Object.entries(AUDIO_LENGTHS) as [value, length] (value)}
-										<NativeSelect.Option {value}>{length.label}</NativeSelect.Option>
-									{/each}
-								</NativeSelect.Root>
-							{/snippet}
-						</Form.Control>
-						<Form.FieldErrors />
-					</Form.Field>
+					{#if kind === 'audio'}
+						<Form.Field form={editor} name="audioLength">
+							<Form.Control>
+								{#snippet children({ props })}
+									<Form.Label>Length</Form.Label>
+									<NativeSelect.Root
+										{...props}
+										class="w-full"
+										bind:value={$form.audioLength}
+										disabled={busy}
+									>
+										{#each Object.entries(AUDIO_LENGTHS) as [value, length] (value)}
+											<NativeSelect.Option {value}>{length.label}</NativeSelect.Option>
+										{/each}
+									</NativeSelect.Root>
+								{/snippet}
+							</Form.Control>
+							<Form.FieldErrors />
+						</Form.Field>
+					{:else}
+						<Form.Field form={editor} name="sessionLength">
+							<Form.Control>
+								{#snippet children({ props })}
+									<Form.Label>Length</Form.Label>
+									<NativeSelect.Root
+										{...props}
+										class="w-full"
+										bind:value={$form.sessionLength}
+										disabled={busy}
+									>
+										{#each Object.entries(SESSION_LENGTHS) as [value, length] (value)}
+											<NativeSelect.Option {value}>{length.label}</NativeSelect.Option>
+										{/each}
+									</NativeSelect.Root>
+								{/snippet}
+							</Form.Control>
+							<Form.FieldErrors />
+						</Form.Field>
+						<Form.Field form={editor} name="thinkingTime">
+							<Form.Control>
+								{#snippet children({ props })}
+									<Form.Label>Thinking time</Form.Label>
+									<NativeSelect.Root
+										{...props}
+										class="w-full"
+										bind:value={$form.thinkingTime}
+										disabled={busy}
+									>
+										{#each Object.entries(THINKING_TIMES) as [value, time] (value)}
+											<NativeSelect.Option {value}>{time.label}</NativeSelect.Option>
+										{/each}
+									</NativeSelect.Root>
+								{/snippet}
+							</Form.Control>
+							<Form.Description
+								>How long you can pause before your answer counts as finished.</Form.Description
+							>
+							<Form.FieldErrors />
+						</Form.Field>
+					{/if}
 				</div>
 			{/if}
 			<p class="text-xs text-muted-foreground">

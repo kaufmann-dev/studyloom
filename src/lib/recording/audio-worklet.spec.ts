@@ -7,9 +7,9 @@ interface Worklet {
 	process: (inputs: Float32Array[][]) => boolean;
 }
 
-function worklet(sampleRate: number) {
+function worklet(sampleRate: number, frameSamples?: number) {
 	const messages: Array<{ type: string; pcm?: ArrayBuffer }> = [];
-	let Processor: new () => Worklet;
+	let Processor: new (options?: unknown) => Worklet;
 	runInNewContext(readFileSync('static/audio-worklet.js', 'utf8'), {
 		sampleRate,
 		AudioWorkletProcessor: class {
@@ -17,11 +17,13 @@ function worklet(sampleRate: number) {
 				postMessage: (message: { type: string; pcm?: ArrayBuffer }) => messages.push(message)
 			};
 		},
-		registerProcessor: (_name: string, processor: new () => Worklet) => {
+		registerProcessor: (_name: string, processor: new (options?: unknown) => Worklet) => {
 			Processor = processor;
 		}
 	});
-	const processor = new Processor!();
+	const processor = new Processor!(
+		frameSamples ? { processorOptions: { frameSamples } } : undefined
+	);
 	const command = (type: string) => processor.port.onmessage({ data: { type } });
 	const feed = (samples: number, channels = [0.5]) => {
 		for (let i = 0; i < samples; i += 128)
@@ -37,6 +39,12 @@ function worklet(sampleRate: number) {
 }
 
 describe('browser PCM worklet', () => {
+	it('emits shorter frames when asked, for low-latency listening', () => {
+		const listener = worklet(48000, 2400);
+		listener.command('start');
+		listener.feed(48000 / 2);
+		expect(listener.frames().map((frame) => frame.byteLength)).toEqual(Array(5).fill(4800));
+	});
 	it.each([24000, 44100, 48000, 96000])(
 		'produces exactly 24,000 PCM samples per second from %i Hz',
 		(rate) => {

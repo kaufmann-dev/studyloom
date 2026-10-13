@@ -1,6 +1,7 @@
 import type { Server } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
-import { attachRuntime, providerErrorMessage } from './runtime';
+import { attachRuntime } from './runtime';
+import { providerErrorMessage } from '../lib/server/realtime-asr';
 
 const order = vi.hoisted(() => [] as string[]);
 

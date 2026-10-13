@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { museEnvironment, museStatusFromCatalog, resolveMuseBin } from './muse';
+import { museEnvironment, museHost, museStatusFromCatalog, resolveMuseBin } from './muse';
 import type { MuseAccount, MuseModel } from '../domain';
 
 const savedPath = process.env.PATH;
@@ -67,5 +67,50 @@ describe('muse stale-login detection', () => {
 		const status = museStatusFromCatalog({ state: 'loggedOut', credentialRequired: true }, []);
 		expect(status.models).toEqual([]);
 		expect(status.error).toBeUndefined();
+	});
+});
+
+describe('muse host protocol', () => {
+	it('routes notifications and refuses server requests without mistaking them for replies', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'studyloom-muse-host-'));
+		const savedDataDir = process.env.DATA_DIR;
+		try {
+			// A stand-in host that sends a server request reusing the client's request id.
+			const bin = join(dir, 'muse');
+			await writeFile(
+				bin,
+				`#!/usr/bin/env node
+const out = (m) => process.stdout.write(JSON.stringify(m) + '\\n');
+require('readline').createInterface({ input: process.stdin }).on('line', (line) => {
+	const m = JSON.parse(line);
+	if (m.method === 'initialize') out({ jsonrpc: '2.0', id: m.id, result: {} });
+	if (m.method === 'test/echo') {
+		out({ jsonrpc: '2.0', id: m.id, method: 'approval/request', params: { sessionId: 's' } });
+		out({ jsonrpc: '2.0', method: 'item/delta', params: { sessionId: 's', delta: 'hi' } });
+		out({ jsonrpc: '2.0', id: m.id, result: { ok: true } });
+	}
+	if (m.error) out({ jsonrpc: '2.0', method: 'test/refused', params: { code: m.error.code } });
+});
+`,
+				{ mode: 0o755 }
+			);
+			process.env.MUSE_BIN = bin;
+			process.env.DATA_DIR = dir;
+			const events: unknown[] = [];
+			const off = [
+				museHost.on('item/delta', (params) => events.push(['delta', params.delta])),
+				museHost.on('approval/request', () => events.push(['approval'])),
+				museHost.on('test/refused', (params) => events.push(['refused', params.code]))
+			];
+			await expect(museHost.call('test/echo')).resolves.toEqual({ ok: true });
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			expect(events).toEqual([['approval'], ['delta', 'hi'], ['refused', -32601]]);
+			off.forEach((unsubscribe) => unsubscribe());
+		} finally {
+			museHost.close();
+			if (savedDataDir === undefined) delete process.env.DATA_DIR;
+			else process.env.DATA_DIR = savedDataDir;
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });

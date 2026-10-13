@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Copy, Download } from '@lucide/svelte';
-	import type { AudioInfo, Material, QuizAttempt, StudyOutput } from '#lib/domain.js';
+	import type { AudioInfo, Material, QuizAttempt, StudyOutput, StudyRun } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import { createPoller } from '#lib/polling.js';
 	import { api, copyText, dateLabel, downloadText, errorText, plural } from '#lib/ui.js';
@@ -9,9 +9,10 @@
 	import ErrorAlert from './ErrorAlert.svelte';
 	import Markdown from './Markdown.svelte';
 	import Attempt from './QuizAttempt.svelte';
+	import StudySession from './StudySession.svelte';
 
 	let { outputId, materials }: { outputId: string; materials: Material[] } = $props();
-	type OutputData = { output: StudyOutput; attempts: QuizAttempt[] };
+	type OutputData = { output: StudyOutput; attempts: QuizAttempt[]; runs: StudyRun[] };
 	let data = $state.raw<OutputData | null>(null);
 	let error = $state('');
 	const SPEAKERS: Record<string, string> = { tutor: 'Tutor', learner: 'Learner' };
@@ -70,7 +71,8 @@
 				)}{#if output.audio}
 					· {voiceLabel(output.audio)} · {output.audio.speechModelName} · {duration(
 						output.audio.durationMs
-					)}{/if}
+					)}{/if}{#if output.study}
+					· {output.study.voiceName} · {output.study.speechModelName}{/if}
 			</p>
 		</div>
 		{#if output.audio}
@@ -94,10 +96,14 @@
 					? 'Download with answers'
 					: output.audio
 						? 'Download transcript'
-						: 'Download Markdown'}
+						: output.study
+							? 'Download plan'
+							: 'Download Markdown'}
 			</Button>
 		</div>
-		{#if quiz}
+		{#if output.kind === 'session'}
+			<StudySession {output} runs={data.runs} {materials} onRefresh={() => poller.run()} />
+		{:else if quiz}
 			<Attempt {output} attempts={data.attempts} {materials} onRefresh={() => poller.run()} />
 		{:else}
 			<Markdown text={output.content} class="leading-7" />

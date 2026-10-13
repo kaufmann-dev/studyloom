@@ -1,14 +1,16 @@
 /* global AudioWorkletProcessor, sampleRate, registerProcessor */
 // Integrate the source waveform across output intervals to resample to 24 kHz.
-// Output frames are exactly one second, except the explicitly flushed final frame.
+// Output frames are exactly `frameSamples` long (one second by default), except the explicitly
+// flushed final frame.
 class StudyloomPCMProcessor extends AudioWorkletProcessor {
-	constructor() {
+	constructor(options) {
 		super();
 		this.active = false;
 		this.ratio = sampleRate / 24000;
 		this.remaining = this.ratio;
 		this.integral = 0;
-		this.frame = new ArrayBuffer(48000);
+		this.frameSamples = options?.processorOptions?.frameSamples ?? 24000;
+		this.frame = new ArrayBuffer(this.frameSamples * 2);
 		this.view = new DataView(this.frame);
 		this.position = 0;
 		this.port.onmessage = ({ data }) => {
@@ -45,7 +47,7 @@ class StudyloomPCMProcessor extends AudioWorkletProcessor {
 					this.view.setInt16(this.position++ * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
 					this.integral = 0;
 					this.remaining = this.ratio;
-					if (this.position === 24000) this.flush();
+					if (this.position === this.frameSamples) this.flush();
 				}
 			}
 		}

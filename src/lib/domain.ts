@@ -334,9 +334,20 @@ export const AUDIO_STYLES = {
 	dialogue: { label: 'Tutor and learner', speakers: ['tutor', 'learner'] }
 } as const;
 export type AudioStyle = keyof typeof AUDIO_STYLES;
+/** Spoken study sessions: how many parts, and how long a pause ends an answer. */
+export const SESSION_LENGTHS = {
+	short: { segments: 4, label: 'Short (~10 min)' },
+	standard: { segments: 6, label: 'Standard (~15 min)' },
+	long: { segments: 9, label: 'Long (~25 min)' }
+} as const;
+export const THINKING_TIMES = {
+	short: { ms: 1500, label: 'Short pause (1.5 s)' },
+	normal: { ms: 2500, label: 'Normal pause (2.5 s)' },
+	long: { ms: 4000, label: 'Long pause (4 s)' }
+} as const;
 const elevenLabsId = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/, 'Choose a voice and model.');
 export const generationInput = z.object({
-	kind: z.enum(['summary', 'quiz', 'audio']),
+	kind: z.enum(['summary', 'quiz', 'audio', 'session']),
 	materialIds: sourceSelection,
 	modelId,
 	questionCount: z.number().int().min(1).max(50).default(10),
@@ -346,7 +357,10 @@ export const generationInput = z.object({
 	learnerVoiceId: elevenLabsId.or(z.literal('')).default(''),
 	speechModelId: elevenLabsId.or(z.literal('')).default(''),
 	audioLength: z.enum(['short', 'standard', 'long']).default('short'),
-	audioStyle: z.enum(['narration', 'dialogue']).default('narration')
+	audioStyle: z.enum(['narration', 'dialogue']).default('narration'),
+	/** Study sessions only. */
+	sessionLength: z.enum(['short', 'standard', 'long']).default('standard'),
+	thinkingTime: z.enum(['short', 'normal', 'long']).default('normal')
 });
 export const chatInput = z.object({
 	conversationId: idSchema.optional(),
@@ -419,6 +433,31 @@ export const audioScriptSchema = (style: AudioStyle) =>
 		citations: z.array(citationSchema).min(1).max(100)
 	});
 export type AudioScript = z.infer<ReturnType<typeof audioScriptSchema>>;
+/** One part of a spoken study session: an explanation, then a question the learner answers aloud. */
+export const studySegmentSchema = z.object({
+	title: z.string().min(1).max(120),
+	explanation: z.string().trim().min(1).max(1600),
+	question: z.string().trim().min(1).max(400),
+	keyPoints: z.array(z.string().min(1).max(300)).min(1).max(5),
+	modelAnswer: z.string().min(1).max(1200),
+	misconceptions: z.array(z.string().min(1).max(300)).max(3).default([]),
+	citations: z.array(citationSchema).min(1).max(10)
+});
+export const studyPlanSchema = z.object({
+	title: z.string().min(1).max(200),
+	intro: z.string().trim().min(1).max(800),
+	segments: z.array(studySegmentSchema).min(2).max(12)
+});
+export type StudyPlan = z.infer<typeof studyPlanSchema>;
+export const STUDY_VERDICTS = ['correct', 'partial', 'incorrect', 'none'] as const;
+export type StudyVerdict = (typeof STUDY_VERDICTS)[number];
+/** The first line of every live feedback reply: the grade and what happens next. */
+export const feedbackHeaderSchema = z.object({
+	verdict: z.enum(STUDY_VERDICTS),
+	next: z.enum(['continue', 'followUp', 'reexplain']),
+	gap: z.string().max(160).default('')
+});
+export type FeedbackHeader = z.infer<typeof feedbackHeaderSchema>;
 export const sourceSearchInput = z.object({
 	query: nonBlank(z.string().max(500), 'A search query is required.').describe(
 		'Words to find. Matching uses exact word forms without stemming, so try variants and synonyms. Supports "quoted phrases", OR and -exclusions.'
@@ -571,14 +610,47 @@ export interface AudioInfo {
 	durationMs: number;
 	characters: number;
 }
+export interface StudyInfo {
+	plan: StudyPlan;
+	voiceId: string;
+	voiceName: string;
+	speechModelId: string;
+	speechModelName: string;
+	/** Silence after speech that ends an answer. */
+	thinkingMs: number;
+	characters: number;
+}
+export interface StudyAnswer {
+	id: string;
+	segmentIndex: number;
+	attempt: number;
+	/** The transcript of the spoken answer; empty when the learner did not answer. */
+	answer: string;
+	verdict: StudyVerdict;
+	next: FeedbackHeader['next'];
+	gap: string;
+	feedback: string;
+	createdAt: string;
+}
+export interface StudyRun {
+	id: string;
+	outputId: string;
+	status: 'active' | 'complete';
+	segmentIndex: number;
+	attempt: number;
+	answers: StudyAnswer[];
+	createdAt: string;
+	completedAt: string | null;
+}
 export interface StudyOutput {
 	id: string;
 	projectId: string;
-	kind: 'summary' | 'quiz' | 'audio';
+	kind: 'summary' | 'quiz' | 'audio' | 'session';
 	title: string;
 	content: string;
 	quiz: Quiz | null;
 	audio: AudioInfo | null;
+	study: StudyInfo | null;
 	citations: Citation[];
 	materialIds: string[];
 	modelId: string;

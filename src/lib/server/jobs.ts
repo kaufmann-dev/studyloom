@@ -11,7 +11,11 @@ import {
 	AUDIO_LENGTHS,
 	AUDIO_STYLES,
 	DEFAULT_MODEL,
+	SESSION_LENGTHS,
+	THINKING_TIMES,
 	audioScriptSchema,
+	studyPlanSchema,
+	type StudyPlan,
 	type AudioScript,
 	type AudioStyle,
 	type AudioVoice,
@@ -377,7 +381,7 @@ async function saveOutput(
 	run: GenerationRun,
 	output: Pick<
 		typeof t.outputs.$inferInsert,
-		'kind' | 'title' | 'content' | 'quiz' | 'citations' | 'audio'
+		'kind' | 'title' | 'content' | 'quiz' | 'citations' | 'audio' | 'study'
 	>
 ) {
 	const { job, snapshot, modelId } = run;
@@ -556,6 +560,101 @@ async function createAudio(run: GenerationRun) {
 		rm(manifestPath(directory), { force: true })
 	]);
 }
+function studyPlanPrompt(segments: number) {
+	return `${systemPrompt}
+Plan an interactive spoken study session on all selected sources.json. A voice tutor will read each segment's explanation and question aloud, listen to the learner's spoken answer, and give spoken feedback. The learner may have ADHD: short segments, concrete examples, one idea at a time. Write in the language of the sources.
+intro: at most 60 words of spoken text: what the learner will be able to do afterwards; how many parts follow, naming each in a few words; and one sentence explaining that after each part they answer a question out loud and may take their time to think.
+Exactly ${segments} segments, ordered so later ones build on earlier ones, covering the most important ideas rather than details. For each segment:
+- title: three to eight words.
+- explanation: 80 to 150 words of spoken text. Begin with a signpost such as "Part two of six: title." Give a concrete example or case first, then the general idea. Address the learner as "you", define new terms, and end with a one-sentence recap.
+- question: one open retrieval question answerable aloud in one to three sentences. Ask the learner to explain, compare, predict or apply. Never yes/no, never a list of more than three items, never recall of exact wording. It must be answerable from this and earlier segments.
+- keyPoints: two to four short statements a good answer contains; they are the grading standard.
+- modelAnswer: a complete spoken answer in one to three sentences.
+- misconceptions: up to three typical wrong ideas about this question, one sentence each.
+- citations: the evidence for the explanation and model answer.
+intro, explanation and question are spoken text only: no Markdown, lists, URLs, emoji, citations or locators; spell out symbols, numbers, units and abbreviations as a speaker would say them; most sentences under twenty words.`;
+}
+/** The pre-voiced clips of a study session, in playing order. */
+export function studyClips(plan: StudyPlan, voiceId: string) {
+	return [
+		{ key: 'intro', voiceId, text: plan.intro },
+		...plan.segments.flatMap((segment, i) => [
+			{ key: studyClipKey(i, 'explanation'), voiceId, text: segment.explanation },
+			{ key: studyClipKey(i, 'question'), voiceId, text: segment.question }
+		])
+	];
+}
+export const studyClipKey = (segment: number, part: 'explanation' | 'question') =>
+	`${String(segment).padStart(3, '0')}-${part}`;
+/** A readable copy of the plan: each part's question with what a good answer contains. */
+export function planMarkdown(plan: StudyPlan) {
+	return [
+		plan.intro,
+		...plan.segments.map((segment, i) =>
+			[
+				`## ${i + 1}. ${segment.title}`,
+				segment.explanation,
+				`**Question:** ${segment.question}`,
+				`**A good answer covers:**\n${segment.keyPoints.map((point) => `- ${point}`).join('\n')}`,
+				`**Model answer:** ${segment.modelAnswer}`
+			].join('\n\n')
+		)
+	].join('\n\n');
+}
+/**
+ * Muse plans the session, then ElevenLabs voices the intro and every explanation and question
+ * as 24 kHz PCM. The clips stay under DATA_DIR/audio/<jobId>/parts for the live sessions; only
+ * live feedback is voiced while the learner studies.
+ */
+async function createStudySession(run: GenerationRun) {
+	const { job, signal } = run;
+	const length = SESSION_LENGTHS[job.payload.sessionLength as keyof typeof SESSION_LENGTHS];
+	const thinking = THINKING_TIMES[job.payload.thinkingTime as keyof typeof THINKING_TIMES];
+	const [voice] = job.payload.voices as AudioVoice[];
+	if (!length || !thinking || !voice) throw new Error('Choose a length, pause and voice.');
+	const speechModelId = String(job.payload.speechModelId);
+	const directory = audioDir(job.id);
+	let manifest = await readManifest(directory, studyPlanSchema);
+	if (!manifest) {
+		const plan = await museResult(run, studyPlanPrompt(length.segments), studyPlanSchema);
+		if (plan.segments.length !== length.segments)
+			throw new Error('Muse planned the wrong number of parts. Retry this job.');
+		validateCitations(
+			plan.segments.flatMap((segment) => segment.citations),
+			run.snapshot
+		);
+		const characters = studyClips(plan, voice.voiceId).reduce((n, c) => n + c.text.length, 0);
+		if (characters > length.segments * 1300)
+			throw new Error('Muse wrote a session that is too long. Retry this job.');
+		manifest = { script: plan, requestIds: {} };
+		await mkdir(directory, { recursive: true, mode: 0o700 });
+		await writeManifest(directory, manifest);
+	}
+	const plan = manifest.script;
+	const clips = studyClips(plan, voice.voiceId);
+	await voiceClips(directory, manifest, clips, {
+		modelId: speechModelId,
+		format: 'pcm_24000',
+		signal,
+		progress: (i, total) => run.progress(`Voicing part ${i + 1} of ${total}`)
+	});
+	await saveOutput(run, {
+		kind: 'session',
+		title: plan.title,
+		content: planMarkdown(plan),
+		citations: plan.segments.flatMap((segment) => segment.citations),
+		study: {
+			plan,
+			voiceId: voice.voiceId,
+			voiceName: voice.voiceName,
+			speechModelId,
+			speechModelName: String(job.payload.speechModelName || speechModelId),
+			thinkingMs: thinking.ms,
+			characters: clips.reduce((n, c) => n + c.text.length, 0)
+		}
+	});
+	await rm(manifestPath(directory), { force: true });
+}
 /** A retried job whose result row already exists only needs its status settled. */
 async function alreadyPublished(job: Job) {
 	if (job.kind === 'chat') {
@@ -567,7 +666,12 @@ async function alreadyPublished(job: Job) {
 		await completeJob(job, async () => {});
 		return true;
 	}
-	if (job.kind === 'summary' || job.kind === 'quiz' || job.kind === 'audio') {
+	if (
+		job.kind === 'summary' ||
+		job.kind === 'quiz' ||
+		job.kind === 'audio' ||
+		job.kind === 'session'
+	) {
 		const [output] = await db()
 			.select({ id: t.outputs.id })
 			.from(t.outputs)
@@ -594,6 +698,7 @@ async function generate(job: Job, workspace: string, signal: AbortSignal, progre
 	else if (job.kind === 'chat') await answerChat(run);
 	else if (job.kind === 'quiz') await createQuiz(run);
 	else if (job.kind === 'audio') await createAudio(run);
+	else if (job.kind === 'session') await createStudySession(run);
 	else await createSummary(run);
 }
 export async function finishRecording(id: string, job?: Job) {

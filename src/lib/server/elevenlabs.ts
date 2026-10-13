@@ -172,6 +172,35 @@ export async function speak(input: SpeechRequest) {
 	if (!audio.length) throw new Error('ElevenLabs returned no audio. Retry this job.');
 	return { audio, requestId: response.headers.get('request-id') ?? '' };
 }
+/**
+ * Streams one sentence of live speech as 24 kHz signed 16-bit mono PCM. Failures before the
+ * first byte are retried like every request; a broken stream is not, because part of the
+ * sentence has already played.
+ */
+export async function* speakStream(input: {
+	text: string;
+	voiceId: string;
+	modelId: string;
+	previousText?: string;
+	signal?: AbortSignal;
+}) {
+	const response = await request(
+		`/v1/text-to-speech/${encodeURIComponent(input.voiceId)}/stream?output_format=pcm_24000`,
+		{
+			method: 'POST',
+			headers: { 'content-type': 'application/json', accept: 'application/octet-stream' },
+			body: JSON.stringify({
+				text: input.text,
+				model_id: input.modelId,
+				...(input.previousText ? { previous_text: input.previousText } : {})
+			}),
+			signal: input.signal,
+			timeoutMs: 60_000
+		}
+	);
+	if (!response.body) throw new Error('ElevenLabs returned no audio.');
+	for await (const chunk of response.body) yield Buffer.from(chunk);
+}
 /** Voices and speech models for the Audio tab; failures become a safe 503. */
 export async function speechCatalog() {
 	try {

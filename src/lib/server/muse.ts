@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
 import { mkdir, writeFile, copyFile, chmod, rename, access } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -97,6 +97,7 @@ async function prepareSettings() {
 	await writeFile(temporary, JSON.stringify(settings), { mode: 0o600 });
 	await rename(temporary, join(dir, 'settings.json'));
 }
+type Listener = (params: Record<string, unknown>) => void;
 class MuseHost {
 	private child: ChildProcessWithoutNullStreams | undefined;
 	private next = 1;
@@ -104,6 +105,7 @@ class MuseHost {
 		number,
 		{ resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
 	>();
+	private listeners = new Map<string, Set<Listener>>();
 	private starting: Promise<void> | undefined;
 	async ensure() {
 		return (this.starting ??= this.start().catch((e) => {
@@ -111,10 +113,14 @@ class MuseHost {
 			throw e;
 		}));
 	}
+	private emit(method: string, params: Record<string, unknown>) {
+		for (const listener of this.listeners.get(method) ?? []) listener(params);
+	}
 	private async start() {
 		const dir = join(dataDir(), 'muse-control');
 		await mkdir(join(dir, 'files'), { recursive: true, mode: 0o700 });
 		await museSettings();
+		// Study sessions run on this host too; tutor.ts ends any turn that tries to use a tool.
 		const child = spawn(
 			await resolveMuseBin(),
 			['serve', '--no-session-log', '--disable-write', '--disable-shell'],
@@ -126,17 +132,31 @@ class MuseHost {
 			stderr = (stderr + data.toString()).slice(-1000);
 		});
 		createInterface({ input: child.stdout }).on('line', (line) => {
+			let message;
 			try {
-				const message = JSON.parse(line);
-				const request = this.pending.get(message.id);
-				if (request) {
-					clearTimeout(request.timer);
-					this.pending.delete(message.id);
-					if (message.error) request.reject(new Error(message.error.message));
-					else request.resolve(message.result);
-				}
+				message = JSON.parse(line);
 			} catch {
-				/* CLI diagnostics are not protocol messages. */
+				return; /* CLI diagnostics are not protocol messages. */
+			}
+			if (typeof message.method === 'string') {
+				// A server request (approval, user input) is refused: nobody can answer it here.
+				if (message.id !== undefined)
+					child.stdin.write(
+						JSON.stringify({
+							jsonrpc: '2.0',
+							id: message.id,
+							error: { code: -32601, message: 'Studyloom cannot answer this request.' }
+						}) + '\n'
+					);
+				this.emit(message.method, message.params ?? {});
+				return;
+			}
+			const request = this.pending.get(message.id);
+			if (request) {
+				clearTimeout(request.timer);
+				this.pending.delete(message.id);
+				if (message.error) request.reject(new Error(message.error.message));
+				else request.resolve(message.result);
 			}
 		});
 		const fail = (e: Error) => {
@@ -147,6 +167,7 @@ class MuseHost {
 				p.reject(e);
 			}
 			this.pending.clear();
+			this.emit(HOST_EXIT, {});
 		};
 		child.on('error', fail);
 		child.on('exit', () => fail(new Error('Muse connection closed. ' + stderr)));
@@ -171,10 +192,18 @@ class MuseHost {
 		await this.ensure();
 		return (await this.rpc(method, params)) as T;
 	}
+	/** Subscribes to a notification or server request; `HOST_EXIT` fires when the host stops. */
+	on(method: string, listener: Listener) {
+		const set = this.listeners.get(method) ?? new Set();
+		set.add(listener);
+		this.listeners.set(method, set);
+		return () => void set.delete(listener);
+	}
 	close() {
 		this.child?.kill();
 	}
 }
+export const HOST_EXIT = 'studyloom/hostExit';
 // The SvelteKit and worker bundles share one process and one account-control connection.
 const processState = globalThis as typeof globalThis & { __studyloomMuseHost?: MuseHost };
 export const museHost = (processState.__studyloomMuseHost ??= new MuseHost());
@@ -298,4 +327,13 @@ export async function museRun(
 	if (terminal === undefined)
 		throw new Error('Muse did not complete this task. Retry from the job panel.');
 	return { text: terminal, stderr: stderrTail.text };
+}
+/** A time-ordered UUIDv7, the idempotency handle Muse expects for every command. */
+export function uuidv7(now = Date.now()) {
+	const bytes = randomBytes(16);
+	for (let i = 0; i < 6; i++) bytes[i] = Math.floor(now / 2 ** (8 * (5 - i))) & 0xff;
+	bytes[6] = (bytes[6] & 0x0f) | 0x70;
+	bytes[8] = (bytes[8] & 0x3f) | 0x80;
+	const hex = bytes.toString('hex');
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
