@@ -104,7 +104,7 @@
 	{/if}
 	{#if !materials.length}
 		<p class="border border-dashed p-4 text-sm leading-relaxed text-muted-foreground">
-			Add a file, a web page or a recording to give this project its first source.
+			Add a file, pasted text, a web page or a recording to give this project its first source.
 		</p>
 	{:else}
 		<ul class="divide-y border">

@@ -71,6 +71,9 @@
 	let error = $state('');
 	let selected = $state<string[]>([]);
 	let selectedTab = $state('chat');
+	// Five tabs fit a phone only with the label under the icon.
+	const TAB =
+		'min-w-0 flex-col gap-1 px-1 py-1.5 text-xs sm:flex-1 sm:flex-row sm:gap-2 sm:px-2 sm:py-1 sm:text-sm';
 	let preferredModel = $state(DEFAULT_MODEL);
 	let requestVersion = 0;
 	// Sources that became readable since the last refresh are selected automatically.
@@ -256,20 +259,22 @@
 				</div>
 			{/if}
 			<Tabs.Root bind:value={selectedTab}>
-				<Tabs.List class="mb-7 flex h-auto w-full justify-start gap-1 bg-muted p-1">
-					<Tabs.Trigger value="chat" class="flex-1 gap-2">
+				<Tabs.List
+					class="mb-7 grid h-auto w-full grid-cols-5 gap-1 bg-muted p-1 sm:flex sm:justify-start"
+				>
+					<Tabs.Trigger value="chat" class={TAB}>
 						<MessageSquare class="size-4" />Chat
 					</Tabs.Trigger>
-					<Tabs.Trigger value="summaries" class="flex-1 gap-2">
+					<Tabs.Trigger value="summaries" class={TAB}>
 						<NotebookText class="size-4" />Summaries
 					</Tabs.Trigger>
-					<Tabs.Trigger value="quizzes" class="flex-1 gap-2">
+					<Tabs.Trigger value="quizzes" class={TAB}>
 						<ListChecks class="size-4" />Quizzes
 					</Tabs.Trigger>
-					<Tabs.Trigger value="audio" class="flex-1 gap-2">
+					<Tabs.Trigger value="audio" class={TAB}>
 						<Headphones class="size-4" />Audio
 					</Tabs.Trigger>
-					<Tabs.Trigger value="sessions" class="flex-1 gap-2">
+					<Tabs.Trigger value="sessions" class={TAB}>
 						<GraduationCap class="size-4" />Study
 					</Tabs.Trigger>
 				</Tabs.List>
