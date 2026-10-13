@@ -6,6 +6,7 @@ A private learning workspace at **studyloom.kaufmann.dev**. The home page greets
 - Upload any file type. Muse inspects it and chooses conversion tools or scripts. Unsupported or partly readable files retain their originals and show the extraction limitations.
 - Paste a web address to add a page as a source. Studyloom downloads it, keeps the HTML as the original, and Muse extracts the article text like any other file. A link straight to a PDF or another file works too.
 - Combine readable materials for source-cited chat, summaries, multiple-choice questions and written-answer quizzes. Answers, grading feedback and the model used are saved.
+- Create audio summaries to listen to: Muse writes a cited narration, and ElevenLabs reads it aloud in the voice and speech model you pick from your account (models are listed with their relative credit cost; the first one is preselected). Play them in the browser or download the MP3. They use your ElevenLabs credits; an interrupted or failed one resumes without paying again for paragraphs already voiced.
 - Choose models from Muse's live catalog. Text generation and file processing use your Muse Code subscription login. Audio transcription uses the separate Meta transcription API and incurs API charges.
 - Save files, web links, contacts and notes at the Library root or in nested folders. Library files retain their originals for private viewing or download; they are not sent through Muse processing.
 - Track tasks with a deadline (a date, optionally a time). Red means overdue or due today, amber means due within three days. Open tasks appear on the home page, the Tasks page, the calendar and their project; finished ones move to the Done tab. Reminders are visual only.
@@ -101,6 +102,7 @@ Required environment variables:
 
 Optional environment variables:
 
+- `ELEVENLABS_API_KEY`: ElevenLabs API key with text-to-speech and voice read access; enables audio summaries; runtime secret.
 - `MAX_UPLOAD_BYTES`: maximum source size; default `2147483648`.
 - `MUSE_BIN`: executable path; unset by default, auto-detects `/usr/local/bin/muse` then `PATH`. Set it only if the CLI was installed elsewhere.
 - `MUSE_AUTH_IMPORT_PATH`: one-time import of an existing credential file; unset by default.
@@ -112,6 +114,6 @@ Application secrets are not needed during the build. Complete the Pocket ID clie
 
 ## Verification
 
-`pnpm test` covers web page address checks and downloads, task urgency, repeating-event expansion, iCalendar feed/export/import, recorder resampling and recovery ordering, session expiry and redirect validation, credential environment isolation, workspace path confinement, WAV validation, citation checks and quiz scoring. `pnpm check` checks Svelte and TypeScript; `pnpm build` creates both the SvelteKit application and the runtime and Muse tool bundles.
+`pnpm test` covers web page address checks and downloads, task urgency, repeating-event expansion, iCalendar feed/export/import, recorder resampling and recovery ordering, session expiry and redirect validation, credential environment isolation, workspace path confinement, WAV validation, citation checks, quiz scoring, the ElevenLabs client and MP3 joining; with `TEST_DATABASE_URL` set it also runs the database-backed suites, including resumable audio summaries. `pnpm check` checks Svelte and TypeScript; `pnpm build` creates both the SvelteKit application and the runtime and Muse tool bundles.
 
-After deployment, verify Pocket ID login/logout, a calendar feed subscription from a phone, microphone and tab capture, pause/resume, interrupted recording recovery, one representative upload and one web page, a cited overview and quiz grading with your configured services, and connecting, using and disconnecting an MCP client. Unit tests do not replace those browser/device and deployed-service checks.
+After deployment, verify Pocket ID login/logout, a calendar feed subscription from a phone, microphone and tab capture, pause/resume, interrupted recording recovery, one representative upload and one web page, a cited overview, an audio summary and quiz grading with your configured services, and connecting, using and disconnecting an MCP client. Unit tests do not replace those browser/device and deployed-service checks.

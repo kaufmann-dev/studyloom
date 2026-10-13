@@ -14,7 +14,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { Citation, Quiz, Grade, Repeat } from '../../domain';
+import type { AudioInfo, Citation, Quiz, Grade, Repeat } from '../../domain';
 const time = (name: string) => timestamp(name, { withTimezone: true }).notNull().defaultNow();
 const pk = () => uuid('id').primaryKey().defaultRandom();
 export const sessions = pgTable(
@@ -396,10 +396,11 @@ export const outputs = pgTable(
 		projectId: uuid('project_id')
 			.notNull()
 			.references(() => projects.id, { onDelete: 'cascade' }),
-		kind: text('kind').$type<'summary' | 'quiz'>().notNull(),
+		kind: text('kind').$type<'summary' | 'quiz' | 'audio'>().notNull(),
 		title: text('title').notNull(),
 		content: text('content').notNull(),
 		quiz: jsonb('quiz').$type<Quiz>(),
+		audio: jsonb('audio').$type<AudioInfo>(),
 		citations: jsonb('citations').$type<Citation[]>().notNull().default([]),
 		materialIds: jsonb('material_ids').$type<string[]>().notNull(),
 		sourceSnapshot: jsonb('source_snapshot')
@@ -435,7 +436,7 @@ export const jobs = pgTable(
 			.references(() => projects.id, { onDelete: 'cascade' }),
 		materialId: uuid('material_id').references(() => materials.id, { onDelete: 'cascade' }),
 		kind: text('kind')
-			.$type<'ingest' | 'chat' | 'summary' | 'quiz' | 'grade' | 'recover'>()
+			.$type<'ingest' | 'chat' | 'summary' | 'quiz' | 'audio' | 'grade' | 'recover'>()
 			.notNull(),
 		queue: text('queue').$type<'interactive' | 'background'>().notNull(),
 		status: text('status')

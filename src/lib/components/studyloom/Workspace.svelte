@@ -6,6 +6,7 @@
 	import {
 		ArrowLeft,
 		CalendarPlus,
+		Headphones,
 		ListChecks,
 		ListPlus,
 		MessageSquare,
@@ -259,6 +260,9 @@
 					<Tabs.Trigger value="quizzes" class="flex-1 gap-2">
 						<ListChecks class="size-4" />Quizzes
 					</Tabs.Trigger>
+					<Tabs.Trigger value="audio" class="flex-1 gap-2">
+						<Headphones class="size-4" />Audio
+					</Tabs.Trigger>
 				</Tabs.List>
 				<Tabs.Content value="chat">
 					<Chat
@@ -271,7 +275,7 @@
 						onChanged={refresh}
 					/>
 				</Tabs.Content>
-				{#each [{ tab: 'summaries', kind: 'summary' }, { tab: 'quizzes', kind: 'quiz' }] as const as { tab, kind } (kind)}
+				{#each [{ tab: 'summaries', kind: 'summary' }, { tab: 'quizzes', kind: 'quiz' }, { tab: 'audio', kind: 'audio' }] as const as { tab, kind } (kind)}
 					<Tabs.Content value={tab}>
 						<StudyTools
 							{projectId}

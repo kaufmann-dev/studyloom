@@ -10,6 +10,7 @@ import { library } from './endpoints/library';
 import { assets, materials, recordings } from './endpoints/materials';
 import { pins } from './endpoints/pins';
 import { projects } from './endpoints/projects';
+import { speech } from './endpoints/speech';
 import { conversations, jobs, outputs } from './endpoints/study';
 import { tasks } from './endpoints/tasks';
 
@@ -41,6 +42,7 @@ const resources = new Map<string, Handler>(
 		events,
 		calendar,
 		muse,
+		speech,
 		projects,
 		materials,
 		recordings,

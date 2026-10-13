@@ -30,7 +30,12 @@ export function safeError(error: unknown): string {
 		return code ? `File operation failed (${code}).` : 'File operation failed.';
 	}
 	let message = error instanceof Error ? error.message : 'The operation failed.';
-	for (const name of ['TRANSCRIPTION_API_KEY', 'OIDC_CLIENT_SECRET', 'DATABASE_URL']) {
+	for (const name of [
+		'TRANSCRIPTION_API_KEY',
+		'ELEVENLABS_API_KEY',
+		'OIDC_CLIENT_SECRET',
+		'DATABASE_URL'
+	]) {
 		const value = process.env[name];
 		if (value) message = message.replaceAll(value, '[redacted]');
 	}

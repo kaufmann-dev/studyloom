@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, copyFile, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, copyFile, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { and, asc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
 import { z } from 'zod';
@@ -8,7 +8,9 @@ import * as t from './db/schema';
 import { ClientError, dataDir, safeError } from './config';
 import { originalPath, materialDir, scopedFile, assemble, chunkPath, wavHeader } from './storage';
 import {
+	AUDIO_LENGTHS,
 	DEFAULT_MODEL,
+	audioScriptSchema,
 	citedTextSchema,
 	ingestionSchema,
 	quizSchema,
@@ -18,6 +20,8 @@ import {
 } from '../domain';
 import { museRun, type MuseResult } from './muse';
 import { transcribeFile } from './transcribe';
+import { audioDir, audioFile, concatMp3, mp3DurationMs } from './audio';
+import { speak } from './elevenlabs';
 type Job = typeof t.jobs.$inferSelect;
 export type Snapshot = typeof t.outputs.$inferSelect.sourceSnapshot;
 type Progress = (text: string) => void;
@@ -359,7 +363,10 @@ async function answerChat(run: GenerationRun) {
 }
 async function saveOutput(
 	run: GenerationRun,
-	output: Pick<typeof t.outputs.$inferInsert, 'kind' | 'title' | 'content' | 'quiz' | 'citations'>
+	output: Pick<
+		typeof t.outputs.$inferInsert,
+		'kind' | 'title' | 'content' | 'quiz' | 'citations' | 'audio'
+	>
 ) {
 	const { job, snapshot, modelId } = run;
 	run.signal.throwIfAborted();
@@ -412,6 +419,102 @@ async function createSummary(run: GenerationRun) {
 	validateCitations(result.citations, run.snapshot);
 	await saveOutput(run, { kind: 'summary', ...result });
 }
+const audioManifestSchema = z.object({
+	script: audioScriptSchema,
+	requestIds: z.array(z.string())
+});
+/** Writes a file whole or not at all, so an interrupted job never leaves a torn file. */
+async function writeAtomic(path: string, data: string | Buffer) {
+	const temporary = `${path}.${randomUUID()}.tmp`;
+	await writeFile(temporary, data, { mode: 0o600 });
+	await rename(temporary, path);
+}
+async function readManifest(path: string) {
+	try {
+		return audioManifestSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+	} catch (error) {
+		if (isMissingFile(error)) return undefined;
+		throw error;
+	}
+}
+/**
+ * Muse writes the narration, then ElevenLabs voices it paragraph by paragraph. The script and
+ * every voiced paragraph are kept under DATA_DIR/audio until the output is saved, so a retry
+ * resumes where it stopped instead of paying for the same speech twice.
+ */
+async function createAudio(run: GenerationRun) {
+	const { job, signal } = run;
+	const voiceId = String(job.payload.voiceId);
+	const speechModelId = String(job.payload.speechModelId);
+	const length = AUDIO_LENGTHS[job.payload.audioLength as keyof typeof AUDIO_LENGTHS];
+	if (!length) throw new Error('Choose a length for this audio summary.');
+	const directory = audioDir(job.id);
+	const manifestPath = join(directory, 'manifest.json');
+	await mkdir(join(directory, 'parts'), { recursive: true, mode: 0o700 });
+	let manifest = await readManifest(manifestPath);
+	if (!manifest) {
+		const script = await museResult(
+			run,
+			`${systemPrompt}\nWrite the narration for an audio summary of all selected sources.json, read aloud by one narrator. Aim for about ${length.words} words. Write plain spoken sentences: no Markdown, headings, lists, tables, URLs, emoji, citations or locators in the paragraphs, and spell out symbols, numbers, units and abbreviations the way a narrator would say them. Open by telling the listener what they will learn, cover the key ideas, definitions and connections with one idea per paragraph of two to five sentences, and close with a short recap. Mention gaps or contradictions in the sources. Put the evidence for the narration in citations only.`,
+			audioScriptSchema
+		);
+		validateCitations(script.citations, run.snapshot);
+		const characters = script.paragraphs.reduce((sum, p) => sum + p.length, 0);
+		if (characters > length.words * 6 * 1.4)
+			throw new Error('Muse wrote a script that is too long. Retry this job.');
+		manifest = { script, requestIds: [] };
+		await writeAtomic(manifestPath, JSON.stringify(manifest));
+	}
+	const { paragraphs } = manifest.script;
+	const partPath = (i: number) => join(directory, 'parts', `${String(i).padStart(3, '0')}.mp3`);
+	const parts: Buffer[] = [];
+	for (const [i, text] of paragraphs.entries()) {
+		signal.throwIfAborted();
+		if (manifest.requestIds[i] !== undefined) {
+			const saved = await readFile(partPath(i)).catch((error) => {
+				if (isMissingFile(error)) return undefined;
+				throw error;
+			});
+			if (saved) {
+				parts.push(saved);
+				continue;
+			}
+		}
+		run.progress(`Voicing paragraph ${i + 1} of ${paragraphs.length}`);
+		const { audio, requestId } = await speak({
+			text,
+			voiceId,
+			modelId: speechModelId,
+			previousRequestIds: manifest.requestIds.slice(0, i).slice(-3).filter(Boolean),
+			nextText: paragraphs[i + 1],
+			signal
+		});
+		await writeAtomic(partPath(i), audio);
+		manifest.requestIds = [...manifest.requestIds.slice(0, i), requestId];
+		await writeAtomic(manifestPath, JSON.stringify(manifest));
+		parts.push(audio);
+	}
+	const joined = concatMp3(parts);
+	await writeAtomic(audioFile(job.id), joined);
+	await saveOutput(run, {
+		kind: 'audio',
+		title: manifest.script.title,
+		content: paragraphs.join('\n\n'),
+		citations: manifest.script.citations,
+		audio: {
+			voiceId,
+			voiceName: String(job.payload.voiceName || voiceId),
+			speechModelId,
+			speechModelName: String(job.payload.speechModelName || speechModelId),
+			durationMs: mp3DurationMs(joined.length),
+			characters: paragraphs.reduce((sum, p) => sum + p.length, 0)
+		}
+	});
+	await Promise.allSettled([
+		rm(join(directory, 'parts'), { recursive: true, force: true }),
+		rm(manifestPath, { force: true })
+	]);
+}
 /** A retried job whose result row already exists only needs its status settled. */
 async function alreadyPublished(job: Job) {
 	if (job.kind === 'chat') {
@@ -423,7 +526,7 @@ async function alreadyPublished(job: Job) {
 		await completeJob(job, async () => {});
 		return true;
 	}
-	if (job.kind === 'summary' || job.kind === 'quiz') {
+	if (job.kind === 'summary' || job.kind === 'quiz' || job.kind === 'audio') {
 		const [output] = await db()
 			.select({ id: t.outputs.id })
 			.from(t.outputs)
@@ -449,6 +552,7 @@ async function generate(job: Job, workspace: string, signal: AbortSignal, progre
 	if (job.kind === 'grade') await gradeAttempt(run);
 	else if (job.kind === 'chat') await answerChat(run);
 	else if (job.kind === 'quiz') await createQuiz(run);
+	else if (job.kind === 'audio') await createAudio(run);
 	else await createSummary(run);
 }
 export async function finishRecording(id: string, job?: Job) {

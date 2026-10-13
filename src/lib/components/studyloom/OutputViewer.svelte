@@ -14,6 +14,10 @@
 	type OutputData = { output: StudyOutput; attempts: QuizAttempt[] };
 	let data = $state.raw<OutputData | null>(null);
 	let error = $state('');
+	function duration(ms: number) {
+		const seconds = Math.round(ms / 1000);
+		return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+	}
 	let exported = $derived.by(() => {
 		if (!data) return '';
 		const { title, quiz, content } = data.output;
@@ -47,6 +51,7 @@
 {:else}
 	{@const { output } = data}
 	{@const quiz = output.kind === 'quiz'}
+	{@const audioUrl = `/api/outputs/${output.id}/audio`}
 	<article class="space-y-6">
 		<div>
 			<h2 class="text-xl leading-snug font-semibold">{output.title}</h2>
@@ -54,10 +59,21 @@
 				{dateLabel(output.createdAt)} · {output.modelId} · {plural(
 					output.materialIds.length,
 					'source'
-				)}
+				)}{#if output.audio}
+					· {output.audio.voiceName} · {output.audio.speechModelName} · {duration(
+						output.audio.durationMs
+					)}{/if}
 			</p>
 		</div>
+		{#if output.audio}
+			<audio controls preload="metadata" src={audioUrl} class="w-full"></audio>
+		{/if}
 		<div class="flex flex-wrap gap-2">
+			{#if output.audio}
+				<Button variant="outline" size="sm" href={`${audioUrl}?download`}>
+					<Download />Download MP3
+				</Button>
+			{/if}
 			<Button variant="outline" size="sm" onclick={() => copyText(exported)}>
 				<Copy />{quiz ? 'Copy with answers' : 'Copy'}
 			</Button>
@@ -66,7 +82,11 @@
 				size="sm"
 				onclick={() => downloadText(`${output.title}.md`, exported)}
 			>
-				<Download />{quiz ? 'Download with answers' : 'Download Markdown'}
+				<Download />{quiz
+					? 'Download with answers'
+					: output.audio
+						? 'Download transcript'
+						: 'Download Markdown'}
 			</Button>
 		</div>
 		{#if quiz}

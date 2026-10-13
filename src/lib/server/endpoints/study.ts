@@ -5,7 +5,8 @@ import * as t from '../db/schema';
 import { answersSchema, idSchema, quizSchema } from '../../domain';
 import { gradeChoice } from '../jobs';
 import { gradingModel } from '../muse';
-import { accepted, ok, readJson, type Handler } from './http';
+import { audioFile } from '../audio';
+import { accepted, download, ok, readJson, type Handler } from './http';
 import { jobIsActive, lockProject, type Job } from './queries';
 
 // Job payloads and source snapshots stay on the server.
@@ -30,6 +31,7 @@ export const publicOutput = (output: typeof t.outputs.$inferSelect) => ({
 	title: output.title,
 	content: output.content,
 	quiz: output.quiz,
+	audio: output.audio,
 	citations: output.citations,
 	materialIds: output.materialIds,
 	modelId: output.modelId,
@@ -57,7 +59,7 @@ async function findOutput(id: string | undefined) {
 		.select()
 		.from(t.outputs)
 		.where(eq(t.outputs.id, idSchema.parse(id)));
-	if (!output) error(404, 'Overview or quiz not found.');
+	if (!output) error(404, 'Overview, quiz or audio summary not found.');
 	return output;
 }
 /** An overview or quiz with its quiz attempts, newest first. */
@@ -81,6 +83,10 @@ export const conversations: Handler = async ({ method, id, action }) => {
 export const outputs: Handler = async ({ event, method, id, action }) => {
 	if (!action && method === 'GET') return Response.json(await outputDetails(id));
 	const output = await findOutput(id);
+	if (action === 'audio' && method === 'GET') {
+		if (output.kind !== 'audio') error(404, 'This output has no audio.');
+		return download(event, audioFile(output.id), 'audio/mpeg', `${output.title}.mp3`);
+	}
 	if (action === 'attempts' && method === 'POST') {
 		const { answers } = answersSchema.parse(await readJson(event));
 		const quiz = quizSchema.parse(output.quiz);

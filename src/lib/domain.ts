@@ -323,12 +323,22 @@ export const quizSchema = z
 		if (new Set(v.questions.map((q) => q.id)).size !== v.questions.length)
 			ctx.addIssue({ code: 'custom', message: 'Question IDs must be unique.' });
 	});
+export const AUDIO_LENGTHS = {
+	short: { words: 450, label: 'Short (~3 min)' },
+	standard: { words: 1000, label: 'Standard (~7 min)' },
+	long: { words: 1700, label: 'Long (~12 min)' }
+} as const;
+const elevenLabsId = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/, 'Choose a voice and model.');
 export const generationInput = z.object({
-	kind: z.enum(['summary', 'quiz']),
+	kind: z.enum(['summary', 'quiz', 'audio']),
 	materialIds: sourceSelection,
 	modelId,
 	questionCount: z.number().int().min(1).max(50).default(10),
-	questionMix: z.enum(['mixed', 'multiple_choice', 'written']).default('mixed')
+	questionMix: z.enum(['mixed', 'multiple_choice', 'written']).default('mixed'),
+	/** ElevenLabs voice and speech model; audio summaries only. */
+	voiceId: elevenLabsId.or(z.literal('')).default(''),
+	speechModelId: elevenLabsId.or(z.literal('')).default(''),
+	audioLength: z.enum(['short', 'standard', 'long']).default('short')
 });
 export const chatInput = z.object({
 	conversationId: idSchema.optional(),
@@ -382,6 +392,12 @@ export const citedTextSchema = z.object({
 	title: z.string().min(1).max(200),
 	content: z.string().min(1).max(200000),
 	citations: z.array(citationSchema).min(1).max(500)
+});
+/** The narration Muse writes for an audio summary, one spoken paragraph per speech request. */
+export const audioScriptSchema = z.object({
+	title: z.string().min(1).max(200),
+	paragraphs: z.array(z.string().trim().min(1).max(2000)).min(1).max(60),
+	citations: z.array(citationSchema).min(1).max(100)
 });
 export const sourceSearchInput = z.object({
 	query: nonBlank(z.string().max(500), 'A search query is required.').describe(
@@ -522,13 +538,22 @@ export interface Message {
 	modelId: string | null;
 	createdAt: string;
 }
+export interface AudioInfo {
+	voiceId: string;
+	voiceName: string;
+	speechModelId: string;
+	speechModelName: string;
+	durationMs: number;
+	characters: number;
+}
 export interface StudyOutput {
 	id: string;
 	projectId: string;
-	kind: 'summary' | 'quiz';
+	kind: 'summary' | 'quiz' | 'audio';
 	title: string;
 	content: string;
 	quiz: Quiz | null;
+	audio: AudioInfo | null;
 	citations: Citation[];
 	materialIds: string[];
 	modelId: string;
@@ -581,4 +606,16 @@ export interface MuseModel {
 	displayLabel: string;
 	contextLimit: number | null;
 	description: string | null;
+}
+export interface Voice {
+	voiceId: string;
+	name: string;
+	description: string;
+}
+export interface SpeechModel {
+	modelId: string;
+	name: string;
+	/** Credits per character relative to the plan's base rate. */
+	costMultiplier: number;
+	maxCharacters: number;
 }

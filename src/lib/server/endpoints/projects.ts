@@ -13,7 +13,9 @@ import {
 	UPLOAD_CHUNK_SIZE,
 	webSourceInput
 } from '../../domain';
-import { maxUploadBytes, safeError } from '../config';
+import { ClientError, maxUploadBytes, safeError } from '../config';
+import { removeAudioFiles } from '../audio';
+import { speechCatalog } from '../elevenlabs';
 import { sourceSnapshot } from '../jobs';
 import { validateModel } from '../muse';
 import { addWebSource } from '../sources';
@@ -76,6 +78,19 @@ export async function projectWorkspace(rawId: string | undefined) {
 	};
 }
 
+/** The chosen ElevenLabs voice and speech model, checked against what the account offers. */
+async function audioChoice(input: z.infer<typeof generationInput>) {
+	if (!input.voiceId || !input.speechModelId)
+		throw new ClientError(400, 'Choose a voice and a speech model.');
+	const { voices, models } = await speechCatalog();
+	const voice = voices.find((v) => v.voiceId === input.voiceId);
+	if (!voice) throw new ClientError(409, 'This voice is no longer available. Reload the page.');
+	const model = models.find((m) => m.modelId === input.speechModelId);
+	if (!model)
+		throw new ClientError(409, 'This speech model is no longer available. Reload the page.');
+	return { voiceName: voice.name, speechModelName: model.name };
+}
+
 export const projects: Handler = async ({ event, method, id: rawId, action }) => {
 	if (!rawId && method === 'GET') return Response.json({ projects: await listProjects() });
 	if (!rawId && method === 'POST')
@@ -94,7 +109,7 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 		return Response.json({ project: updated });
 	}
 	if (!action && method === 'DELETE') {
-		const sources = await db().transaction(async (tx) => {
+		const files = await db().transaction(async (tx) => {
 			if (!(await lockProject(tx, id))) error(404, 'Project not found.');
 			if (await hasActiveJob(tx, eq(t.jobs.projectId, id)))
 				error(409, 'Cancel active jobs before deleting.');
@@ -110,12 +125,17 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 				.select({ id: t.materials.id })
 				.from(t.materials)
 				.where(eq(t.materials.projectId, id));
+			const audio = await tx
+				.select({ id: t.jobs.id })
+				.from(t.jobs)
+				.where(and(eq(t.jobs.projectId, id), eq(t.jobs.kind, 'audio')));
 			await tx.delete(t.projects).where(eq(t.projects.id, id));
-			return sources;
+			return { sources, audio };
 		});
-		for (const result of await Promise.allSettled(
-			sources.map((source) => removeMaterialFiles(source.id))
-		))
+		for (const result of await Promise.allSettled([
+			...files.sources.map((source) => removeMaterialFiles(source.id)),
+			...files.audio.map((job) => removeAudioFiles(job.id))
+		]))
 			if (result.status === 'rejected')
 				console.error('Project file cleanup failed:', safeError(result.reason));
 		return ok();
@@ -154,6 +174,7 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 	if (action === 'generate' && method === 'POST') {
 		const input = generationInput.parse(await readJson(event));
 		await validateModel(input.modelId);
+		const speech = input.kind === 'audio' ? await audioChoice(input) : {};
 		const snapshot = await sourceSnapshot(id, input.materialIds);
 		const job = await db().transaction(async (tx) => {
 			if (!(await lockProject(tx, id))) error(404, 'Project not found.');
@@ -163,7 +184,7 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 					projectId: id,
 					kind: input.kind,
 					queue: 'background',
-					payload: { ...input, snapshot }
+					payload: { ...input, ...speech, snapshot }
 				})
 				.returning();
 			return job;

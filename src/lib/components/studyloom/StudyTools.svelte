@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { onDestroy, untrack } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { defaults, superForm } from 'sveltekit-superforms';
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
 	import { ArrowLeft, Sparkles } from '@lucide/svelte';
 	import {
+		AUDIO_LENGTHS,
 		generationInput,
 		DEFAULT_MODEL,
 		type StudyOutput,
 		type Material,
-		type MuseModel
+		type MuseModel,
+		type SpeechModel,
+		type Voice
 	} from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import * as Form from '#lib/components/ui/form/index.js';
@@ -16,6 +19,7 @@
 	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
 	import { waitForJob } from '#lib/polling.js';
 	import { api, dateLabel, errorText, plural } from '#lib/ui.js';
+	import ErrorAlert from './ErrorAlert.svelte';
 	import ModelSelect, { availableModel } from './ModelSelect.svelte';
 	import OutputViewer from './OutputViewer.svelte';
 
@@ -29,16 +33,33 @@
 		onChanged
 	}: {
 		projectId: string;
-		kind: 'summary' | 'quiz';
+		kind: 'summary' | 'quiz' | 'audio';
 		materialIds: string[];
 		materials: Material[];
 		models: MuseModel[];
 		outputs: StudyOutput[];
 		onChanged: () => void | Promise<void>;
 	} = $props();
-	const schema = generationInput.pick({ modelId: true, questionCount: true, questionMix: true });
+	const schema = generationInput.pick({
+		modelId: true,
+		questionCount: true,
+		questionMix: true,
+		voiceId: true,
+		speechModelId: true,
+		audioLength: true
+	});
 	const editor = superForm(
-		defaults({ modelId: DEFAULT_MODEL, questionCount: 10, questionMix: 'mixed' }, zod4(schema)),
+		defaults(
+			{
+				modelId: DEFAULT_MODEL,
+				questionCount: 10,
+				questionMix: 'mixed',
+				voiceId: '',
+				speechModelId: '',
+				audioLength: 'short'
+			},
+			zod4(schema)
+		),
 		{
 			validators: zod4Client(schema),
 			SPA: true,
@@ -54,6 +75,12 @@
 			title: 'Build an overview',
 			intro:
 				'Turn your selected materials into an overview with references to the original sources.'
+		},
+		audio: {
+			one: 'audio summary',
+			many: 'audio summaries',
+			title: 'Listen to your sources',
+			intro: 'Turn your selected materials into a narrated summary you can play or download.'
 		},
 		quiz: {
 			one: 'quiz',
@@ -71,9 +98,35 @@
 	let copy = $derived(COPY[kind]);
 	let matching = $derived(outputs.filter((output) => output.kind === kind));
 
+	type SpeechCatalog = { voices: Voice[]; models: SpeechModel[] };
+	let catalog = $state.raw<SpeechCatalog | null>(null);
+	let catalogError = $state('');
+	/** The saved choice while ElevenLabs still offers it, otherwise the first one listed. */
+	function offered(ids: string[], preferred: string) {
+		return ids.includes(preferred) ? preferred : (ids[0] ?? '');
+	}
+	let voiceId = $derived(
+		offered(catalog?.voices.map((voice) => voice.voiceId) ?? [], $form.voiceId)
+	);
+	let speechModelId = $derived(
+		offered(catalog?.models.map((model) => model.modelId) ?? [], $form.speechModelId)
+	);
+	let ready = $derived(kind !== 'audio' || Boolean(voiceId && speechModelId));
+	async function loadCatalog() {
+		catalogError = '';
+		try {
+			catalog = await api<SpeechCatalog>('/api/speech');
+		} catch (cause) {
+			catalogError = errorText(cause);
+		}
+	}
+	onMount(() => {
+		if (kind === 'audio') void loadCatalog();
+	});
+
 	async function generate(event: SubmitEvent) {
 		event.preventDefault();
-		if (busy || !(await editor.validateForm({ update: true })).valid) return;
+		if (busy || !ready || !(await editor.validateForm({ update: true })).valid) return;
 		if (!materialIds.length) {
 			error = 'Select at least one ready source.';
 			return;
@@ -83,7 +136,14 @@
 		notice = '';
 		try {
 			const { jobId } = await api<{ jobId: string }>(`/api/projects/${projectId}/generate`, {
-				body: { ...$form, modelId: availableModel(models, $form.modelId), kind, materialIds }
+				body: {
+					...$form,
+					modelId: availableModel(models, $form.modelId),
+					voiceId,
+					speechModelId,
+					kind,
+					materialIds
+				}
 			});
 			activeJob = jobId;
 			await onChanged();
@@ -128,7 +188,7 @@
 			<Form.Field form={editor} name="modelId">
 				<Form.Control>
 					{#snippet children({ props })}
-						<Form.Label>Model</Form.Label>
+						<Form.Label>{kind === 'audio' ? 'Script model' : 'Model'}</Form.Label>
 						<ModelSelect {...props} {models} bind:value={$form.modelId} disabled={busy} />
 					{/snippet}
 				</Form.Control>
@@ -174,13 +234,84 @@
 					</Form.Field>
 				</div>
 			{/if}
+			{#if kind === 'audio'}
+				<ErrorAlert message={catalogError} onRetry={loadCatalog} />
+				<div class="grid gap-4 sm:grid-cols-2">
+					<Form.Field form={editor} name="voiceId" class="sm:col-span-2">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label>Voice</Form.Label>
+								<NativeSelect.Root
+									{...props}
+									class="w-full"
+									bind:value={() => voiceId, (next) => ($form.voiceId = next)}
+									disabled={busy || !catalog}
+								>
+									{#each catalog?.voices ?? [] as voice (voice.voiceId)}
+										<NativeSelect.Option value={voice.voiceId}>
+											{voice.description ? `${voice.name} · ${voice.description}` : voice.name}
+										</NativeSelect.Option>
+									{:else}
+										<NativeSelect.Option value="">
+											{catalog ? 'No voices available' : 'Loading voices…'}
+										</NativeSelect.Option>
+									{/each}
+								</NativeSelect.Root>
+							{/snippet}
+						</Form.Control>
+						<Form.FieldErrors />
+					</Form.Field>
+					<Form.Field form={editor} name="speechModelId">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label>Speech model</Form.Label>
+								<NativeSelect.Root
+									{...props}
+									class="w-full"
+									bind:value={() => speechModelId, (next) => ($form.speechModelId = next)}
+									disabled={busy || !catalog}
+								>
+									{#each catalog?.models ?? [] as model (model.modelId)}
+										<NativeSelect.Option value={model.modelId}>
+											{model.name} · {model.costMultiplier}× credits
+										</NativeSelect.Option>
+									{:else}
+										<NativeSelect.Option value="">
+											{catalog ? 'No speech models available' : 'Loading models…'}
+										</NativeSelect.Option>
+									{/each}
+								</NativeSelect.Root>
+							{/snippet}
+						</Form.Control>
+						<Form.FieldErrors />
+					</Form.Field>
+					<Form.Field form={editor} name="audioLength">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label>Length</Form.Label>
+								<NativeSelect.Root
+									{...props}
+									class="w-full"
+									bind:value={$form.audioLength}
+									disabled={busy}
+								>
+									{#each Object.entries(AUDIO_LENGTHS) as [value, length] (value)}
+										<NativeSelect.Option {value}>{length.label}</NativeSelect.Option>
+									{/each}
+								</NativeSelect.Root>
+							{/snippet}
+						</Form.Control>
+						<Form.FieldErrors />
+					</Form.Field>
+				</div>
+			{/if}
 			<p class="text-xs text-muted-foreground">
 				{plural(materialIds.length, 'source')} selected{models.length
 					? ''
 					: ' · Connect Muse in Settings to continue.'}
 			</p>
 			<div class="flex flex-wrap gap-2">
-				<Button type="submit" disabled={busy || !materialIds.length || !models.length}>
+				<Button type="submit" disabled={busy || !ready || !materialIds.length || !models.length}>
 					<Sparkles />{busy ? 'Generating…' : `Create ${copy.one}`}
 				</Button>
 				{#if activeJob}<Button variant="ghost" onclick={cancel}>Cancel</Button>{/if}
