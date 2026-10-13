@@ -16,7 +16,7 @@ import {
 } from '../lib/server/realtime-asr';
 import { publicAnswer, studyRuns } from '../lib/server/endpoints/study';
 import {
-	AnswerTimer,
+	AnswerCollector,
 	finalNext,
 	nextPosition,
 	resumeStep,
@@ -274,18 +274,23 @@ export async function studySession(
 				let started = 0;
 				let samples = 0;
 				let settled = false;
+				let ending = false;
 				let chain = Promise.resolve();
-				const timer = new AnswerTimer(study.thinkingMs, (answer) => {
-					settled = true;
-					onAudio = onDone = undefined;
-					stream.terminate();
-					send(client, { type: 'heard', text: answer });
-					resolve(answer);
-				});
+				const answer = new AnswerCollector(
+					(text) => {
+						settled = true;
+						onAudio = onDone = undefined;
+						stream.terminate();
+						send(client, { type: 'heard', text });
+						resolve(text);
+					},
+					() =>
+						failed(new Error('Listening paused after ten minutes. Resume when you want to answer.'))
+				);
 				const failed = (e: unknown) => {
 					if (settled) return;
 					settled = true;
-					timer.dispose();
+					answer.dispose();
 					onAudio = onDone = undefined;
 					stream.terminate();
 					reject(e);
@@ -294,6 +299,8 @@ export async function studySession(
 					onReady() {
 						started = Date.now();
 						onAudio = (pcm) => {
+							// After "I'm done" the stream is closing: audio still in flight is dropped.
+							if (ending) return;
 							samples += pcm.length / 2;
 							if (pcm.length % 2 || samples / 24 > Date.now() - started + 1000)
 								return failed(new Error('Microphone audio arrived too quickly.'));
@@ -301,21 +308,25 @@ export async function studySession(
 								return failed(new Error('Transcription connection interrupted.'));
 							chain = chain.then(() => stream.send(pcm)).catch(failed);
 						};
+						// Only the learner ends an answer; pauses never do.
 						onDone = () => {
-							if (timer.done()) stream.end();
+							if (ending) return;
+							ending = true;
+							answer.done();
+							void chain.then(() => stream.end()).catch(failed);
 						};
-						timer.ready();
+						answer.ready();
 						send(client, { type: 'listen' });
 					},
-					onSpeechStart: () => timer.speechStart(),
 					onPartial: (text) => send(client, { type: 'partial', text }),
-					onComplete: (_turn, text) => timer.complete(text),
+					onComplete: (_turn, text) => answer.complete(text),
 					onError: failed,
-					// Events before the close are handled first, so a cleanly finished answer wins.
+					// Events before the close are handled first, so the last words still count.
 					onClose: () =>
-						void stream
-							.settled()
-							.then(() => failed(new Error('Transcription disconnected. Resume to answer again.')))
+						void stream.settled().then(() => {
+							if (!answer.closed())
+								failed(new Error('Transcription disconnected. Resume to answer again.'));
+						})
 				});
 				asr = stream;
 				lifetime.signal.addEventListener('abort', () => failed(new Error('Stopped.')), {

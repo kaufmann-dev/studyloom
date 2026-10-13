@@ -1,66 +1,52 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AnswerTimer, finalNext, nextPosition, resumeStep } from './study-run';
+import { AnswerCollector, finalNext, nextPosition, resumeStep } from './study-run';
 import type { StudyAnswer } from '../domain';
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('End of an answer', () => {
-	it('waits out thinking pauses and finishes after the chosen pause', () => {
+	it('never ends on a pause, only when the learner is done and the stream has closed', () => {
 		const finish = vi.fn();
-		const timer = new AnswerTimer(2500, finish);
-		timer.ready();
-		timer.speechStart();
-		timer.complete('Water moves out');
-		vi.advanceTimersByTime(2000);
-		// Speaking again cancels the pause.
-		timer.speechStart();
-		vi.advanceTimersByTime(5000);
+		const answer = new AnswerCollector(finish, vi.fn());
+		answer.ready();
+		answer.complete('Water moves out');
+		vi.advanceTimersByTime(60_000);
+		answer.complete('  ');
+		answer.complete('because there is more salt outside.');
 		expect(finish).not.toHaveBeenCalled();
-		timer.complete('because there is more salt outside.');
-		vi.advanceTimersByTime(2499);
+		answer.done();
 		expect(finish).not.toHaveBeenCalled();
-		vi.advanceTimersByTime(1);
+		// The last words arrive before the stream closes.
+		answer.complete('I think.');
+		expect(answer.closed()).toBe(true);
 		expect(finish).toHaveBeenCalledExactlyOnceWith(
-			'Water moves out because there is more salt outside.'
+			'Water moves out because there is more salt outside. I think.'
 		);
-	});
-	it('counts fifteen seconds of silence, or only noise, as no answer', () => {
-		const finish = vi.fn();
-		const timer = new AnswerTimer(2500, finish);
-		timer.ready();
-		timer.speechStart();
-		timer.complete('  ');
-		vi.advanceTimersByTime(14_999);
-		expect(finish).not.toHaveBeenCalled();
-		vi.advanceTimersByTime(1);
-		expect(finish).toHaveBeenCalledWith('');
-	});
-	it('finishes at once when the learner is done, or with the last turn while still speaking', () => {
-		const quiet = vi.fn();
-		const idle = new AnswerTimer(2500, quiet);
-		idle.ready();
-		expect(idle.done()).toBe(false);
-		expect(quiet).toHaveBeenCalledWith('');
-
-		const finish = vi.fn();
-		const timer = new AnswerTimer(2500, finish);
-		timer.ready();
-		timer.speechStart();
-		expect(timer.done()).toBe(true);
-		expect(finish).not.toHaveBeenCalled();
-		timer.complete('It swells.');
-		expect(finish).toHaveBeenCalledExactlyOnceWith('It swells.');
 		vi.advanceTimersByTime(10_000);
 		expect(finish).toHaveBeenCalledOnce();
 	});
-	it('stops an endless answer after three minutes', () => {
+	it('finishes shortly after done when the stream does not close, and with nothing said', () => {
 		const finish = vi.fn();
-		const timer = new AnswerTimer(2500, finish);
-		timer.ready();
-		timer.speechStart();
-		vi.advanceTimersByTime(180_000);
+		const answer = new AnswerCollector(finish, vi.fn());
+		answer.ready();
+		answer.done();
+		vi.advanceTimersByTime(4_999);
+		expect(finish).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(1);
 		expect(finish).toHaveBeenCalledWith('');
+	});
+	it('reports an unexpected close and pauses after ten minutes without done', () => {
+		const finish = vi.fn();
+		const timeout = vi.fn();
+		const answer = new AnswerCollector(finish, timeout);
+		answer.ready();
+		expect(answer.closed()).toBe(false);
+		vi.advanceTimersByTime(10 * 60_000);
+		expect(timeout).toHaveBeenCalledOnce();
+		answer.done();
+		vi.advanceTimersByTime(10_000);
+		expect(finish).not.toHaveBeenCalled();
 	});
 });
 

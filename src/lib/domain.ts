@@ -334,16 +334,11 @@ export const AUDIO_STYLES = {
 	dialogue: { label: 'Tutor and learner', speakers: ['tutor', 'learner'] }
 } as const;
 export type AudioStyle = keyof typeof AUDIO_STYLES;
-/** Spoken study sessions: how many parts, and how long a pause ends an answer. */
+/** Spoken study sessions: how many parts. */
 export const SESSION_LENGTHS = {
 	short: { segments: 4, label: 'Short (~10 min)' },
 	standard: { segments: 6, label: 'Standard (~15 min)' },
 	long: { segments: 9, label: 'Long (~25 min)' }
-} as const;
-export const THINKING_TIMES = {
-	short: { ms: 1500, label: 'Short pause (1.5 s)' },
-	normal: { ms: 2500, label: 'Normal pause (2.5 s)' },
-	long: { ms: 4000, label: 'Long pause (4 s)' }
 } as const;
 const elevenLabsId = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/, 'Choose a voice and model.');
 export const generationInput = z.object({
@@ -359,8 +354,7 @@ export const generationInput = z.object({
 	audioLength: z.enum(['short', 'standard', 'long']).default('short'),
 	audioStyle: z.enum(['narration', 'dialogue']).default('narration'),
 	/** Study sessions only. */
-	sessionLength: z.enum(['short', 'standard', 'long']).default('standard'),
-	thinkingTime: z.enum(['short', 'normal', 'long']).default('normal')
+	sessionLength: z.enum(['short', 'standard', 'long']).default('standard')
 });
 export const chatInput = z.object({
 	conversationId: idSchema.optional(),
@@ -624,8 +618,6 @@ export interface StudyInfo {
 	voiceName: string;
 	speechModelId: string;
 	speechModelName: string;
-	/** Silence after speech that ends an answer. */
-	thinkingMs: number;
 	characters: number;
 }
 export interface StudyAnswer {

@@ -18,7 +18,8 @@ vi.mock('../lib/server/realtime-asr', () => ({
 		setTimeout(() => events.onReady(), 5);
 		return {
 			send: async () => {},
-			end: () => {},
+			// Ending the stream flushes the last turn, then closes it cleanly.
+			end: () => setTimeout(() => events.onClose(1000), 5),
 			terminate: () => {},
 			settled: async () => {},
 			open: true,
@@ -101,7 +102,6 @@ async function withSession(test: (outputId: string, runId: string) => Promise<vo
 					voiceName: 'Rachel',
 					speechModelId: 'flash',
 					speechModelName: 'Flash',
-					thinkingMs: 30,
 					characters: 0
 				},
 				materialIds: [],
@@ -157,6 +157,8 @@ function browser(answers: string[]) {
 				asr.events!.onSpeechStart?.(1, 0);
 				void asr.events!.onComplete(1, answer, 0);
 			}, 5);
+			// Pauses never end an answer: the learner presses I'm done.
+			setTimeout(() => reply({ type: 'done' }), 30);
 		}
 	};
 	client.close = (code) => {

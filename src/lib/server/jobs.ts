@@ -12,7 +12,6 @@ import {
 	AUDIO_STYLES,
 	DEFAULT_MODEL,
 	SESSION_LENGTHS,
-	THINKING_TIMES,
 	audioScriptSchema,
 	studyPlanSchema,
 	type StudyPlan,
@@ -609,9 +608,8 @@ export function planMarkdown(plan: StudyPlan) {
 async function createStudySession(run: GenerationRun) {
 	const { job, signal } = run;
 	const length = SESSION_LENGTHS[job.payload.sessionLength as keyof typeof SESSION_LENGTHS];
-	const thinking = THINKING_TIMES[job.payload.thinkingTime as keyof typeof THINKING_TIMES];
 	const [voice] = job.payload.voices as AudioVoice[];
-	if (!length || !thinking || !voice) throw new Error('Choose a length, pause and voice.');
+	if (!length || !voice) throw new Error('Choose a length and voice.');
 	const speechModelId = String(job.payload.speechModelId);
 	const directory = audioDir(job.id);
 	let manifest = await readManifest(directory, studyPlanSchema);
@@ -649,7 +647,6 @@ async function createStudySession(run: GenerationRun) {
 			voiceName: voice.voiceName,
 			speechModelId,
 			speechModelName: String(job.payload.speechModelName || speechModelId),
-			thinkingMs: thinking.ms,
 			characters: clips.reduce((n, c) => n + c.text.length, 0)
 		}
 	});

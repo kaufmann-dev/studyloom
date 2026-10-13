@@ -305,8 +305,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Study sessions', () => {
 				modelId: 'test-model',
 				voiceId: 'voice1',
 				speechModelId: 'flash',
-				sessionLength: 'short',
-				thinkingTime: 'long'
+				sessionLength: 'short'
 			});
 			const { jobId } = await response.json();
 			const done = await waitFor(jobId, 'succeeded');
@@ -319,7 +318,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Study sessions', () => {
 					voiceId: 'voice1',
 					voiceName: 'Rachel',
 					speechModelId: 'flash',
-					thinkingMs: 4000
+					speechModelName: 'Flash'
 				}
 			});
 			expect(output.content).toContain('**Question:** Question 2?');

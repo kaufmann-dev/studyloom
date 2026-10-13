@@ -15,13 +15,20 @@ import type { Snapshot } from './jobs';
 // (session/start, turn/start, item streaming) has one owner.
 
 const TURN_TIMEOUT_MS = 45_000;
-/** Items a tutor turn may produce; anything else (a tool call, a web search) ends the turn. */
-const ALLOWED_ITEMS = new Set(['userMessage', 'agentMessage', 'reasoning']);
+/**
+ * Items through which the model acts on the outside world; one ends the turn. Muse also adds
+ * items of its own (reminders, hooks, compaction, skill reads); those are harmless and ignored.
+ */
+const TOOL_ITEMS = new Set(['toolCall', 'webSearch', 'userShell', 'subagent', 'workflow']);
+const TEXT_ONLY =
+	'Answer in plain text only. Do not call any tool, search the web or run anything: everything you need is in this conversation.';
+class ToolUseError extends Error {}
 type Params = Record<string, unknown>;
 interface Item {
 	itemId: string;
 	kind: string;
 	text?: string;
+	tool?: string;
 }
 
 /** One live Muse session per study run, primed with the plan and its sources. */
@@ -30,6 +37,8 @@ export class TutorConversation {
 	private chain: Promise<unknown> = Promise.resolve();
 	private readonly workspace: string;
 	private closed = false;
+	/** Set after the model reached for a tool once; every later prompt then forbids it again. */
+	private textOnly = false;
 	constructor(
 		runId: string,
 		private readonly modelId: string,
@@ -61,6 +70,7 @@ export class TutorConversation {
 					// A fresh session is primed again from the saved answers, so retrying is safe
 					// until part of the reply has been spoken.
 					this.sessionId = undefined;
+					if (error instanceof ToolUseError) this.textOnly = true;
 					if (signal?.aborted || this.closed || streamed.any || attempt >= 1) throw error;
 				}
 			}
@@ -91,6 +101,7 @@ export class TutorConversation {
 	}
 	private turn(prompt: string, onDelta: (delta: string) => void, signal?: AbortSignal) {
 		const sessionId = this.sessionId!;
+		const text = this.textOnly ? `${TEXT_ONLY}\n\n${prompt}` : prompt;
 		return new Promise<string>((resolve, reject) => {
 			const agentItems = new Map<string, string>();
 			let turnId: string | undefined;
@@ -122,8 +133,10 @@ export class TutorConversation {
 				subscriptions.push(museHost.on(method, (params) => mine(params) && listener(params)));
 			listen('item/started', (params) => {
 				const item = params.item as Item;
-				if (!ALLOWED_ITEMS.has(item.kind))
-					return interrupt(new Error('The tutor tried to use a tool. Resume to try again.'));
+				if (TOOL_ITEMS.has(item.kind)) {
+					console.error(`Study tutor turn used ${item.kind}${item.tool ? ` (${item.tool})` : ''}.`);
+					return interrupt(new ToolUseError('The tutor tried to use a tool. Resume to try again.'));
+				}
 				if (item.kind === 'agentMessage') {
 					if (agentItems.size) onDelta('\n');
 					agentItems.set(item.itemId, '');
@@ -162,7 +175,7 @@ export class TutorConversation {
 				.call<{ turnId: string }>('turn/start', {
 					commandId: uuidv7(),
 					sessionId,
-					input: [{ type: 'text', text: prompt }],
+					input: [{ type: 'text', text }],
 					reasoningEffort: 'low'
 				})
 				.then((ack) => {

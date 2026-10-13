@@ -79,8 +79,8 @@
 	</div>
 	{#if active}
 		<p class="text-xs text-muted-foreground">
-			Press Space to skip what is being said, or to finish your answer early. After a pause your
-			answer counts as finished on its own.
+			Take as long as you like: your answer ends only when you press I'm done or Space. Space also
+			skips what is being said.
 		</p>
 	{/if}
 </section>

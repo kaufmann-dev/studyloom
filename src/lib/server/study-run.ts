@@ -1,65 +1,55 @@
 import type { FeedbackHeader, StudyAnswer } from '../domain';
 
-const NO_SPEECH_MS = 15_000;
-const MAX_ANSWER_MS = 180_000;
-const DONE_WAIT_MS = 3_000;
+/** Listening this long without "I'm done" pauses the session instead of streaming forever. */
+const MAX_LISTEN_MS = 10 * 60_000;
+/** After "I'm done", the last words still being transcribed may take this long to arrive. */
+const FLUSH_WAIT_MS = 5_000;
 
 /**
- * Decides when a spoken answer is finished. People pause to think mid-answer, so an answer
- * ends only after the learner's chosen pause follows the last finished speech turn; new speech
- * cancels the pause. Silence from the start means no answer.
+ * Collects a spoken answer until the learner says they are done. Pauses never end an answer,
+ * so nobody has to hurry; "I'm done" is the only way to finish one.
  */
-export class AnswerTimer {
+export class AnswerCollector {
 	private parts: string[] = [];
-	private speaking = false;
 	private doneRequested = false;
 	private finished = false;
-	private pause: ReturnType<typeof setTimeout> | undefined;
+	private flush: ReturnType<typeof setTimeout> | undefined;
 	private cap: ReturnType<typeof setTimeout> | undefined;
 	constructor(
-		private readonly graceMs: number,
-		private readonly onFinish: (answer: string) => void
+		private readonly onFinish: (answer: string) => void,
+		private readonly onTimeout: () => void
 	) {}
 	/** Listening has begun. */
 	ready() {
-		this.arm(NO_SPEECH_MS);
-		this.cap = setTimeout(() => this.finish(), MAX_ANSWER_MS);
+		this.cap = setTimeout(() => {
+			if (this.finished) return;
+			this.dispose();
+			this.onTimeout();
+		}, MAX_LISTEN_MS);
 	}
-	speechStart() {
-		this.speaking = true;
-		this.clearPause();
-	}
+	/** A finished speech turn. */
 	complete(text: string) {
-		this.speaking = false;
-		if (text.trim()) this.parts.push(text.trim());
-		if (this.doneRequested) return this.finish();
-		this.arm(this.parts.length ? this.graceMs : NO_SPEECH_MS);
+		if (!this.finished && text.trim()) this.parts.push(text.trim());
 	}
 	/**
-	 * The learner said they are done. Returns true when speech is still being transcribed: the
-	 * caller then ends the stream, and the answer finishes with its last turn.
+	 * The learner is done. The caller then ends the transcription stream, which delivers the last
+	 * words before it closes; the answer finishes at the close, or after a short wait.
 	 */
 	done() {
-		if (!this.speaking) {
-			this.finish();
-			return false;
-		}
+		if (this.doneRequested || this.finished) return;
 		this.doneRequested = true;
-		this.arm(DONE_WAIT_MS);
+		this.flush = setTimeout(() => this.finish(), FLUSH_WAIT_MS);
+	}
+	/** The stream closed. Returns false when that was not expected, so the caller can fail. */
+	closed() {
+		if (!this.doneRequested) return this.finished;
+		this.finish();
 		return true;
 	}
 	dispose() {
 		this.finished = true;
-		this.clearPause();
+		clearTimeout(this.flush);
 		clearTimeout(this.cap);
-	}
-	private arm(ms: number) {
-		this.clearPause();
-		this.pause = setTimeout(() => this.finish(), ms);
-	}
-	private clearPause() {
-		clearTimeout(this.pause);
-		this.pause = undefined;
 	}
 	private finish() {
 		if (this.finished) return;

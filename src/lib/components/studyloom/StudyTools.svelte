@@ -7,7 +7,6 @@
 		AUDIO_LENGTHS,
 		AUDIO_STYLES,
 		SESSION_LENGTHS,
-		THINKING_TIMES,
 		generationInput,
 		DEFAULT_MODEL,
 		type StudyOutput,
@@ -52,8 +51,7 @@
 		speechModelId: true,
 		audioLength: true,
 		audioStyle: true,
-		sessionLength: true,
-		thinkingTime: true
+		sessionLength: true
 	});
 	const editor = superForm(
 		defaults(
@@ -66,8 +64,7 @@
 				speechModelId: '',
 				audioLength: 'short',
 				audioStyle: 'narration',
-				sessionLength: 'standard',
-				thinkingTime: 'normal'
+				sessionLength: 'standard'
 			},
 			zod4(schema)
 		),
@@ -406,27 +403,6 @@
 									</NativeSelect.Root>
 								{/snippet}
 							</Form.Control>
-							<Form.FieldErrors />
-						</Form.Field>
-						<Form.Field form={editor} name="thinkingTime">
-							<Form.Control>
-								{#snippet children({ props })}
-									<Form.Label>Thinking time</Form.Label>
-									<NativeSelect.Root
-										{...props}
-										class="w-full"
-										bind:value={$form.thinkingTime}
-										disabled={busy}
-									>
-										{#each Object.entries(THINKING_TIMES) as [value, time] (value)}
-											<NativeSelect.Option {value}>{time.label}</NativeSelect.Option>
-										{/each}
-									</NativeSelect.Root>
-								{/snippet}
-							</Form.Control>
-							<Form.Description
-								>How long you can pause before your answer counts as finished.</Form.Description
-							>
 							<Form.FieldErrors />
 						</Form.Field>
 					{/if}
