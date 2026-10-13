@@ -65,14 +65,19 @@
 		<div>
 			<h2 class="text-xl leading-snug font-semibold">{output.title}</h2>
 			<p class="mt-2 text-xs break-words text-muted-foreground">
-				{dateLabel(output.createdAt)} · {output.modelId} · {plural(
-					output.materialIds.length,
-					'source'
-				)}{#if output.audio}
-					· {voiceLabel(output.audio)} · {output.audio.speechModelName} · {duration(
-						output.audio.durationMs
-					)}{/if}{#if output.study}
-					· {output.study.voiceName} · {output.study.speechModelName}{/if}
+				{[
+					dateLabel(output.createdAt),
+					output.modelId,
+					plural(output.materialIds.length, 'source'),
+					...(output.audio
+						? [
+								voiceLabel(output.audio),
+								output.audio.speechModelName,
+								duration(output.audio.durationMs)
+							]
+						: []),
+					...(output.study ? [output.study.voiceName, output.study.speechModelName] : [])
+				].join(' · ')}
 			</p>
 		</div>
 		{#if output.audio}

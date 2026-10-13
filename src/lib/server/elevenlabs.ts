@@ -9,7 +9,11 @@ const RETRY_DELAYS_MS = [2000, 6000];
 
 function apiKey() {
 	const key = process.env.ELEVENLABS_API_KEY;
-	if (!key) throw new ClientError(503, 'Set ELEVENLABS_API_KEY to create audio summaries.');
+	if (!key)
+		throw new ClientError(
+			503,
+			'Set ELEVENLABS_API_KEY to create audio summaries and study sessions.'
+		);
 	return key;
 }
 const errorSchema = z.object({

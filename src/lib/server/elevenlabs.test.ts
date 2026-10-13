@@ -96,7 +96,7 @@ describe('ElevenLabs speech', () => {
 		const { speechCatalog } = await load();
 		await expect(speechCatalog()).rejects.toMatchObject({
 			status: 503,
-			message: 'Set ELEVENLABS_API_KEY to create audio summaries.'
+			message: 'Set ELEVENLABS_API_KEY to create audio summaries and study sessions.'
 		});
 		expect(fetchMock).not.toHaveBeenCalled();
 	});

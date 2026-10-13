@@ -30,9 +30,9 @@
 
 <details class="border p-4">
 	<summary class="cursor-pointer text-sm font-medium">
-		{dateLabel(run.createdAt)} · {run.status === 'complete' ? 'Finished' : 'In progress'} · {run.answers.filter(
-			(answer) => answer.verdict === 'correct'
-		).length} of {parts.length} parts correct
+		{dateLabel(run.createdAt)} · {run.status === 'complete' ? 'Finished' : 'In progress'} · {parts.length
+			? `${run.answers.filter((answer) => answer.verdict === 'correct').length} of ${parts.length} parts correct`
+			: 'No answers yet'}
 	</summary>
 	<div class="mt-4 space-y-5">
 		{#if review.length}
