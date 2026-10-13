@@ -46,6 +46,7 @@
 	import TaskList from './tasks/TaskList.svelte';
 	import StudyTools from './StudyTools.svelte';
 	import Upload from './Upload.svelte';
+	import PasteText from './PasteText.svelte';
 	import WebSource from './WebSource.svelte';
 
 	let { projectId }: { projectId: string } = $props();
@@ -198,6 +199,10 @@
 				</div>
 
 				<Upload {projectId} modelId={processingModel} onSaved={refresh} />
+
+				<div class="border-t pt-4">
+					<PasteText {projectId} onSaved={refresh} />
+				</div>
 
 				<div class="border-t pt-4">
 					<WebSource {projectId} modelId={processingModel} onSaved={refresh} />

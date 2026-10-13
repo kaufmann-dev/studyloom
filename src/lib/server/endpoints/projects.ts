@@ -8,6 +8,7 @@ import {
 	generationInput,
 	materialUploadInput,
 	modelInput,
+	pastedTextInput,
 	projectInput,
 	recordingInput,
 	UPLOAD_CHUNK_SIZE,
@@ -19,7 +20,7 @@ import { removeAudioFiles } from '../audio';
 import { speechCatalog } from '../elevenlabs';
 import { sourceSnapshot } from '../jobs';
 import { validateModel } from '../muse';
-import { addWebSource } from '../sources';
+import { addPastedText, addWebSource } from '../sources';
 import { removeMaterialFiles } from '../storage';
 import { accepted, created, ok, readJson, type Handler } from './http';
 import { findProject, hasActiveJob, lockProject } from './queries';
@@ -161,6 +162,10 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 			.values({ ...input, name: input.filename, projectId: id, kind: 'file', status: 'uploading' })
 			.returning();
 		return created({ materialId: source.id, chunkSize: UPLOAD_CHUNK_SIZE });
+	}
+	if (action === 'text-sources' && method === 'POST') {
+		const { material } = await addPastedText(id, pastedTextInput.parse(await readJson(event)));
+		return created({ materialId: material.id });
 	}
 	if (action === 'web-sources' && method === 'POST') {
 		const input = webSourceInput.extend(modelInput.shape).parse(await readJson(event));

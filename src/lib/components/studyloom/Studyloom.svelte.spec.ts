@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import Upload from './Upload.svelte';
 import WebSource from './WebSource.svelte';
+import PasteText from './PasteText.svelte';
 import type {
 	Conversation,
 	LibraryEntry,
@@ -98,6 +99,33 @@ describe('Upload', () => {
 		await vi.waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
 		expect(chunkCalls).toBe(2);
 		expect(completeCalls).toBe(2);
+	});
+});
+
+describe('PasteText', () => {
+	it('requires text, then sends it with the optional name and clears the form', async () => {
+		const onSaved = vi.fn();
+		const fetchMock = vi
+			.spyOn(globalThis, 'fetch')
+			.mockImplementation(async () => response({ materialId: 'material-1' }, 201));
+		render(PasteText, { projectId: 'project-1', onSaved });
+		await page.getByRole('button', { name: 'Add text' }).click();
+		await expect.element(page.getByText('Paste some text.')).toBeVisible();
+		expect(fetchMock).not.toHaveBeenCalled();
+
+		await page.getByLabelText('Paste text').fill('Osmosis\n\nWater follows salt.');
+		await page.getByLabelText('Name').fill('Biology notes');
+		await page.getByRole('button', { name: 'Add text' }).click();
+		await vi.waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/projects/project-1/text-sources',
+			expect.objectContaining({ method: 'POST' })
+		);
+		expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+			name: 'Biology notes',
+			text: 'Osmosis\n\nWater follows salt.'
+		});
+		await expect.element(page.getByLabelText('Paste text')).toHaveValue('');
 	});
 });
 

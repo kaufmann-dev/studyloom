@@ -478,6 +478,14 @@ export const sourceReadInput = z.object({
 	maxChars: z.number().int().min(1000).max(100000).default(30000)
 });
 const MAX_TEXT_SOURCE_CHARS = 2_000_000;
+/** Text pasted into a project as a source; without a name, its first line names it. */
+export const pastedTextInput = z.object({
+	name: z.string().max(160).default(''),
+	text: nonBlank(
+		z.string().max(MAX_TEXT_SOURCE_CHARS, 'Pasted text can hold at most 2,000,000 characters.'),
+		'Paste some text.'
+	)
+});
 export const textSourceInput = z
 	.object({
 		name: nonBlank(z.string().max(160), 'Source name is required.'),

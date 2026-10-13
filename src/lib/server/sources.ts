@@ -18,6 +18,7 @@ import type {
 	citedTextSchema,
 	sourceReadInput,
 	sourceSearchInput,
+	pastedTextInput,
 	textSourceInput,
 	webSourceInput
 } from '../domain';
@@ -108,19 +109,24 @@ export async function readSource(input: z.infer<typeof sourceReadInput>) {
 	};
 }
 
-/** Stores text written by an MCP client as a ready source; it needs no extraction. */
-export async function addTextSource(
+/** Saves text that needs no extraction as a ready, immediately searchable source. */
+async function storeReadySource(
 	projectId: string,
-	input: z.infer<typeof textSourceInput>,
-	author: string
+	source: {
+		name: string;
+		filename: string;
+		mimeType: string;
+		original: string;
+		sections: { locator: string; text: string }[];
+		notes: string;
+	}
 ) {
 	const project = await findProject(projectId);
 	const id = randomUUID();
-	const markdown = input.sections.map((s) => `## ${s.locator}\n\n${s.text}\n`).join('\n');
-	const size = Buffer.byteLength(markdown);
+	const size = Buffer.byteLength(source.original);
 	try {
 		await mkdir(materialDir(id), { recursive: true, mode: 0o700 });
-		await writeFile(originalPath(id), markdown, { mode: 0o600 });
+		await writeFile(originalPath(id), source.original, { mode: 0o600 });
 		const material = await db().transaction(async (tx) => {
 			if (!(await lockProject(tx, project.id))) error(404, 'Project not found.');
 			const [material] = await tx
@@ -128,17 +134,17 @@ export async function addTextSource(
 				.values({
 					id,
 					projectId: project.id,
-					name: input.name.trim(),
-					filename: `${input.name.trim()}.md`,
-					mimeType: 'text/markdown',
+					name: source.name,
+					filename: source.filename,
+					mimeType: source.mimeType,
 					kind: 'file',
 					status: 'ready',
 					size,
 					receivedBytes: size,
-					notes: `Added by ${author} via MCP.`
+					notes: source.notes
 				})
 				.returning();
-			await replaceSourceChunks(tx, id, input.sections);
+			await replaceSourceChunks(tx, id, source.sections);
 			return material;
 		});
 		return { material: publicMaterial(material), url: projectUrl(project.id) };
@@ -146,6 +152,67 @@ export async function addTextSource(
 		await removeMaterialFiles(id).catch(() => {});
 		throw cause;
 	}
+}
+
+/** Stores text written by an MCP client as a ready source; it needs no extraction. */
+export function addTextSource(
+	projectId: string,
+	input: z.infer<typeof textSourceInput>,
+	author: string
+) {
+	const name = input.name.trim();
+	return storeReadySource(projectId, {
+		name,
+		filename: `${name}.md`,
+		mimeType: 'text/markdown',
+		original: input.sections.map((s) => `## ${s.locator}\n\n${s.text}\n`).join('\n'),
+		sections: input.sections,
+		notes: `Added by ${author} via MCP.`
+	});
+}
+
+const PASTED_PART_CHARS = 4000;
+/**
+ * Splits pasted text into citable parts of whole paragraphs; a paragraph longer than a part is
+ * cut at a word boundary.
+ */
+export function pastedSections(text: string) {
+	const parts: string[] = [];
+	let current = '';
+	const push = () => {
+		if (current.trim()) parts.push(current.trim());
+		current = '';
+	};
+	for (const paragraph of text.replace(/\r\n?/g, '\n').split(/\n\s*\n/)) {
+		let rest = paragraph.trim();
+		if (!rest) continue;
+		if (current && current.length + rest.length + 2 > PASTED_PART_CHARS) push();
+		while (rest.length > PASTED_PART_CHARS) {
+			push();
+			const cut = rest.lastIndexOf(' ', PASTED_PART_CHARS);
+			const at = cut > PASTED_PART_CHARS / 2 ? cut : PASTED_PART_CHARS;
+			parts.push(rest.slice(0, at).trim());
+			rest = rest.slice(at).trim();
+		}
+		current = current ? `${current}\n\n${rest}` : rest;
+	}
+	push();
+	return parts.map((part, i) => ({ locator: `part:${i + 1}`, text: part }));
+}
+/** Stores text pasted in the browser as-is, named after its first line unless named. */
+export function addPastedText(projectId: string, input: z.infer<typeof pastedTextInput>) {
+	const firstLine = input.text.trim().split('\n')[0].trim();
+	const name =
+		input.name.trim() ||
+		(firstLine.length > 60 ? `${firstLine.slice(0, 57).trimEnd()}…` : firstLine);
+	return storeReadySource(projectId, {
+		name,
+		filename: `${name.replace(/[\\/:*?"<>|]/g, '-')}.txt`,
+		mimeType: 'text/plain',
+		original: input.text,
+		sections: pastedSections(input.text),
+		notes: 'Pasted text.'
+	});
 }
 
 /**
