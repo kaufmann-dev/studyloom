@@ -46,6 +46,20 @@ describe('ElevenLabs speech', () => {
 			next_text: 'Next paragraph.'
 		});
 	});
+	it('asks for raw 24 kHz PCM when requested', async () => {
+		fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([0, 1])));
+		const { speak } = await load();
+		await speak({
+			text: 'Hi.',
+			voiceId: 'v',
+			modelId: 'm',
+			format: 'pcm_24000',
+			previousRequestIds: []
+		});
+		const [url, init] = fetchMock.mock.calls[0];
+		expect(url).toBe('https://api.elevenlabs.io/v1/text-to-speech/v?output_format=pcm_24000');
+		expect(init?.headers).toMatchObject({ accept: 'application/octet-stream' });
+	});
 	it('reports used-up credits and a rejected key without echoing the key', async () => {
 		const { speak } = await load();
 		const request = {

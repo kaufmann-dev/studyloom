@@ -135,22 +135,29 @@ export const listSpeechModels = cached(async (): Promise<SpeechModel[]> => {
 		}));
 });
 
+export type SpeechFormat = typeof MP3_FORMAT | 'pcm_24000';
 export interface SpeechRequest {
 	text: string;
 	voiceId: string;
 	modelId: string;
-	/** Request IDs of the paragraphs voiced just before this one, oldest first. */
+	/** Constant-bitrate MP3 by default; raw 24 kHz signed 16-bit mono PCM on request. */
+	format?: SpeechFormat;
+	/** Request IDs of the clips voiced just before this one in the same voice, oldest first. */
 	previousRequestIds: string[];
 	nextText?: string;
 	signal?: AbortSignal;
 }
-/** Voices one paragraph as MP3, conditioned on the previous requests for smooth joins. */
+/** Voices one clip, conditioned on the previous requests for smooth joins. */
 export async function speak(input: SpeechRequest) {
+	const format = input.format ?? MP3_FORMAT;
 	const response = await request(
-		`/v1/text-to-speech/${encodeURIComponent(input.voiceId)}?output_format=${MP3_FORMAT}`,
+		`/v1/text-to-speech/${encodeURIComponent(input.voiceId)}?output_format=${format}`,
 		{
 			method: 'POST',
-			headers: { 'content-type': 'application/json', accept: 'audio/mpeg' },
+			headers: {
+				'content-type': 'application/json',
+				accept: format === MP3_FORMAT ? 'audio/mpeg' : 'application/octet-stream'
+			},
 			body: JSON.stringify({
 				text: input.text,
 				model_id: input.modelId,

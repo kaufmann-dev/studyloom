@@ -50,6 +50,13 @@
       "when": 1791913083770,
       "tag": "0006_dark_skin",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791916283527,
+      "tag": "0007_audio_voices",
+      "breakpoints": true
     }
   ]
 }

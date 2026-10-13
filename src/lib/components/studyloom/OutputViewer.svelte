@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Copy, Download } from '@lucide/svelte';
-	import type { Material, QuizAttempt, StudyOutput } from '#lib/domain.js';
+	import type { AudioInfo, Material, QuizAttempt, StudyOutput } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import { createPoller } from '#lib/polling.js';
 	import { api, copyText, dateLabel, downloadText, errorText, plural } from '#lib/ui.js';
@@ -14,6 +14,14 @@
 	type OutputData = { output: StudyOutput; attempts: QuizAttempt[] };
 	let data = $state.raw<OutputData | null>(null);
 	let error = $state('');
+	const SPEAKERS: Record<string, string> = { tutor: 'Tutor', learner: 'Learner' };
+	function voiceLabel(audio: AudioInfo) {
+		return audio.voices
+			.map((voice) =>
+				SPEAKERS[voice.speaker] ? `${SPEAKERS[voice.speaker]}: ${voice.voiceName}` : voice.voiceName
+			)
+			.join(' · ');
+	}
 	function duration(ms: number) {
 		const seconds = Math.round(ms / 1000);
 		return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -60,7 +68,7 @@
 					output.materialIds.length,
 					'source'
 				)}{#if output.audio}
-					· {output.audio.voiceName} · {output.audio.speechModelName} · {duration(
+					· {voiceLabel(output.audio)} · {output.audio.speechModelName} · {duration(
 						output.audio.durationMs
 					)}{/if}
 			</p>

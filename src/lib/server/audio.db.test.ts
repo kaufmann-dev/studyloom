@@ -7,6 +7,7 @@ import { eq } from 'drizzle-orm';
 import { api } from './api';
 import { db, closeDatabase } from './db';
 import { jobs, materials, outputs, projects, sourceChunks } from './db/schema';
+import { silenceMp3 } from './audio';
 import { speak, speechCatalog } from './elevenlabs';
 import { startWorkers } from './jobs';
 import { museRun } from './muse';
@@ -18,14 +19,21 @@ vi.mock('./muse', async (importOriginal) => ({
 }));
 vi.mock('./elevenlabs', () => ({ speechCatalog: vi.fn(), speak: vi.fn() }));
 
-const paragraphs = [
-	'Today you will learn how a compass finds north.',
-	'A magnetised needle lines up with the field of the Earth.',
-	'In short, the needle points north because the Earth is a magnet.'
+const turns = [
+	{ speaker: 'learner', text: 'How does a compass find north?' },
+	{
+		speaker: 'tutor',
+		text: 'A magnetised needle lines up with the field of the Earth. Pause and think: why?',
+		pauseAfterSeconds: 2
+	},
+	{ speaker: 'tutor', text: 'In short, the needle points north because the Earth is a magnet.' }
 ];
+// Parts start with a real frame header, because silence is written in the parts' own format.
+const HEADER = Buffer.from([0xff, 0xfb, 0x90, 0xc4]);
+const part = (tag: string) => Buffer.concat([HEADER, Buffer.from(tag)]);
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
-	it('voices a cited script, resumes after a failure and serves the joined MP3', async () => {
+	it('voices a cited dialogue in two voices, resumes after a failure and serves the joined MP3', async () => {
 		const previousDatabaseUrl = process.env.DATABASE_URL;
 		const previousDataDir = process.env.DATA_DIR;
 		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -75,7 +83,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 				text: 'The needle points north because the Earth acts like a magnet.'
 			});
 			vi.mocked(speechCatalog).mockResolvedValue({
-				voices: [{ voiceId: 'voice1', name: 'Rachel', description: '' }],
+				voices: [
+					{ voiceId: 'voice1', name: 'Rachel', description: '' },
+					{ voiceId: 'voice2', name: 'Adam', description: '' }
+				],
 				models: [
 					{ modelId: 'eleven_v4', name: 'Eleven v4', costMultiplier: 1, maxCharacters: 10000 }
 				]
@@ -85,7 +96,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 					join(workspace, 'files', 'result.json'),
 					JSON.stringify({
 						title: 'How a compass works',
-						paragraphs,
+						turns,
 						citations: [
 							{ materialId: material.id, locator: 'page:1', quote: 'the Earth acts like a magnet' }
 						]
@@ -94,7 +105,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 				return { text: 'done', stderr: '' };
 			});
 			vi.mocked(speak)
-				.mockResolvedValueOnce({ audio: Buffer.from('one'), requestId: 'req-1' })
+				.mockResolvedValueOnce({ audio: part('one'), requestId: 'req-1' })
 				.mockRejectedValueOnce(new Error('ElevenLabs credits are used up.'));
 
 			// An unknown voice is refused before anything is queued.
@@ -109,68 +120,90 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 			}).catch((cause) => cause);
 			expect(unknown).toMatchObject({ status: 409 });
 
-			const response = await call(`/api/projects/${project.id}/generate`, {
-				body: {
-					kind: 'audio',
-					materialIds: [material.id],
-					modelId: 'test-model',
-					voiceId: 'voice1',
-					speechModelId: 'eleven_v4',
-					audioLength: 'short'
-				}
-			});
+			const dialogue = {
+				kind: 'audio',
+				materialIds: [material.id],
+				modelId: 'test-model',
+				voiceId: 'voice1',
+				learnerVoiceId: 'voice2',
+				speechModelId: 'eleven_v4',
+				audioLength: 'short',
+				audioStyle: 'dialogue'
+			};
+			const same = await call(`/api/projects/${project.id}/generate`, {
+				body: { ...dialogue, learnerVoiceId: 'voice1' }
+			}).catch((cause) => cause);
+			expect(same).toMatchObject({ status: 400 });
+
+			const response = await call(`/api/projects/${project.id}/generate`, { body: dialogue });
 			expect(response.status).toBe(202);
 			const { jobId } = await response.json();
 			const failed = await waitFor(jobId, 'failed');
 			expect(failed.error).toBe('ElevenLabs credits are used up.');
-			expect(failed.payload).toMatchObject({ voiceName: 'Rachel', speechModelName: 'Eleven v4' });
+			const voices = [
+				{ speaker: 'tutor', voiceId: 'voice1', voiceName: 'Rachel' },
+				{ speaker: 'learner', voiceId: 'voice2', voiceName: 'Adam' }
+			];
+			expect(failed.payload).toMatchObject({ voices, speechModelName: 'Eleven v4' });
 
-			// The retry keeps the script and the first paragraph's audio.
+			// The retry keeps the script and the first turn's audio.
 			vi.mocked(speak)
-				.mockResolvedValueOnce({ audio: Buffer.from('two'), requestId: 'req-2' })
-				.mockResolvedValueOnce({ audio: Buffer.from('three'), requestId: 'req-3' });
+				.mockResolvedValueOnce({ audio: part('two'), requestId: 'req-2' })
+				.mockResolvedValueOnce({ audio: part('three'), requestId: 'req-3' });
 			expect((await call(`/api/jobs/${jobId}/retry`, { body: {} })).status).toBe(202);
 			const done = await waitFor(jobId, 'succeeded');
 			expect(museRun).toHaveBeenCalledTimes(1);
 			expect(speak).toHaveBeenCalledTimes(4);
+			// Each voice is stitched only to its own earlier requests.
 			expect(vi.mocked(speak).mock.calls[2][0]).toMatchObject({
-				text: paragraphs[1],
+				text: turns[1].text,
 				voiceId: 'voice1',
 				modelId: 'eleven_v4',
-				previousRequestIds: ['req-1'],
-				nextText: paragraphs[2]
+				previousRequestIds: [],
+				nextText: turns[2].text
 			});
 			expect(vi.mocked(speak).mock.calls[3][0]).toMatchObject({
-				previousRequestIds: ['req-1', 'req-2']
+				voiceId: 'voice1',
+				previousRequestIds: ['req-2']
 			});
 
+			const expected = Buffer.concat([
+				part('one'),
+				silenceMp3(250, HEADER),
+				part('two'),
+				silenceMp3(2000, HEADER),
+				part('three')
+			]);
 			const [output] = await db().select().from(outputs).where(eq(outputs.id, done.outputId!));
 			expect(output).toMatchObject({
 				kind: 'audio',
 				title: 'How a compass works',
-				content: paragraphs.join('\n\n'),
+				content: [
+					`**Learner:** ${turns[0].text}`,
+					`**Tutor:** ${turns[1].text}`,
+					`**Tutor:** ${turns[2].text}`
+				].join('\n\n'),
 				audio: {
-					voiceId: 'voice1',
-					voiceName: 'Rachel',
+					style: 'dialogue',
+					voices,
 					speechModelId: 'eleven_v4',
 					speechModelName: 'Eleven v4',
-					characters: paragraphs.join('').length
+					durationMs: Math.round(expected.length / 16),
+					characters: turns.map((turn) => turn.text).join('').length
 				}
 			});
 			const details = await (await call(`/api/outputs/${output.id}`)).json();
-			expect(details.output.audio).toMatchObject({ voiceName: 'Rachel' });
+			expect(details.output.audio).toMatchObject({ style: 'dialogue', voices });
 			expect(JSON.stringify(details)).not.toContain(data);
 
 			const file = await call(`/api/outputs/${output.id}/audio`);
 			expect(file.headers.get('content-type')).toBe('audio/mpeg');
-			expect(Buffer.from(await file.arrayBuffer()).toString()).toBe('onetwothree');
-			const partial = await call(`/api/outputs/${output.id}/audio`, { range: 'bytes=3-5' });
+			expect(Buffer.from(await file.arrayBuffer())).toEqual(expected);
+			const partial = await call(`/api/outputs/${output.id}/audio`, { range: 'bytes=4-6' });
 			expect(partial.status).toBe(206);
-			expect(await partial.text()).toBe('two');
+			expect(await partial.text()).toBe('one');
 			await expect(access(join(data, 'audio', output.id, 'parts'))).rejects.toThrow();
-			expect(await readFile(join(data, 'audio', output.id, 'summary.mp3'), 'utf8')).toBe(
-				'onetwothree'
-			);
+			expect(await readFile(join(data, 'audio', output.id, 'summary.mp3'))).toEqual(expected);
 
 			// Deleting the project removes its audio files.
 			expect((await call(`/api/projects/${project.id}`, { method: 'DELETE' })).status).toBe(200);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { concatMp3, mp3DurationMs, stripId3 } from './audio';
+import { concatMp3, firstFrameHeader, mp3DurationMs, silenceMp3, stripId3 } from './audio';
 
 function id3(body: Buffer, footer = false) {
 	const header = Buffer.from([0x49, 0x44, 0x33, 4, 0, footer ? 0x10 : 0, 0, 0, 0, 0]);
@@ -32,5 +32,36 @@ describe('MP3 assembly', () => {
 	it('derives the duration from the constant 128 kbps bitrate', () => {
 		expect(mp3DurationMs(16_000)).toBe(1000);
 		expect(mp3DurationMs(0)).toBe(0);
+	});
+});
+
+describe('MP3 silence', () => {
+	// MPEG-1 Layer III, no CRC, 128 kbps, 44.1 kHz, mono.
+	const header = Buffer.from([0xff, 0xfb, 0x90, 0xc4]);
+	it('reads the first frame header after a tag and rejects other formats', () => {
+		const part = Buffer.concat([id3(Buffer.alloc(4)), header, Buffer.alloc(413)]);
+		expect(firstFrameHeader(part)).toEqual(header);
+		expect(() => firstFrameHeader(Buffer.from([0xff, 0xfb, 0xb0, 0xc4]))).toThrow(
+			/cannot be joined/
+		);
+		expect(() => firstFrameHeader(Buffer.alloc(20))).toThrow(/cannot be joined/);
+	});
+	it('writes padded zero frames in the stream format with an exact duration', () => {
+		const silence = silenceMp3(4000, Buffer.from([0xff, 0xfa, 0x92, 0xc4]));
+		const frames: number[] = [];
+		for (let at = 0; at < silence.length;) {
+			expect(silence.subarray(at, at + 4)).toEqual(
+				Buffer.from([0xff, 0xfb, silence[at + 2], 0xc4])
+			);
+			const size = 417 + ((silence[at + 2] >> 1) & 1);
+			expect(silence[at + 2] & 0xfd).toBe(0x90);
+			expect(silence.subarray(at + 4, at + size).every((byte) => byte === 0)).toBe(true);
+			frames.push(size);
+			at += size;
+		}
+		expect(frames).toHaveLength(153);
+		expect(new Set(frames)).toEqual(new Set([417, 418]));
+		expect(Math.abs(mp3DurationMs(silence.length) - 4000)).toBeLessThan(15);
+		expect(silenceMp3(0, header)).toHaveLength(0);
 	});
 });

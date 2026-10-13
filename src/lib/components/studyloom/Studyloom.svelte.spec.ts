@@ -19,6 +19,7 @@ import Chat from './Chat.svelte';
 import LibraryBrowser from './library/LibraryBrowser.svelte';
 import MoveDialog from './library/MoveDialog.svelte';
 import Markdown from './Markdown.svelte';
+import StudyTools from './StudyTools.svelte';
 import Projects from '../../../routes/projects/+page.svelte';
 
 function response(body: unknown, status = 200) {
@@ -377,6 +378,56 @@ describe('Library move dialog', () => {
 		await expect
 			.element(page.getByRole('radio', { name: 'Archive', exact: false }))
 			.not.toBeInTheDocument();
+	});
+});
+
+describe('Audio summary form', () => {
+	it('offers a separate learner voice for a dialogue and sends both voices', async () => {
+		const bodies: unknown[] = [];
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+			const path = String(input);
+			if (path === '/api/speech')
+				return response({
+					voices: [
+						{ voiceId: 'voice1', name: 'Rachel', description: '' },
+						{ voiceId: 'voice2', name: 'Adam', description: '' }
+					],
+					models: [{ modelId: 'm1', name: 'Flash', costMultiplier: 0.5, maxCharacters: 1000 }]
+				});
+			if (path.endsWith('/generate')) {
+				bodies.push(JSON.parse(String(init?.body)));
+				return response({ message: 'Stop here' }, 503);
+			}
+			return response({});
+		});
+		render(StudyTools, {
+			projectId: 'project-1',
+			kind: 'audio',
+			materialIds: ['material-1'],
+			materials: [],
+			models: [
+				{
+					modelId: 'muse-spark-1.3-contributor',
+					displayLabel: 'Spark',
+					contextLimit: null,
+					description: null
+				}
+			],
+			outputs: [],
+			onChanged: () => {}
+		});
+		await expect.element(page.getByLabelText('Narrator voice')).toHaveValue('voice1');
+		await page.getByLabelText('Style').selectOptions('dialogue');
+		await expect.element(page.getByLabelText('Tutor voice')).toHaveValue('voice1');
+		await expect.element(page.getByLabelText('Learner voice')).toHaveValue('voice2');
+		await page.getByRole('button', { name: 'Create audio summary' }).click();
+		await expect.element(page.getByRole('alert')).toHaveTextContent('Stop here');
+		expect(bodies[0]).toMatchObject({
+			audioStyle: 'dialogue',
+			voiceId: 'voice1',
+			learnerVoiceId: 'voice2',
+			speechModelId: 'm1'
+		});
 	});
 });
 

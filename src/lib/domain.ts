@@ -324,10 +324,16 @@ export const quizSchema = z
 			ctx.addIssue({ code: 'custom', message: 'Question IDs must be unique.' });
 	});
 export const AUDIO_LENGTHS = {
-	short: { words: 450, label: 'Short (~3 min)' },
-	standard: { words: 1000, label: 'Standard (~7 min)' },
-	long: { words: 1700, label: 'Long (~12 min)' }
+	short: { words: 450, parts: 2, label: 'Short (~3 min)' },
+	standard: { words: 1000, parts: 3, label: 'Standard (~7 min)' },
+	long: { words: 1700, parts: 4, label: 'Long (~12 min)' }
 } as const;
+/** How an audio summary is spoken: one narrator, or a tutor explaining to a learner. */
+export const AUDIO_STYLES = {
+	narration: { label: 'Narration', speakers: ['narrator'] },
+	dialogue: { label: 'Tutor and learner', speakers: ['tutor', 'learner'] }
+} as const;
+export type AudioStyle = keyof typeof AUDIO_STYLES;
 const elevenLabsId = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/, 'Choose a voice and model.');
 export const generationInput = z.object({
 	kind: z.enum(['summary', 'quiz', 'audio']),
@@ -335,10 +341,12 @@ export const generationInput = z.object({
 	modelId,
 	questionCount: z.number().int().min(1).max(50).default(10),
 	questionMix: z.enum(['mixed', 'multiple_choice', 'written']).default('mixed'),
-	/** ElevenLabs voice and speech model; audio summaries only. */
+	/** ElevenLabs voices and speech model; audio summaries only. */
 	voiceId: elevenLabsId.or(z.literal('')).default(''),
+	learnerVoiceId: elevenLabsId.or(z.literal('')).default(''),
 	speechModelId: elevenLabsId.or(z.literal('')).default(''),
-	audioLength: z.enum(['short', 'standard', 'long']).default('short')
+	audioLength: z.enum(['short', 'standard', 'long']).default('short'),
+	audioStyle: z.enum(['narration', 'dialogue']).default('narration')
 });
 export const chatInput = z.object({
 	conversationId: idSchema.optional(),
@@ -393,12 +401,24 @@ export const citedTextSchema = z.object({
 	content: z.string().min(1).max(200000),
 	citations: z.array(citationSchema).min(1).max(500)
 });
-/** The narration Muse writes for an audio summary, one spoken paragraph per speech request. */
-export const audioScriptSchema = z.object({
-	title: z.string().min(1).max(200),
-	paragraphs: z.array(z.string().trim().min(1).max(2000)).min(1).max(60),
-	citations: z.array(citationSchema).min(1).max(100)
-});
+/** The script Muse writes for an audio summary, one spoken turn per speech request. */
+export const audioScriptSchema = (style: AudioStyle) =>
+	z.object({
+		title: z.string().min(1).max(200),
+		turns: z
+			.array(
+				z.object({
+					speaker: z.enum(AUDIO_STYLES[style].speakers),
+					text: z.string().trim().min(1).max(1500),
+					/** Silence after the turn, giving the listener time to think. */
+					pauseAfterSeconds: z.number().min(0).max(6).optional()
+				})
+			)
+			.min(1)
+			.max(160),
+		citations: z.array(citationSchema).min(1).max(100)
+	});
+export type AudioScript = z.infer<ReturnType<typeof audioScriptSchema>>;
 export const sourceSearchInput = z.object({
 	query: nonBlank(z.string().max(500), 'A search query is required.').describe(
 		'Words to find. Matching uses exact word forms without stemming, so try variants and synonyms. Supports "quoted phrases", OR and -exclusions.'
@@ -538,9 +558,14 @@ export interface Message {
 	modelId: string | null;
 	createdAt: string;
 }
-export interface AudioInfo {
+export interface AudioVoice {
+	speaker: string;
 	voiceId: string;
 	voiceName: string;
+}
+export interface AudioInfo {
+	style: AudioStyle;
+	voices: AudioVoice[];
 	speechModelId: string;
 	speechModelName: string;
 	durationMs: number;

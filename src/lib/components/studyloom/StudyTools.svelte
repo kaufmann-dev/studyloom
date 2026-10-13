@@ -5,6 +5,7 @@
 	import { ArrowLeft, Sparkles } from '@lucide/svelte';
 	import {
 		AUDIO_LENGTHS,
+		AUDIO_STYLES,
 		generationInput,
 		DEFAULT_MODEL,
 		type StudyOutput,
@@ -45,8 +46,10 @@
 		questionCount: true,
 		questionMix: true,
 		voiceId: true,
+		learnerVoiceId: true,
 		speechModelId: true,
-		audioLength: true
+		audioLength: true,
+		audioStyle: true
 	});
 	const editor = superForm(
 		defaults(
@@ -55,8 +58,10 @@
 				questionCount: 10,
 				questionMix: 'mixed',
 				voiceId: '',
+				learnerVoiceId: '',
 				speechModelId: '',
-				audioLength: 'short'
+				audioLength: 'short',
+				audioStyle: 'narration'
 			},
 			zod4(schema)
 		),
@@ -80,7 +85,8 @@
 			one: 'audio summary',
 			many: 'audio summaries',
 			title: 'Listen to your sources',
-			intro: 'Turn your selected materials into a narrated summary you can play or download.'
+			intro:
+				'Turn your selected materials into a narrated summary or a tutor and learner conversation, with pauses to think along.'
 		},
 		quiz: {
 			one: 'quiz',
@@ -108,10 +114,21 @@
 	let voiceId = $derived(
 		offered(catalog?.voices.map((voice) => voice.voiceId) ?? [], $form.voiceId)
 	);
+	let dialogue = $derived($form.audioStyle === 'dialogue');
+	/** The learner needs a voice of their own, so the tutor's voice is not offered. */
+	let learnerVoices = $derived(catalog?.voices.filter((voice) => voice.voiceId !== voiceId) ?? []);
+	let learnerVoiceId = $derived(
+		offered(
+			learnerVoices.map((voice) => voice.voiceId),
+			$form.learnerVoiceId
+		)
+	);
 	let speechModelId = $derived(
 		offered(catalog?.models.map((model) => model.modelId) ?? [], $form.speechModelId)
 	);
-	let ready = $derived(kind !== 'audio' || Boolean(voiceId && speechModelId));
+	let ready = $derived(
+		kind !== 'audio' || Boolean(voiceId && speechModelId && (!dialogue || learnerVoiceId))
+	);
 	async function loadCatalog() {
 		catalogError = '';
 		try {
@@ -140,6 +157,7 @@
 					...$form,
 					modelId: availableModel(models, $form.modelId),
 					voiceId,
+					learnerVoiceId: dialogue ? learnerVoiceId : '',
 					speechModelId,
 					kind,
 					materialIds
@@ -237,30 +255,69 @@
 			{#if kind === 'audio'}
 				<ErrorAlert message={catalogError} onRetry={loadCatalog} />
 				<div class="grid gap-4 sm:grid-cols-2">
-					<Form.Field form={editor} name="voiceId" class="sm:col-span-2">
+					<Form.Field form={editor} name="audioStyle" class="sm:col-span-2">
 						<Form.Control>
 							{#snippet children({ props })}
-								<Form.Label>Voice</Form.Label>
+								<Form.Label>Style</Form.Label>
 								<NativeSelect.Root
 									{...props}
 									class="w-full"
-									bind:value={() => voiceId, (next) => ($form.voiceId = next)}
-									disabled={busy || !catalog}
+									bind:value={$form.audioStyle}
+									disabled={busy}
 								>
-									{#each catalog?.voices ?? [] as voice (voice.voiceId)}
-										<NativeSelect.Option value={voice.voiceId}>
-											{voice.description ? `${voice.name} · ${voice.description}` : voice.name}
-										</NativeSelect.Option>
-									{:else}
-										<NativeSelect.Option value="">
-											{catalog ? 'No voices available' : 'Loading voices…'}
-										</NativeSelect.Option>
+									{#each Object.entries(AUDIO_STYLES) as [value, style] (value)}
+										<NativeSelect.Option {value}>{style.label}</NativeSelect.Option>
 									{/each}
 								</NativeSelect.Root>
 							{/snippet}
 						</Form.Control>
 						<Form.FieldErrors />
 					</Form.Field>
+					{#snippet voiceOptions(voices: Voice[])}
+						{#each voices as voice (voice.voiceId)}
+							<NativeSelect.Option value={voice.voiceId}>
+								{voice.description ? `${voice.name} · ${voice.description}` : voice.name}
+							</NativeSelect.Option>
+						{:else}
+							<NativeSelect.Option value="">
+								{catalog ? 'No voices available' : 'Loading voices…'}
+							</NativeSelect.Option>
+						{/each}
+					{/snippet}
+					<Form.Field form={editor} name="voiceId" class={[!dialogue && 'sm:col-span-2']}>
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label>{dialogue ? 'Tutor voice' : 'Narrator voice'}</Form.Label>
+								<NativeSelect.Root
+									{...props}
+									class="w-full"
+									bind:value={() => voiceId, (next) => ($form.voiceId = next)}
+									disabled={busy || !catalog}
+								>
+									{@render voiceOptions(catalog?.voices ?? [])}
+								</NativeSelect.Root>
+							{/snippet}
+						</Form.Control>
+						<Form.FieldErrors />
+					</Form.Field>
+					{#if dialogue}
+						<Form.Field form={editor} name="learnerVoiceId">
+							<Form.Control>
+								{#snippet children({ props })}
+									<Form.Label>Learner voice</Form.Label>
+									<NativeSelect.Root
+										{...props}
+										class="w-full"
+										bind:value={() => learnerVoiceId, (next) => ($form.learnerVoiceId = next)}
+										disabled={busy || !catalog}
+									>
+										{@render voiceOptions(learnerVoices)}
+									</NativeSelect.Root>
+								{/snippet}
+							</Form.Control>
+							<Form.FieldErrors />
+						</Form.Field>
+					{/if}
 					<Form.Field form={editor} name="speechModelId">
 						<Form.Control>
 							{#snippet children({ props })}

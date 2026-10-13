@@ -11,7 +11,8 @@ import {
 	projectInput,
 	recordingInput,
 	UPLOAD_CHUNK_SIZE,
-	webSourceInput
+	webSourceInput,
+	type AudioVoice
 } from '../../domain';
 import { ClientError, maxUploadBytes, safeError } from '../config';
 import { removeAudioFiles } from '../audio';
@@ -78,17 +79,28 @@ export async function projectWorkspace(rawId: string | undefined) {
 	};
 }
 
-/** The chosen ElevenLabs voice and speech model, checked against what the account offers. */
+/** The chosen ElevenLabs voices and speech model, checked against what the account offers. */
 async function audioChoice(input: z.infer<typeof generationInput>) {
-	if (!input.voiceId || !input.speechModelId)
+	const dialogue = input.audioStyle === 'dialogue';
+	if (!input.voiceId || !input.speechModelId || (dialogue && !input.learnerVoiceId))
 		throw new ClientError(400, 'Choose a voice and a speech model.');
+	if (dialogue && input.voiceId === input.learnerVoiceId)
+		throw new ClientError(400, 'Choose two different voices.');
 	const { voices, models } = await speechCatalog();
-	const voice = voices.find((v) => v.voiceId === input.voiceId);
-	if (!voice) throw new ClientError(409, 'This voice is no longer available. Reload the page.');
+	const voice = (speaker: AudioVoice['speaker'], voiceId: string): AudioVoice => {
+		const found = voices.find((v) => v.voiceId === voiceId);
+		if (!found) throw new ClientError(409, 'This voice is no longer available. Reload the page.');
+		return { speaker, voiceId, voiceName: found.name };
+	};
 	const model = models.find((m) => m.modelId === input.speechModelId);
 	if (!model)
 		throw new ClientError(409, 'This speech model is no longer available. Reload the page.');
-	return { voiceName: voice.name, speechModelName: model.name };
+	return {
+		voices: dialogue
+			? [voice('tutor', input.voiceId), voice('learner', input.learnerVoiceId)]
+			: [voice('narrator', input.voiceId)],
+		speechModelName: model.name
+	};
 }
 
 export const projects: Handler = async ({ event, method, id: rawId, action }) => {
