@@ -260,7 +260,7 @@
 			{/if}
 			<Tabs.Root bind:value={selectedTab}>
 				<Tabs.List
-					class="mb-7 grid h-auto w-full grid-cols-5 gap-1 bg-muted p-1 sm:flex sm:justify-start"
+					class="mb-7 grid w-full grid-cols-5 gap-1 bg-muted p-1 group-data-horizontal/tabs:h-auto sm:flex sm:justify-start"
 				>
 					<Tabs.Trigger value="chat" class={TAB}>
 						<MessageSquare class="size-4" />Chat
