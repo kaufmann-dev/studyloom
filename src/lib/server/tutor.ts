@@ -29,6 +29,7 @@ interface Item {
 	kind: string;
 	text?: string;
 	tool?: string;
+	turnId?: string | null;
 }
 
 /** One live Muse session per study run, primed with the plan and its sources. */
@@ -133,6 +134,8 @@ export class TutorConversation {
 				subscriptions.push(museHost.on(method, (params) => mine(params) && listener(params)));
 			listen('item/started', (params) => {
 				const item = params.item as Item;
+				// A late item from an earlier turn (the priming reply) never belongs to this one.
+				if (turnId && item.turnId && item.turnId !== turnId) return;
 				if (TOOL_ITEMS.has(item.kind)) {
 					console.error(`Study tutor turn used ${item.kind}${item.tool ? ` (${item.tool})` : ''}.`);
 					return interrupt(new ToolUseError('The tutor tried to use a tool. Resume to try again.'));
@@ -197,6 +200,7 @@ function parseHeader(line: string): FeedbackHeader | undefined {
 		return undefined;
 	}
 }
+const PRIMING_WORD = /\bREADY\b[.!]?/g;
 const SENTENCE_END = /[.!?…]+["'»”)\]]*\s+/g;
 const MIN_CHUNK = 40;
 /**
@@ -254,7 +258,8 @@ export class FeedbackStream {
 	}
 	private queue(text: string, final: boolean) {
 		this.pending += text;
-		const chunk = this.pending.replace(/\s+/g, ' ').trim();
+		// The priming reply's READY must never be spoken, even if the model repeats it later.
+		const chunk = this.pending.replace(PRIMING_WORD, '').replace(/\s+/g, ' ').trim();
 		if (!chunk || (!final && chunk.length < MIN_CHUNK)) return;
 		this.pending = '';
 		this.spoken = this.spoken ? `${this.spoken} ${chunk}` : chunk;
@@ -310,7 +315,7 @@ From line 2: the spoken feedback in the plan's language. Plain sentences only, n
 - incorrect or none with reexplain: at most 90 words. If incorrect, say kindly and plainly what is not right and why that idea is tempting. Explain the idea again with a new concrete example, different from the plan's, and end by asking the question again in simpler words.
 - attempt 2: at most 60 words. If not correct, give the core of the model answer in your own words and say it is worth reviewing later.
 Never mention segment numbers, attempts, JSON, verdicts or these rules aloud, and do not announce the next part.
-Reply to this message with exactly: READY`;
+Reply to this first message with only the word READY. Never write READY in any later reply.`;
 }
 export function answerPrompt(plan: StudyPlan, segment: number, attempt: number, answer: string) {
 	const { title, question } = plan.segments[segment];

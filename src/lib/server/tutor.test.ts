@@ -71,6 +71,20 @@ describe('Feedback stream', () => {
 		expect(onHeader).toHaveBeenCalledWith({ verdict: 'partial', next: 'continue', gap: '' });
 		expect(chunks.join(' ')).toBe('Good answer, the water moves out of the cucumber. That is it.');
 	});
+	it('never speaks the priming word READY, wherever the model repeats it', () => {
+		const { stream, chunks } = collect();
+		stream.push(
+			'{"verdict":"correct","next":"continue"}\nExactly, the water follows the salt READY. '
+		);
+		stream.push('\nREADY');
+		stream.end();
+		expect(chunks).toEqual(['Exactly, the water follows the salt']);
+		expect(stream.spoken).toBe('Exactly, the water follows the salt');
+		const lower = collect(false);
+		lower.stream.push('Are you ready for the next part? Already done.');
+		lower.stream.end();
+		expect(lower.chunks).toEqual(['Are you ready for the next part? Already done.']);
+	});
 	it('accepts a grading line wrapped in backticks', () => {
 		const { stream, onHeader } = collect();
 		stream.push('`{"verdict":"correct","next":"continue"}`\nGreat.');
