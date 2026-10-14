@@ -10,7 +10,7 @@ export async function writeAtomic(path: string, data: string | Buffer) {
 	await writeFile(temporary, data, { mode: 0o600 });
 	await rename(temporary, path);
 }
-const isMissingFile = (error: unknown) =>
+export const isMissingFile = (error: unknown) =>
 	error instanceof Error && 'code' in error && error.code === 'ENOENT';
 
 /** The script a job voices and the ElevenLabs request ID of every clip already saved. */

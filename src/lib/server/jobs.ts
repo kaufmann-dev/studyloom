@@ -36,7 +36,14 @@ import {
 	mp3DurationMs,
 	silenceMp3
 } from './audio';
-import { manifestPath, readManifest, voiceClips, writeAtomic, writeManifest } from './voicing';
+import {
+	isMissingFile,
+	manifestPath,
+	readManifest,
+	voiceClips,
+	writeAtomic,
+	writeManifest
+} from './voicing';
 type Job = typeof t.jobs.$inferSelect;
 export type Snapshot = typeof t.outputs.$inferSelect.sourceSnapshot;
 type Progress = (text: string) => void;
@@ -47,7 +54,7 @@ const SOURCE_CHUNK_BATCH = 200;
 // A worker may only touch a job while it still holds the running lease.
 const heldBy = (id: string, owner: string | null) =>
 	and(eq(t.jobs.id, id), eq(t.jobs.status, 'running'), eq(t.jobs.leaseOwner, owner ?? ''));
-const released = () => ({ leaseOwner: null, leaseUntil: null, updatedAt: new Date() });
+export const released = () => ({ leaseOwner: null, leaseUntil: null, updatedAt: new Date() });
 
 async function assertJobOwned(tx: Transaction, job: Job) {
 	const [current] = await tx
@@ -141,9 +148,6 @@ const gradeSchema = z.object({
 		})
 	)
 });
-function isMissingFile(error: unknown) {
-	return error instanceof Error && 'code' in error && error.code === 'ENOENT';
-}
 export async function readArtifact(workspace: string, name: string) {
 	try {
 		const path = await scopedFile(join(workspace, 'files'), name);
@@ -471,9 +475,11 @@ function pauseAfterMs(script: AudioScript, i: number) {
 	return next.speaker === turn.speaker ? 0 : 250;
 }
 const MAX_PAUSE_MS = 60_000;
+const scriptCharacters = (script: AudioScript) =>
+	script.turns.reduce((sum, turn) => sum + turn.text.length, 0);
 const SPEAKER_LABELS: Record<string, string> = { tutor: 'Tutor', learner: 'Learner' };
 /** The readable transcript: plain paragraphs for a narration, labelled turns for a dialogue. */
-export function audioTranscript(style: AudioStyle, script: AudioScript) {
+function audioTranscript(style: AudioStyle, script: AudioScript) {
 	return script.turns
 		.map((turn) =>
 			style === 'dialogue' ? `**${SPEAKER_LABELS[turn.speaker]}:** ${turn.text}` : turn.text
@@ -500,8 +506,7 @@ async function createAudio(run: GenerationRun) {
 	if (!manifest) {
 		const script = await museResult(run, audioPrompt(style, length.words, length.parts), schema);
 		validateCitations(script.citations, run.snapshot);
-		const characters = script.turns.reduce((sum, turn) => sum + turn.text.length, 0);
-		if (characters > length.words * 6 * 1.4)
+		if (scriptCharacters(script) > length.words * 6 * 1.4)
 			throw new Error('Muse wrote a script that is too long. Retry this job.');
 		if (AUDIO_STYLES[style].speakers.some((s) => !script.turns.some((t) => t.speaker === s)))
 			throw new Error('Muse wrote a dialogue with only one speaker. Retry this job.');
@@ -551,7 +556,7 @@ async function createAudio(run: GenerationRun) {
 			speechModelId,
 			speechModelName: String(job.payload.speechModelName || speechModelId),
 			durationMs: mp3DurationMs(joined.length),
-			characters: script.turns.reduce((sum, turn) => sum + turn.text.length, 0)
+			characters: scriptCharacters(script)
 		}
 	});
 	await Promise.allSettled([
@@ -574,7 +579,7 @@ Exactly ${segments} segments, ordered so later ones build on earlier ones, cover
 intro, explanation and question are spoken text only: no Markdown, lists, URLs, emoji, citations or locators; spell out symbols, numbers, units and abbreviations as a speaker would say them; most sentences under twenty words.`;
 }
 /** The pre-voiced clips of a study session, in playing order. */
-export function studyClips(plan: StudyPlan, voiceId: string) {
+function studyClips(plan: StudyPlan, voiceId: string) {
 	return [
 		{ key: 'intro', voiceId, text: plan.intro },
 		...plan.segments.flatMap((segment, i) => [
@@ -586,7 +591,7 @@ export function studyClips(plan: StudyPlan, voiceId: string) {
 export const studyClipKey = (segment: number, part: 'explanation' | 'question') =>
 	`${String(segment).padStart(3, '0')}-${part}`;
 /** A readable copy of the plan: each part's question with what a good answer contains. */
-export function planMarkdown(plan: StudyPlan) {
+function planMarkdown(plan: StudyPlan) {
 	return [
 		plan.intro,
 		...plan.segments.map((segment, i) =>
@@ -802,15 +807,13 @@ async function recover(job: Job, workspace: string, signal: AbortSignal) {
 	}
 	signal.throwIfAborted();
 	if (job.payload.finalize) await finishRecording(id, job);
-	else {
-		signal.throwIfAborted();
+	else
 		await completeJob(job, async (tx) => {
 			await tx
 				.update(t.materials)
 				.set({ status: 'paused', updatedAt: new Date() })
 				.where(eq(t.materials.id, id));
 		});
-	}
 }
 
 async function claimJob(queue: Queue, owner: string) {

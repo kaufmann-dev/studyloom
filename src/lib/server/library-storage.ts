@@ -8,7 +8,7 @@ import { ClientError, dataDir } from './config';
 import { isExpectedChunk, writeChunkFile } from './storage';
 import { idSchema, UPLOAD_CHUNK_SIZE } from '../domain';
 
-export const libraryDir = (id: string) => join(dataDir(), 'library', idSchema.parse(id));
+const libraryDir = (id: string) => join(dataDir(), 'library', idSchema.parse(id));
 export const libraryFilePath = (id: string) => join(libraryDir(id), 'original');
 const chunkPath = (id: string, sequence: number) =>
 	join(libraryDir(id), 'chunks', String(sequence));

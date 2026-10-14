@@ -8,7 +8,7 @@ import { api, errorText } from './ui';
 const MINUTE = 60_000;
 
 /** The current time, re-read every minute wherever it is used reactively. */
-export class Clock {
+class Clock {
 	#subscribe = createSubscriber((update) => {
 		const timer = setInterval(update, MINUTE);
 		return () => clearInterval(timer);
@@ -16,7 +16,6 @@ export class Clock {
 	get now() {
 		this.#subscribe();
 		// A fresh value per read; nothing mutates it.
-		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		return new Date();
 	}
 }

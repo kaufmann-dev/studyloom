@@ -6,19 +6,22 @@ interface RequestOptions {
 	body?: unknown;
 	/** Counts as user activity for the idle session timeout. Defaults to true for writes only. */
 	interaction?: boolean;
+	headers?: Record<string, string>;
+	signal?: AbortSignal;
 }
 
 export async function api<T = void>(path: string, options: RequestOptions = {}): Promise<T> {
 	const { body } = options;
 	const method = options.method ?? (body === undefined ? 'GET' : 'POST');
-	const headers: Record<string, string> = {};
+	const headers: Record<string, string> = { ...options.headers };
 	if (body instanceof Blob) headers['content-type'] = 'application/octet-stream';
 	else if (body !== undefined) headers['content-type'] = 'application/json';
 	if (options.interaction ?? method !== 'GET') headers['x-studyloom-interaction'] = '1';
 	const response = await fetch(path, {
 		method,
 		headers,
-		body: body === undefined || body instanceof Blob ? body : JSON.stringify(body)
+		body: body === undefined || body instanceof Blob ? body : JSON.stringify(body),
+		signal: options.signal
 	});
 	if (!response.ok) {
 		const detail = await response.json().catch(() => null);

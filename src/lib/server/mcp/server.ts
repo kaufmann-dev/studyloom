@@ -25,7 +25,7 @@ The Library is separate from projects: folders, notes, links, contacts and store
 contents of Library files are not readable here.`;
 
 /** The name shown as the author of what a connection saves, such as "Claude". */
-export const clientLabel = (authInfo: AuthInfo | undefined) =>
+const clientLabel = (authInfo: AuthInfo | undefined) =>
 	String(authInfo?.extra?.clientName ?? 'MCP client');
 
 /** One server per request, acting for the connection the access token belongs to. */

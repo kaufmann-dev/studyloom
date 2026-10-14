@@ -3,7 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ClientError, safeError } from '../config';
 
-export function json(value: unknown): CallToolResult {
+function json(value: unknown): CallToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] };
 }
 function failure(message: string): CallToolResult {

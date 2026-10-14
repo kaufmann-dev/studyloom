@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import { db } from '../db';
 import * as t from '../db/schema';
 import { answersSchema, idSchema, quizSchema, type StudyAnswer, type StudyRun } from '../../domain';
-import { gradeChoice } from '../jobs';
+import { gradeChoice, released } from '../jobs';
 import { gradingModel } from '../muse';
 import { audioFile } from '../audio';
 import { accepted, download, ok, readJson, type Handler } from './http';
@@ -199,13 +199,12 @@ export const jobs: Handler = async ({ method, id, action }) => {
 		.from(t.jobs)
 		.where(eq(t.jobs.id, idSchema.parse(id)));
 	if (!job) error(404);
-	const released = { leaseOwner: null, leaseUntil: null, updatedAt: new Date() };
 	if (!action && method === 'GET') return Response.json({ job: publicJob(job) });
 	if (action === 'cancel' && method === 'POST') {
 		await db().transaction(async (tx) => {
 			const [cancelled] = await tx
 				.update(t.jobs)
-				.set({ status: 'cancelled', progress: 'Cancelled', ...released })
+				.set({ status: 'cancelled', progress: 'Cancelled', ...released() })
 				.where(and(eq(t.jobs.id, job.id), jobIsActive))
 				.returning({ id: t.jobs.id });
 			if (!cancelled) return;
@@ -237,7 +236,7 @@ export const jobs: Handler = async ({ method, id, action }) => {
 					error: null,
 					tries: 0,
 					progress: 'Waiting to retry',
-					...released
+					...released()
 				})
 				.where(and(eq(t.jobs.id, job.id), inArray(t.jobs.status, ['failed', 'cancelled'])))
 				.returning({ id: t.jobs.id });

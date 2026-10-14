@@ -2,10 +2,12 @@ import { isActiveJob, type Job } from './domain';
 import { api } from './ui';
 
 const JOB_POLL_MS = 1500;
+const JOB_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * Polls a job until it leaves the queue and resolves with its final state.
  * Resolves with nothing when `signal` aborts first, so unmounted components stay untouched.
+ * Polls never count as user activity.
  */
 export async function waitForJob(
 	jobId: string,
@@ -13,8 +15,13 @@ export async function waitForJob(
 	onProgress?: (job: Job) => void
 ): Promise<Job | undefined> {
 	while (!signal.aborted) {
-		const { job } = await api<{ job: Job }>(`/api/jobs/${jobId}`);
-		if (signal.aborted) return;
+		const result = await api<{ job: Job }>(`/api/jobs/${encodeURIComponent(jobId)}`, {
+			signal: AbortSignal.any([signal, AbortSignal.timeout(JOB_REQUEST_TIMEOUT_MS)])
+		}).catch((cause) => {
+			if (!signal.aborted) throw cause;
+		});
+		if (!result || signal.aborted) return;
+		const { job } = result;
 		if (!isActiveJob(job)) return job;
 		onProgress?.(job);
 		await new Promise<void>((resolve) => {

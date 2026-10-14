@@ -113,15 +113,18 @@ describe('recording recovery', () => {
 				finished = true;
 			}
 		);
-		await vi.advanceTimersByTimeAsync(1000);
+		await vi.advanceTimersByTimeAsync(1500);
 		expect(finished).toBe(false);
 		expect(progress).toHaveBeenCalledWith('Transcribing audio');
-		await vi.advanceTimersByTimeAsync(1000);
+		await vi.advanceTimersByTimeAsync(1500);
 		await completion;
 		expect(finished).toBe(true);
 		expect(requests).toHaveBeenCalledTimes(3);
 		expect(
-			requests.mock.calls.every(([url, options]) => url === '/api/jobs/job-id' && !options.headers)
+			requests.mock.calls.every(
+				([url, options]) =>
+					url === '/api/jobs/job-id' && !('x-studyloom-interaction' in options.headers)
+			)
 		).toBe(true);
 	});
 

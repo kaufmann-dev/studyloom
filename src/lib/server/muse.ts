@@ -50,7 +50,7 @@ export async function resolveMuseBin(): Promise<string> {
 	);
 }
 const configPath = () => join(dataDir(), 'muse-config');
-export function resolveMuseToolsPath() {
+function resolveMuseToolsPath() {
 	const colocated = fileURLToPath(new URL('./muse-tools.js', import.meta.url));
 	if (existsSync(colocated)) return colocated;
 	const sourceBuild = fileURLToPath(
@@ -207,10 +207,9 @@ export const HOST_EXIT = 'studyloom/hostExit';
 // The SvelteKit and worker bundles share one process and one account-control connection.
 const processState = globalThis as typeof globalThis & { __studyloomMuseHost?: MuseHost };
 export const museHost = (processState.__studyloomMuseHost ??= new MuseHost());
-export const STALE_MUSE_LOGIN =
+const STALE_MUSE_LOGIN =
 	'Your Muse login is no longer valid. Disconnect, then connect your Muse account again.';
-export const MUSE_MODELS_UNREACHABLE =
-	'Could not load Muse models. Check the connection and try again.';
+const MUSE_MODELS_UNREACHABLE = 'Could not load Muse models. Check the connection and try again.';
 export function museStatusFromCatalog(account: MuseAccount, models: MuseModel[]): MuseStatus {
 	if (account.state === 'accountLogin' && models.length === 0)
 		return { account, models, error: STALE_MUSE_LOGIN };

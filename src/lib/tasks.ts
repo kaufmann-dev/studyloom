@@ -8,7 +8,7 @@ export type Urgency = 'done' | 'overdue' | 'today' | 'soon' | 'later';
 const SOON_DAYS = 3;
 
 /** The local instant a task is due; a task without a time is due at the end of its day. */
-export function dueAt(task: Pick<Task, 'dueDate' | 'dueTime'>): Date {
+function dueAt(task: Pick<Task, 'dueDate' | 'dueTime'>): Date {
 	const [year, month, day] = task.dueDate.split('-').map(Number);
 	if (!task.dueTime) return new Date(year, month - 1, day, 23, 59, 59, 999);
 	const [hours, minutes] = task.dueTime.split(':').map(Number);

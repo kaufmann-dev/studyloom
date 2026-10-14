@@ -1,5 +1,6 @@
 import { SvelteDate } from 'svelte/reactivity';
-import type { Job } from '#lib/domain.js';
+import { waitForJob } from '#lib/polling.js';
+import { api } from '#lib/ui.js';
 import {
 	acknowledgeChunk,
 	listRecordings,
@@ -17,13 +18,7 @@ type RecorderState =
 	'idle' | 'starting' | 'recording' | 'pausing' | 'paused' | 'saving' | 'interrupted' | 'complete';
 type TranscriptTurn = { id: string; text: string; speaker?: string; final: boolean };
 
-async function checked(response: Response) {
-	if (!response.ok) {
-		const data = await response.json().catch(() => null);
-		throw new Error(data?.message ?? `Request failed (${response.status}). Please try again.`);
-	}
-	return response;
-}
+const RECOVERY_DEADLINE_MS = 20 * 60 * 1000;
 
 /** Recovery must finish before opening a new realtime segment. Polls never extend the session. */
 export async function waitForRecoveryJob(
@@ -31,23 +26,14 @@ export async function waitForRecoveryJob(
 	onProgress: (message: string) => void,
 	signal: AbortSignal
 ) {
-	const deadline = Date.now() + 20 * 60 * 1000;
-	while (!signal.aborted && Date.now() < deadline) {
-		const response = await checked(
-			await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
-				signal: AbortSignal.any([signal, AbortSignal.timeout(30000)])
-			})
-		);
-		const { job }: { job: Job } = await response.json();
-		if (job?.status === 'succeeded') return;
-		if (job?.status === 'failed' || job?.status === 'cancelled') {
-			throw new Error(job.error || `Audio recovery ${job.status}. Retry saving this recording.`);
-		}
-		if (!job || !['queued', 'running'].includes(job.status))
-			throw new Error('The server returned an invalid audio recovery status.');
-		onProgress(job.progress || 'Recovering the interrupted transcript…');
-		await new Promise((resolve) => setTimeout(resolve, 1000));
-	}
+	const job = await waitForJob(
+		jobId,
+		AbortSignal.any([signal, AbortSignal.timeout(RECOVERY_DEADLINE_MS)]),
+		(running) => onProgress(running.progress || 'Recovering the interrupted transcript…')
+	);
+	if (job?.status === 'succeeded') return;
+	if (job)
+		throw new Error(job.error || `Audio recovery ${job.status}. Retry saving this recording.`);
 	throw new Error(
 		signal.aborted
 			? 'Audio recovery interrupted.'
@@ -149,15 +135,10 @@ export class BrowserRecorder {
 			}
 			await this.refreshDevices();
 			const name = `Recording ${new SvelteDate().toLocaleString()}`;
-			const response = await checked(
-				await fetch(`/api/projects/${projectId}/recordings`, {
-					method: 'POST',
-					headers: { 'content-type': 'application/json', 'x-studyloom-interaction': '1' },
-					body: JSON.stringify({ name, source })
-				})
+			const { materialId } = await api<{ materialId: string }>(
+				`/api/projects/${projectId}/recordings`,
+				{ body: { name, source } }
 			);
-			const { materialId } = await response.json();
-			if (typeof materialId !== 'string') throw new Error('The server did not create a recording.');
 			this.recording = {
 				id: materialId,
 				projectId,
@@ -445,32 +426,24 @@ export class BrowserRecorder {
 		this.storageFailure = false;
 		let chunk: AudioChunk | undefined;
 		while ((chunk = await firstPendingChunk(this.recording.id))) {
-			await checked(
-				await fetch(`/api/recordings/${this.recording.id}/chunks/${chunk.sequence}`, {
-					method: 'PUT',
-					headers: {
-						'content-type': 'application/octet-stream',
-						'x-start-sample': String(chunk.startSample)
-					},
-					body: chunk.pcm
-				})
-			);
+			await api(`/api/recordings/${this.recording.id}/chunks/${chunk.sequence}`, {
+				method: 'PUT',
+				headers: { 'x-start-sample': String(chunk.startSample) },
+				body: new Blob([chunk.pcm]),
+				interaction: false
+			});
 			await acknowledgeChunk(this.recording.id, chunk.sequence);
 			this.pending = Math.max(0, this.pending - 1);
 		}
-		const response = await checked(
-			await fetch(`/api/recordings/${this.recording.id}/recover`, {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					...(userInteraction ? { 'x-studyloom-interaction': '1' } : {})
-				},
-				body: JSON.stringify({ finalize })
-			})
+		const { jobId } = await api<{ jobId?: string }>(
+			`/api/recordings/${this.recording.id}/recover`,
+			{
+				body: { finalize },
+				interaction: userInteraction
+			}
 		);
 		if (!finalize) {
-			const { jobId } = await response.json();
-			if (typeof jobId !== 'string' || !jobId)
+			if (!jobId)
 				throw new Error('The server did not schedule audio recovery. Retry saving the recording.');
 			await waitForRecoveryJob(
 				jobId,

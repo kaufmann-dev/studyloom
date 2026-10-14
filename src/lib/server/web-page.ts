@@ -77,7 +77,7 @@ export function isPublicAddress(address: string) {
  * The connection uses exactly the addresses checked here, so a name that changes between a
  * check and the request (DNS rebinding) cannot reach the private network.
  */
-export const publicLookup: LookupFunction = (hostname, options, callback) => {
+const publicLookup: LookupFunction = (hostname, options, callback) => {
 	dnsLookup(hostname, { ...options, all: true }, (cause, addresses) => {
 		if (cause) return callback(cause, []);
 		if (!addresses.length || !addresses.every(({ address }) => isPublicAddress(address)))

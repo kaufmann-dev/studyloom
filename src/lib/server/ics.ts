@@ -29,7 +29,7 @@ const RULES: Record<Exclude<Repeat, 'none'>, string> = {
 };
 
 const encoder = new TextEncoder();
-export const escapeText = (value: string) =>
+const escapeText = (value: string) =>
 	value
 		.replace(/\\/g, '\\\\')
 		.replace(/\r?\n/g, '\\n')

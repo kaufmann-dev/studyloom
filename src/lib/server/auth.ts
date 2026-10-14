@@ -29,7 +29,7 @@ export function safeReturnTo(value: string | null | undefined): string {
 	}
 }
 let configuration: Promise<oidc.Configuration> | undefined;
-export function oidcConfig() {
+function oidcConfig() {
 	return (configuration ??= oidc
 		.discovery(
 			new URL(required('OIDC_ISSUER')),
