@@ -106,11 +106,13 @@ export function registerStudyTools(server: McpServer, author: string) {
 	server.registerTool(
 		'get_output',
 		{
-			title: 'Get overview, quiz or audio summary',
+			title: 'Get overview, quiz, audio summary or study session',
 			description:
-				'Returns a saved overview (markdown with citations), quiz (questions, answer key, rubrics and explanations) with its attempts and grades, or audio summary (transcript with citations, style (narration or tutor and learner dialogue), voices and duration).',
+				'Returns a saved overview (markdown with citations), quiz (questions, answer key, rubrics and explanations) with its attempts and grades, audio summary (transcript with citations, style (narration or tutor and learner dialogue), voices and duration), or spoken study session (plan with questions, key points and model answers) with its runs and graded answers.',
 			inputSchema: z.object({
-				outputId: idSchema.describe('Overview, quiz or audio summary ID from get_project.')
+				outputId: idSchema.describe(
+					'Overview, quiz, audio summary or study session ID from get_project.'
+				)
 			}),
 			annotations: readOnly
 		},

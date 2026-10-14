@@ -18,14 +18,13 @@
 		modelId,
 		onRefresh,
 		onDeleted
-
-		/** Ids of the sources that hold readable text and can back chat and study tools. */
-		/** Model used when a source is processed again. */
 	}: {
 		projectId: string;
 		materials: Material[];
+		/** Ids of the sources that hold readable text and can back chat and study tools. */
 		selectable: string[];
 		selected: string[];
+		/** Model used when a source is processed again. */
 		modelId: string;
 		onRefresh: (interaction?: boolean) => void | Promise<void>;
 		onDeleted: (id: string) => void | Promise<void>;

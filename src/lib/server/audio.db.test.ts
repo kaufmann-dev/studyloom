@@ -1,16 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RequestEvent } from '@sveltejs/kit';
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import { api } from './api';
 import { db, closeDatabase } from './db';
 import { jobs, materials, outputs, projects, sourceChunks, studyAnswers } from './db/schema';
 import { silenceMp3 } from './audio';
 import { speak, speechCatalog } from './elevenlabs';
 import { startWorkers } from './jobs';
 import { museRun } from './muse';
+import { callApi, useTestDatabase } from './testing';
 
 vi.mock('./muse', async (importOriginal) => ({
 	...(await importOriginal<typeof import('./muse')>()),
@@ -33,38 +31,21 @@ const turns = [
 // Parts start with a real frame header, because silence is written in the parts' own format.
 const HEADER = Buffer.from([0xff, 0xfb, 0x90, 0xc4]);
 const part = (tag: string) => Buffer.concat([HEADER, Buffer.from(tag)]);
+async function waitFor(jobId: string, status: string) {
+	for (let i = 0; i < 200; i++) {
+		const [job] = await db().select().from(jobs).where(eq(jobs.id, jobId));
+		if (job.status === status) return job;
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	throw new Error(`Job did not reach ${status}.`);
+}
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 	it('voices a cited dialogue in two voices, resumes after a failure and serves the joined MP3', async () => {
-		const previousDatabaseUrl = process.env.DATABASE_URL;
-		const previousDataDir = process.env.DATA_DIR;
-		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-		const data = await mkdtemp(join(tmpdir(), 'studyloom-audio-'));
-		process.env.DATA_DIR = data;
+		const environment = await useTestDatabase('audio');
+		const { data } = environment;
 		const [project] = await db().insert(projects).values({ name: 'Navigation' }).returning();
-		const call = (path: string, init: { method?: string; body?: unknown; range?: string } = {}) => {
-			const request = new Request(`https://studyloom.test${path}`, {
-				method: init.method ?? (init.body ? 'POST' : 'GET'),
-				body: init.body ? JSON.stringify(init.body) : undefined,
-				headers: {
-					'content-type': 'application/json',
-					...(init.range ? { range: init.range } : {})
-				}
-			});
-			return api({
-				url: new URL(request.url),
-				request,
-				locals: { session: { subject: 'test', name: 'Test' } }
-			} as RequestEvent);
-		};
-		const waitFor = async (jobId: string, status: string) => {
-			for (let i = 0; i < 200; i++) {
-				const [job] = await db().select().from(jobs).where(eq(jobs.id, jobId));
-				if (job.status === status) return job;
-				await new Promise((resolve) => setTimeout(resolve, 50));
-			}
-			throw new Error(`Job did not reach ${status}.`);
-		};
+		const call = callApi;
 		const stop = startWorkers();
 		try {
 			const [material] = await db()
@@ -201,7 +182,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 			const file = await call(`/api/outputs/${output.id}/audio`);
 			expect(file.headers.get('content-type')).toBe('audio/mpeg');
 			expect(Buffer.from(await file.arrayBuffer())).toEqual(expected);
-			const partial = await call(`/api/outputs/${output.id}/audio`, { range: 'bytes=4-6' });
+			const partial = await call(`/api/outputs/${output.id}/audio`, {
+				headers: { range: 'bytes=4-6' }
+			});
 			expect(partial.status).toBe(206);
 			expect(await partial.text()).toBe('one');
 			await expect(access(join(data, 'audio', output.id, 'parts'))).rejects.toThrow();
@@ -214,43 +197,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 			await stop();
 			await db().delete(projects).where(eq(projects.id, project.id));
 			await closeDatabase();
-			await rm(data, { recursive: true, force: true });
-			if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-			else process.env.DATABASE_URL = previousDatabaseUrl;
-			if (previousDataDir === undefined) delete process.env.DATA_DIR;
-			else process.env.DATA_DIR = previousDataDir;
+			await environment.restore();
 		}
 	});
 });
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('Study sessions', () => {
 	it('plans and pre-voices a session, then keeps one open run with its answers', async () => {
-		const previousDatabaseUrl = process.env.DATABASE_URL;
-		const previousDataDir = process.env.DATA_DIR;
-		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-		const data = await mkdtemp(join(tmpdir(), 'studyloom-study-'));
-		process.env.DATA_DIR = data;
+		const environment = await useTestDatabase('study');
+		const { data } = environment;
 		const [project] = await db().insert(projects).values({ name: 'Biology' }).returning();
-		const call = (path: string, body?: unknown) => {
-			const request = new Request(`https://studyloom.test${path}`, {
-				method: body ? 'POST' : 'GET',
-				body: body ? JSON.stringify(body) : undefined,
-				headers: { 'content-type': 'application/json' }
-			});
-			return api({
-				url: new URL(request.url),
-				request,
-				locals: { session: { subject: 'test', name: 'Test' } }
-			} as RequestEvent);
-		};
-		const waitFor = async (jobId: string, status: string) => {
-			for (let i = 0; i < 200; i++) {
-				const [job] = await db().select().from(jobs).where(eq(jobs.id, jobId));
-				if (job.status === status) return job;
-				await new Promise((resolve) => setTimeout(resolve, 50));
-			}
-			throw new Error(`Job did not reach ${status}.`);
-		};
+		const call = (path: string, body?: unknown) => callApi(path, { body });
 		const stop = startWorkers();
 		try {
 			const [material] = await db()
@@ -367,11 +324,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Study sessions', () => {
 			await stop();
 			await db().delete(projects).where(eq(projects.id, project.id));
 			await closeDatabase();
-			await rm(data, { recursive: true, force: true });
-			if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-			else process.env.DATABASE_URL = previousDatabaseUrl;
-			if (previousDataDir === undefined) delete process.env.DATA_DIR;
-			else process.env.DATA_DIR = previousDataDir;
+			await environment.restore();
 		}
 	});
 });

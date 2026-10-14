@@ -18,6 +18,7 @@ import type {
 	AudioInfo,
 	Citation,
 	FeedbackHeader,
+	JobKind,
 	Quiz,
 	Grade,
 	Repeat,
@@ -481,9 +482,7 @@ export const jobs = pgTable(
 			.notNull()
 			.references(() => projects.id, { onDelete: 'cascade' }),
 		materialId: uuid('material_id').references(() => materials.id, { onDelete: 'cascade' }),
-		kind: text('kind')
-			.$type<'ingest' | 'chat' | 'summary' | 'quiz' | 'audio' | 'session' | 'grade' | 'recover'>()
-			.notNull(),
+		kind: text('kind').$type<JobKind>().notNull(),
 		queue: text('queue').$type<'interactive' | 'background'>().notNull(),
 		status: text('status')
 			.$type<'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'>()

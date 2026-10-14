@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Headphones, Mic, Square, SkipForward } from '@lucide/svelte';
+	import { STUDY_VERDICT_LABELS } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import type { TutorSession } from '#lib/study/tutor.svelte.js';
 	import ErrorAlert from './ErrorAlert.svelte';
@@ -13,12 +14,6 @@
 		feedback: 'Feedback',
 		complete: 'Session complete',
 		stopped: 'Paused'
-	};
-	const VERDICTS = {
-		correct: 'Correct',
-		partial: 'Partly right',
-		incorrect: 'Not quite',
-		none: 'No answer'
 	};
 	let active = $derived(tutor.phase !== 'complete' && tutor.phase !== 'stopped');
 	let label = $derived(
@@ -47,7 +42,8 @@
 	<p class="text-lg font-medium" role="status">
 		{#if tutor.phase === 'listening'}<Mic class="mr-1 inline size-5" />{/if}{PHASES[tutor.phase]}
 		{#if tutor.verdict && tutor.phase === 'feedback'}
-			<span class="ml-2 text-sm font-normal text-muted-foreground">· {VERDICTS[tutor.verdict]}</span
+			<span class="ml-2 text-sm font-normal text-muted-foreground"
+				>· {STUDY_VERDICT_LABELS[tutor.verdict]}</span
 			>
 		{/if}
 	</p>

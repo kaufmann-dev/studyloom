@@ -1,44 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { RequestEvent } from '@sveltejs/kit';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import { api } from './api';
 import { db, closeDatabase } from './db';
 import { projects } from './db/schema';
+import { callApi, useTestDatabase } from './testing';
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('Library and pins', () => {
 	it('stores nested items and files, rejects folder cycles, and removes deleted pins', async () => {
-		const previousDatabaseUrl = process.env.DATABASE_URL;
-		const previousDataDir = process.env.DATA_DIR;
-		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-		const data = await mkdtemp(join(tmpdir(), 'studyloom-library-'));
-		process.env.DATA_DIR = data;
-		const call = async (path: string, method = 'GET', body?: unknown) => {
-			const request = new Request(`https://studyloom.test${path}`, {
-				method,
-				body:
-					body === undefined
-						? undefined
-						: Buffer.isBuffer(body)
-							? new Blob([Uint8Array.from(body)])
-							: JSON.stringify(body),
-				headers:
-					body === undefined
-						? {}
-						: {
-								'content-type': Buffer.isBuffer(body)
-									? 'application/octet-stream'
-									: 'application/json'
-							}
-			});
-			return api({
-				url: new URL(request.url),
-				request,
-				locals: { session: { subject: 'test', name: 'Test' } }
-			} as RequestEvent);
-		};
+		const environment = await useTestDatabase('library');
+		const call = (path: string, method = 'GET', body?: unknown) => callApi(path, { method, body });
 		const parse = async <T>(path: string, method = 'GET', body?: unknown): Promise<T> =>
 			(await call(path, method, body)).json();
 		const [project] = await db().insert(projects).values({ name: 'Pinned project' }).returning();
@@ -117,11 +86,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Library and pins', () => {
 		} finally {
 			await db().delete(projects).where(eq(projects.id, project.id));
 			await closeDatabase();
-			await rm(data, { recursive: true, force: true });
-			if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-			else process.env.DATABASE_URL = previousDatabaseUrl;
-			if (previousDataDir === undefined) delete process.env.DATA_DIR;
-			else process.env.DATA_DIR = previousDataDir;
+			await environment.restore();
 		}
 	});
 });

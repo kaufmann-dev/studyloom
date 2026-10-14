@@ -3,9 +3,9 @@
 	import { AudioLines, ArrowRight } from '@lucide/svelte';
 	import Button from '#lib/components/ui/button/button.svelte';
 	const legalDomain = 'studyloom.kaufmann.dev';
-	let returnTo = $derived(page.url.searchParams.get('returnTo') ?? '/');
+	// The server only returns to local pages, whatever arrives here.
 	let signInHref = $derived(
-		`/auth/start?returnTo=${encodeURIComponent(returnTo.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/')}`
+		`/auth/start?returnTo=${encodeURIComponent(page.url.searchParams.get('returnTo') ?? '/')}`
 	);
 </script>
 

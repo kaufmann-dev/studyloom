@@ -12,6 +12,7 @@ import {
 	AUDIO_STYLES,
 	DEFAULT_MODEL,
 	SESSION_LENGTHS,
+	SPEAKER_LABELS,
 	audioScriptSchema,
 	studyPlanSchema,
 	type StudyPlan,
@@ -477,7 +478,6 @@ function pauseAfterMs(script: AudioScript, i: number) {
 const MAX_PAUSE_MS = 60_000;
 const scriptCharacters = (script: AudioScript) =>
 	script.turns.reduce((sum, turn) => sum + turn.text.length, 0);
-const SPEAKER_LABELS: Record<string, string> = { tutor: 'Tutor', learner: 'Learner' };
 /** The readable transcript: plain paragraphs for a narration, labelled turns for a dialogue. */
 function audioTranscript(style: AudioStyle, script: AudioScript) {
 	return script.turns

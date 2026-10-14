@@ -281,8 +281,6 @@ export class BrowserRecorder {
 					};
 					this.turns = [...this.turns.filter((item) => item.id !== id), turn].slice(-100);
 				}
-				if (event.type === 'status' && typeof event.message === 'string')
-					this.message = event.message;
 				if (event.type === 'error') {
 					this.error =
 						typeof event.message === 'string'

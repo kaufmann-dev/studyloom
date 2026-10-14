@@ -1,26 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RequestEvent } from '@sveltejs/kit';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { quizSchema, textSourceInput } from '../domain';
-import { api } from './api';
 import { db, closeDatabase } from './db';
 import { projects } from './db/schema';
 import { outputDetails } from './endpoints/study';
 import { addTextSource, readSource, saveOverview, saveQuiz, searchSources } from './sources';
 import { originalPath } from './storage';
+import { callApi, useTestDatabase } from './testing';
 
 const filler = (word: string) => `${word} `.repeat(120).trim();
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('Sources written by MCP clients', () => {
 	it('stores, searches, reads and cites text sources', async () => {
-		const previousDatabaseUrl = process.env.DATABASE_URL;
-		const previousDataDir = process.env.DATA_DIR;
-		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-		const data = await mkdtemp(join(tmpdir(), 'studyloom-sources-'));
-		process.env.DATA_DIR = data;
+		const environment = await useTestDatabase('sources');
 		vi.stubEnv('ORIGIN', 'https://studyloom.test');
 		const [project] = await db().insert(projects).values({ name: 'Biology' }).returning();
 		try {
@@ -113,28 +106,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Sources written by MCP clients'
 			});
 
 			// Multiple-choice quizzes written by a client are graded without Muse.
-			const request = new Request(`https://studyloom.test/api/outputs/${saved.id}/attempts`, {
-				method: 'POST',
-				body: JSON.stringify({ answers: [{ questionId: 'q1', value: 'Chlorophyll' }] }),
-				headers: { 'content-type': 'application/json' }
+			const response = await callApi(`/api/outputs/${saved.id}/attempts`, {
+				body: { answers: [{ questionId: 'q1', value: 'Chlorophyll' }] }
 			});
-			const response = await api({
-				url: new URL(request.url),
-				request,
-				locals: { session: { subject: 'test', name: 'Test' } }
-			} as RequestEvent);
 			expect(response.status).toBe(202);
 			const { attempts } = await outputDetails(saved.id);
 			expect(attempts[0]).toMatchObject({ status: 'complete', score: 1, maxScore: 1 });
 		} finally {
 			await db().delete(projects).where(eq(projects.id, project.id));
 			await closeDatabase();
-			await rm(data, { recursive: true, force: true });
+			await environment.restore();
 			vi.unstubAllEnvs();
-			if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-			else process.env.DATABASE_URL = previousDatabaseUrl;
-			if (previousDataDir === undefined) delete process.env.DATA_DIR;
-			else process.env.DATA_DIR = previousDataDir;
 		}
 	});
 });

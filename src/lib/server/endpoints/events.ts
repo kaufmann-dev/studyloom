@@ -2,8 +2,8 @@ import { error } from '@sveltejs/kit';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, getTableColumns, gt, inArray, ne, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
-import { diffDays, isOccurrence } from '../../calendar';
-import { db } from '../db';
+import { cancelledOccurrence, diffDays, isOccurrence } from '../../calendar';
+import { db, type Transaction } from '../db';
 import * as t from '../db/schema';
 import { eventInput, eventPatchInput, exceptionInput, idSchema } from '../../domain';
 import { ClientError } from '../config';
@@ -144,8 +144,7 @@ export async function deleteEvent(id: string | undefined) {
 	const row = await findEvent(id);
 	await db().delete(t.events).where(eq(t.events.id, row.id));
 }
-type Tx = Parameters<Parameters<ReturnType<typeof db>['transaction']>[0]>[0];
-const touch = (tx: Tx, id: string) =>
+const touch = (tx: Transaction, id: string) =>
 	tx.update(t.events).set({ updatedAt: new Date() }).where(eq(t.events.id, id));
 /** Cancels or changes one occurrence of a repeating event. */
 export async function setOccurrence(
@@ -159,17 +158,9 @@ export async function setOccurrence(
 		throw new ClientError(400, 'That date is not part of this repeating event.');
 	const change =
 		'cancelled' in input
-			? {
-					cancelled: true,
-					title: null,
-					location: null,
-					notes: null,
-					startDate: null,
-					startTime: null,
-					endDate: null,
-					endTime: null
-				}
+			? cancelledOccurrence(date)
 			: {
+					occurrenceDate: date,
 					cancelled: false,
 					title: input.title.trim(),
 					location: input.location,
@@ -182,7 +173,7 @@ export async function setOccurrence(
 	await db().transaction(async (tx) => {
 		await tx
 			.insert(t.eventExceptions)
-			.values({ eventId: row.id, occurrenceDate: date, ...change })
+			.values({ eventId: row.id, ...change })
 			.onConflictDoUpdate({
 				target: [t.eventExceptions.eventId, t.eventExceptions.occurrenceDate],
 				set: change

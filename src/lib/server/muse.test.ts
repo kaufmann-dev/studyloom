@@ -44,7 +44,7 @@ describe('muse binary resolution', () => {
 describe('muse stale-login detection', () => {
 	const loggedIn: MuseAccount = {
 		state: 'accountLogin',
-		label: 'david@kaufmann.dev',
+		label: 'learner@example.com',
 		credentialRequired: true
 	};
 	const model: MuseModel = {

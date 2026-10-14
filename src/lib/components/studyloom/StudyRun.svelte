@@ -1,5 +1,10 @@
 <script lang="ts">
-	import type { Material, StudyPlan, StudyRun } from '#lib/domain.js';
+	import {
+		STUDY_VERDICT_LABELS,
+		type Material,
+		type StudyPlan,
+		type StudyRun
+	} from '#lib/domain.js';
 	import Badge from '#lib/components/ui/badge/badge.svelte';
 	import { dateLabel } from '#lib/ui.js';
 	import Citations from './Citations.svelte';
@@ -10,12 +15,6 @@
 		projectId,
 		materials
 	}: { run: StudyRun; plan: StudyPlan; projectId: string; materials: Material[] } = $props();
-	const VERDICTS = {
-		correct: 'Correct',
-		partial: 'Partly right',
-		incorrect: 'Not quite',
-		none: 'No answer'
-	};
 	let review = $derived(run.answers.filter((answer) => answer.gap));
 	let parts = $derived(
 		plan.segments
@@ -53,7 +52,7 @@
 					<div class="space-y-1 text-sm">
 						<p>
 							<Badge variant={answer.verdict === 'correct' ? 'secondary' : 'outline'}
-								>{VERDICTS[answer.verdict]}</Badge
+								>{STUDY_VERDICT_LABELS[answer.verdict]}</Badge
 							>
 							<span class="ml-1 text-muted-foreground"
 								>{answer.answer ? `“${answer.answer}”` : 'No answer given'}</span

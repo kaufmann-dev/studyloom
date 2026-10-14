@@ -1,6 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -8,6 +7,7 @@ import type { WebSocket } from 'ws';
 import { closeDatabase, db } from '../lib/server/db';
 import { outputs, projects, studyAnswers, studyRuns } from '../lib/server/db/schema';
 import type { AsrEvents } from '../lib/server/realtime-asr';
+import { useTestDatabase } from '../lib/server/testing';
 import type { StudyPlan } from '../lib/domain';
 
 const asr = vi.hoisted(() => ({ events: undefined as AsrEvents | undefined }));
@@ -82,11 +82,8 @@ const plan: StudyPlan = {
 /** Runs a test against a fresh two-part session with its clips on disk. */
 async function withSession(test: (outputId: string, runId: string) => Promise<void>) {
 	prompts.length = replies.length = 0;
-	const previousDatabaseUrl = process.env.DATABASE_URL;
-	const previousDataDir = process.env.DATA_DIR;
-	process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-	const data = await mkdtemp(join(tmpdir(), 'studyloom-socket-'));
-	process.env.DATA_DIR = data;
+	const environment = await useTestDatabase('socket');
+	const { data } = environment;
 	const [project] = await db().insert(projects).values({ name: 'Socket' }).returning();
 	try {
 		const [output] = await db()
@@ -123,11 +120,7 @@ async function withSession(test: (outputId: string, runId: string) => Promise<vo
 		await test(output.id, run.id);
 	} finally {
 		await db().delete(projects).where(eq(projects.id, project.id));
-		if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-		else process.env.DATABASE_URL = previousDatabaseUrl;
-		if (previousDataDir === undefined) delete process.env.DATA_DIR;
-		else process.env.DATA_DIR = previousDataDir;
-		await rm(data, { recursive: true, force: true });
+		await environment.restore();
 	}
 }
 
@@ -285,6 +278,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Study session socket', () => {
 					feedback: 'Right again.'
 				}
 			]);
+		});
+	});
+	it('ends the session on a malformed message instead of throwing out of the socket', async () => {
+		await withSession(async (outputId, runId) => {
+			const client = browser([]);
+			const closed = new Promise<number>((resolve) => client.on('close', resolve));
+			const session = studySession(client as unknown as WebSocket, outputId, runId, 'token');
+			client.emit('message', Buffer.from('not json'), false);
+			await session;
+			expect(await closed).toBe(1011);
+			expect(client.sent).toContainEqual({
+				type: 'error',
+				message: 'Unknown study session message.',
+				retryable: true
+			});
 		});
 	});
 	afterAll(() => closeDatabase());

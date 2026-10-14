@@ -43,6 +43,15 @@ describe('runCommand', () => {
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
+	it('keeps a character whole when it arrives split across two output chunks', async () => {
+		const dir = await jobDir();
+		try {
+			// "ä" is 0xC3 0xA4 in UTF-8; the pause makes the two bytes separate chunks.
+			expect(await runCommand(dir, "printf '\\303'; sleep 0.2; printf '\\244\\n'")).toBe('ä\n');
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 	it('propagates command failure', async () => {
 		const dir = await jobDir();
 		try {

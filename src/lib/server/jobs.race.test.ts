@@ -4,10 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { db, closeDatabase } from './db';
 import { jobs, outputs, projects } from './db/schema';
 import { completeJob } from './jobs';
+import { useTestDatabase } from './testing';
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('job completion and cancellation', () => {
 	it('publishes a result only when completion wins the job lock', async () => {
-		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+		const environment = await useTestDatabase('race');
 		const [project] = await db().insert(projects).values({ name: 'Job race test' }).returning();
 		const owner = randomUUID();
 		const makeJob = async () => {
@@ -101,6 +102,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('job completion and cancellation
 		} finally {
 			await db().delete(projects).where(eq(projects.id, project.id));
 			await closeDatabase();
+			await environment.restore();
 		}
 	});
 });

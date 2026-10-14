@@ -1,18 +1,20 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { isActiveJob, type Job } from '#lib/domain.js';
+	import { isActiveJob, type Job, type JobKind } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { api, errorText } from '#lib/ui.js';
 
 	let { jobs, onChanged }: { jobs: Job[]; onChanged: () => void | Promise<void> } = $props();
 
-	const KIND_LABELS: Record<string, string> = {
+	const KIND_LABELS: Record<JobKind, string> = {
 		ingest: 'Processing source',
 		recover: 'Saving recording',
 		chat: 'Chat answer',
 		summary: 'Summary',
 		quiz: 'Quiz',
+		audio: 'Audio summary',
+		session: 'Study session',
 		grade: 'Grading'
 	};
 	let busy = $state('');
@@ -40,7 +42,7 @@
 		{#each active as job (job.id)}
 			<div class="border p-3">
 				<p class="flex items-center gap-2 text-xs font-medium">
-					<Spinner class="size-3" role="presentation" />{KIND_LABELS[job.kind] ?? job.kind}
+					<Spinner class="size-3" role="presentation" />{KIND_LABELS[job.kind]}
 					{#if job.status === 'queued'}<span class="font-normal text-muted-foreground"
 							>· queued</span
 						>{/if}
@@ -67,7 +69,7 @@
 		<ul class="mt-2 space-y-2">
 			{#each interrupted as job (job.id)}
 				<li class="border p-3 text-xs">
-					<p class="font-medium">{KIND_LABELS[job.kind] ?? job.kind}</p>
+					<p class="font-medium">{KIND_LABELS[job.kind]}</p>
 					<p class="mt-1 break-words text-destructive">
 						{job.error || (job.status === 'cancelled' ? 'Cancelled' : 'Failed')}
 					</p>

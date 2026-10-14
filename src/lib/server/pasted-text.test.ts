@@ -1,14 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RequestEvent } from '@sveltejs/kit';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
-import { api } from './api';
 import { db, closeDatabase } from './db';
 import { materials, projects } from './db/schema';
 import { pastedSections, searchSources } from './sources';
 import { originalPath } from './storage';
+import { callApi, useTestDatabase } from './testing';
 
 describe('Pasted text parts', () => {
 	it('keeps whole paragraphs together in citable parts', () => {
@@ -30,28 +27,10 @@ describe('Pasted text parts', () => {
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('Pasted text sources', () => {
 	it('stores pasted text unchanged as a ready, searchable source', async () => {
-		const previousDatabaseUrl = process.env.DATABASE_URL;
-		const previousDataDir = process.env.DATA_DIR;
-		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-		const data = await mkdtemp(join(tmpdir(), 'studyloom-paste-'));
-		process.env.DATA_DIR = data;
+		const environment = await useTestDatabase('paste');
 		vi.stubEnv('ORIGIN', 'https://studyloom.test');
 		const [project] = await db().insert(projects).values({ name: 'Notes' }).returning();
-		const call = (body: unknown) => {
-			const request = new Request(
-				`https://studyloom.test/api/projects/${project.id}/text-sources`,
-				{
-					method: 'POST',
-					body: JSON.stringify(body),
-					headers: { 'content-type': 'application/json' }
-				}
-			);
-			return api({
-				url: new URL(request.url),
-				request,
-				locals: { session: { subject: 'test', name: 'Test' } }
-			} as RequestEvent);
-		};
+		const call = (body: unknown) => callApi(`/api/projects/${project.id}/text-sources`, { body });
 		try {
 			const text = 'Lecture 3: Osmosis\n\nWater crosses the membrane towards more salt.';
 			const response = await call({ name: '', text });
@@ -79,12 +58,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Pasted text sources', () => {
 		} finally {
 			await db().delete(projects).where(eq(projects.id, project.id));
 			await closeDatabase();
-			await rm(data, { recursive: true, force: true });
+			await environment.restore();
 			vi.unstubAllEnvs();
-			if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-			else process.env.DATABASE_URL = previousDatabaseUrl;
-			if (previousDataDir === undefined) delete process.env.DATA_DIR;
-			else process.env.DATA_DIR = previousDataDir;
 		}
 	});
 });

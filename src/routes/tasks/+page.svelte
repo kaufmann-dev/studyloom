@@ -1,12 +1,11 @@
 <script lang="ts">
 	import { ListTodo, Plus } from '@lucide/svelte';
-	import type { Task } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import ErrorAlert from '#lib/components/studyloom/ErrorAlert.svelte';
 	import TaskDialog from '#lib/components/studyloom/tasks/TaskDialog.svelte';
 	import TaskList from '#lib/components/studyloom/tasks/TaskList.svelte';
-	import { urgency } from '#lib/tasks.js';
+	import { urgency, type Urgency } from '#lib/tasks.js';
 	import { getTasks } from '#lib/tasks.svelte.js';
 	import { errorText, plural } from '#lib/ui.js';
 
@@ -17,8 +16,8 @@
 	let creating = $state(false);
 	let now = $derived(tasks.clock.now);
 	let groups = $derived.by(() => {
-		const by = (...states: string[]) =>
-			tasks.open.filter((task: Task) => states.includes(urgency(task, now)));
+		const by = (...states: Urgency[]) =>
+			tasks.open.filter((task) => states.includes(urgency(task, now)));
 		return [
 			{ title: 'Do now', tasks: by('overdue', 'today') },
 			{ title: 'Next 3 days', tasks: by('soon') },

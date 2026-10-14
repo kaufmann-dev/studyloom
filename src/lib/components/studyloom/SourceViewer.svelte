@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import type { Path } from '$app/types';
 	import { onMount } from 'svelte';
 	import { Download, Copy, ExternalLink, X } from '@lucide/svelte';
 	import type { MaterialDetails } from '#lib/domain.js';
@@ -170,8 +169,9 @@
 									class="max-h-80 w-full object-contain"
 								/>{/if}
 							<figcaption class="text-xs text-muted-foreground">
-								<a href={resolve(`/api/assets/${asset.id}/file` as Path)} class="underline"
-									>{asset.label || 'Open asset'}</a
+								<a
+									href={resolve('/api/[...path]', { path: `assets/${asset.id}/file` })}
+									class="underline">{asset.label || 'Open asset'}</a
 								>
 
 								· {asset.locator}

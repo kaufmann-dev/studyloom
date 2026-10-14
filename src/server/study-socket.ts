@@ -23,6 +23,7 @@ import {
 	type Position
 } from '../lib/server/study-run';
 import {
+	FALLBACK_HEADER,
 	FeedbackStream,
 	TutorConversation,
 	WRAP_UP_PROMPT,
@@ -90,7 +91,8 @@ export async function studySession(
 	const endRequested = new Promise<void>((resolve) => (ended = resolve));
 	client.on('message', (raw, isBinary) => {
 		if (isBinary) return onAudio?.(Buffer.from(raw as Buffer));
-		const parsed = messageSchema.safeParse(JSON.parse(raw.toString()));
+		// A throw here would escape ws and end the whole server process.
+		const parsed = messageSchema.safeParse(parseJson(raw.toString()));
 		if (!parsed.success) return fail(new Error('Unknown study session message.'));
 		const message = parsed.data;
 		if (message.type === 'played') onPlayed?.(message.clip);
@@ -392,11 +394,7 @@ export async function studySession(
 					'feedback',
 					true
 				);
-				const graded = header ?? {
-					verdict: 'partial' as const,
-					next: 'continue' as const,
-					gap: ''
-				};
+				const graded = header ?? FALLBACK_HEADER;
 				const next = finalNext(position.attempt, graded.next);
 				const [saved] = await db()
 					.insert(t.studyAnswers)
@@ -433,6 +431,14 @@ export async function studySession(
 		stop(1000);
 	} catch (e) {
 		if (!closed) fail(e);
+	}
+}
+
+function parseJson(text: string): unknown {
+	try {
+		return JSON.parse(text);
+	} catch {
+		return undefined;
 	}
 }
 

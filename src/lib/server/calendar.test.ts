@@ -1,29 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import type { RequestEvent } from '@sveltejs/kit';
+import { describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { api } from './api';
 import { db, closeDatabase } from './db';
 import { events, projects, tasks } from './db/schema';
 import { feedResponse } from './endpoints/calendar';
+import { callApi, useTestDatabase } from './testing';
 import type { CalendarEvent, CalendarFeed, ImportSummary, Task } from '../domain';
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('Tasks, events and the calendar feed', () => {
 	it('manages tasks, repeating events, the feed, import and export', async () => {
-		const previous = { url: process.env.DATABASE_URL, origin: process.env.ORIGIN };
-		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-		process.env.ORIGIN = 'https://studyloom.test';
-		const call = (path: string, method = 'GET', body?: unknown) => {
-			const request = new Request(`https://studyloom.test${path}`, {
-				method,
-				body: body === undefined ? undefined : JSON.stringify(body),
-				headers: body === undefined ? {} : { 'content-type': 'application/json' }
-			});
-			return api({
-				url: new URL(request.url),
-				request,
-				locals: { session: { subject: 'test', name: 'Test' } }
-			} as RequestEvent);
-		};
+		const environment = await useTestDatabase('calendar');
+		vi.stubEnv('ORIGIN', 'https://studyloom.test');
+		const call = (path: string, method = 'GET', body?: unknown) => callApi(path, { method, body });
 		const parse = async <T>(path: string, method = 'GET', body?: unknown): Promise<T> =>
 			(await call(path, method, body)).json();
 		const openTasks = async () => (await parse<{ tasks: Task[] }>('/api/tasks')).tasks;
@@ -240,8 +227,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Tasks, events and the calendar 
 			await db().delete(tasks);
 			await db().execute('delete from calendar_feed');
 			await closeDatabase();
-			process.env.DATABASE_URL = previous.url;
-			process.env.ORIGIN = previous.origin;
+			await environment.restore();
+			vi.unstubAllEnvs();
 		}
 	});
 });

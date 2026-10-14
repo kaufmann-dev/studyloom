@@ -334,6 +334,8 @@ export const AUDIO_STYLES = {
 	dialogue: { label: 'Tutor and learner', speakers: ['tutor', 'learner'] }
 } as const;
 export type AudioStyle = keyof typeof AUDIO_STYLES;
+/** How a dialogue's speakers are named in its transcript; a narrator stays unnamed. */
+export const SPEAKER_LABELS: Record<string, string> = { tutor: 'Tutor', learner: 'Learner' };
 /** Spoken study sessions: how many parts. */
 export const SESSION_LENGTHS = {
 	short: { segments: 4, label: 'Short (~10 min)' },
@@ -445,6 +447,12 @@ export const studyPlanSchema = z.object({
 export type StudyPlan = z.infer<typeof studyPlanSchema>;
 export const STUDY_VERDICTS = ['correct', 'partial', 'incorrect', 'none'] as const;
 export type StudyVerdict = (typeof STUDY_VERDICTS)[number];
+export const STUDY_VERDICT_LABELS: Record<StudyVerdict, string> = {
+	correct: 'Correct',
+	partial: 'Partly right',
+	incorrect: 'Not quite',
+	none: 'No answer'
+};
 /** The first line of every live feedback reply: the grade and what happens next. */
 export const feedbackHeaderSchema = z.object({
 	verdict: z.enum(STUDY_VERDICTS),
@@ -517,6 +525,8 @@ export type Citation = z.infer<typeof citationSchema>;
 export type Quiz = z.infer<typeof quizSchema>;
 export type Question = z.infer<typeof questionSchema>;
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type JobKind =
+	'ingest' | 'chat' | 'summary' | 'quiz' | 'audio' | 'session' | 'grade' | 'recover';
 export const isActiveJob = (job: { status: JobStatus }) =>
 	job.status === 'queued' || job.status === 'running';
 export interface Project {
@@ -678,7 +688,7 @@ export interface Job {
 	id: string;
 	projectId: string;
 	materialId: string | null;
-	kind: string;
+	kind: JobKind;
 	status: JobStatus;
 	progress: string;
 	error: string | null;

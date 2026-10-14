@@ -189,7 +189,8 @@ export class TutorConversation {
 	}
 }
 
-const FALLBACK_HEADER: FeedbackHeader = { verdict: 'partial', next: 'continue', gap: '' };
+/** The grade assumed when a reply has no readable grading line. */
+export const FALLBACK_HEADER: FeedbackHeader = { verdict: 'partial', next: 'continue', gap: '' };
 /** Reads a header line; a reply without one keeps that line as speech. */
 function parseHeader(line: string): FeedbackHeader | undefined {
 	const cleaned = line.trim().replace(/^`+(json)?|`+$/g, '');

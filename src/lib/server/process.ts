@@ -41,16 +41,19 @@ export function runProcess(
 		}, options.timeoutMs ?? 120_000);
 		options.signal?.addEventListener('abort', abort, { once: true });
 		if (options.signal?.aborted) abort();
-		child.stdout.on('data', (chunk: Buffer) => {
-			bytes += chunk.length;
+		// Decoded as streams, so a character split across two chunks stays whole.
+		child.stdout.setEncoding('utf8');
+		child.stderr.setEncoding('utf8');
+		child.stdout.on('data', (chunk: string) => {
+			bytes += Buffer.byteLength(chunk);
 			if (bytes > (options.maxBytes ?? 8 * 1024 * 1024)) {
 				problem = new Error('Tool output exceeded its limit.');
 				kill();
 				return;
 			}
-			output += chunk.toString();
+			output += chunk;
 			if (options.onLine) {
-				pending += chunk.toString();
+				pending += chunk;
 				let end;
 				while ((end = pending.indexOf('\n')) >= 0) {
 					options.onLine(pending.slice(0, end));
@@ -58,8 +61,8 @@ export function runProcess(
 				}
 			}
 		});
-		child.stderr.on('data', (chunk: Buffer) => {
-			stderr = (stderr + chunk.toString()).slice(-8000);
+		child.stderr.on('data', (chunk: string) => {
+			stderr = (stderr + chunk).slice(-8000);
 		});
 		const clean = () => {
 			clearTimeout(timer);

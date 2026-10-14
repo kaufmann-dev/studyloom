@@ -8,7 +8,7 @@ import {
 	startOfWeek,
 	toZoned
 } from '@internationalized/date';
-import type { CalendarEvent, Occurrence } from './domain';
+import type { CalendarEvent, EventException, Occurrence } from './domain';
 
 /** The fields that decide when an event happens; shared by browser and server rows. */
 export type Series = Pick<
@@ -188,6 +188,18 @@ export function occurrences(events: Series[], from: string, to: string): Occurre
 			a.key.localeCompare(b.key)
 	);
 }
+/** The single-occurrence change that skips the occurrence of `occurrenceDate`. */
+export const cancelledOccurrence = (occurrenceDate: string): EventException => ({
+	occurrenceDate,
+	cancelled: true,
+	title: null,
+	location: null,
+	notes: null,
+	startDate: null,
+	startTime: null,
+	endDate: null,
+	endTime: null
+});
 /** Whether an occurrence covers the given day. */
 export const onDay = (occurrence: Pick<Occurrence, 'startDate' | 'endDate'>, date: string) =>
 	occurrence.startDate <= date && occurrence.endDate >= date;

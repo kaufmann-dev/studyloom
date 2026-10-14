@@ -3,6 +3,7 @@ import { parseDate, parseDateTime } from '@internationalized/date';
 import {
 	addDays,
 	addMinutes,
+	cancelledOccurrence,
 	diffDays,
 	isOccurrence,
 	isTimeZone,
@@ -10,20 +11,15 @@ import {
 	toUtc,
 	toWallClock
 } from '../calendar';
-import { eventInput, occurrenceInput, taskInput, type Repeat } from '../domain';
+import {
+	eventInput,
+	occurrenceInput,
+	taskInput,
+	type EventException,
+	type Repeat
+} from '../domain';
 import { ClientError } from './config';
 
-export interface ParsedException {
-	occurrenceDate: string;
-	cancelled: boolean;
-	title: string | null;
-	location: string | null;
-	notes: string | null;
-	startDate: string | null;
-	startTime: string | null;
-	endDate: string | null;
-	endTime: string | null;
-}
 export interface ParsedEvent {
 	uid: string;
 	title: string;
@@ -35,7 +31,7 @@ export interface ParsedEvent {
 	endTime: string | null;
 	repeat: Repeat;
 	repeatUntil: string | null;
-	exceptions: ParsedException[];
+	exceptions: EventException[];
 }
 export interface ParsedTask {
 	uid: string;
@@ -330,10 +326,11 @@ export function parseIcs(text: string, timeZone: string): ParsedCalendar {
 				const stamp = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(
 					completed?.value.trim() ?? ''
 				);
+				const { title, notes } = content(reader);
 				const task = {
 					uid,
-					title: content(reader).title,
-					notes: content(reader).notes,
+					title,
+					notes,
 					dueDate: due.date,
 					dueTime: due.time || null,
 					completedAt: !done
@@ -389,18 +386,7 @@ export function parseIcs(text: string, timeZone: string): ParsedCalendar {
 				for (const value of property.value.split(',')) {
 					const date = reader.value(value, property.params.TZID)?.date;
 					const owner = date && valid.find((event) => isOccurrence(event, date));
-					if (owner && date)
-						owner.exceptions.push({
-							occurrenceDate: date,
-							cancelled: true,
-							title: null,
-							location: null,
-							notes: null,
-							startDate: null,
-							startTime: null,
-							endDate: null,
-							endTime: null
-						});
+					if (owner && date) owner.exceptions.push(cancelledOccurrence(date));
 				}
 			events.set(uid, valid);
 		}
@@ -430,17 +416,7 @@ export function parseIcs(text: string, timeZone: string): ParsedCalendar {
 		owner.exceptions = owner.exceptions.filter((existing) => existing.occurrenceDate !== date);
 		owner.exceptions.push(
 			cancelled(reader) || !override
-				? {
-						occurrenceDate: date,
-						cancelled: true,
-						title: null,
-						location: null,
-						notes: null,
-						startDate: null,
-						startTime: null,
-						endDate: null,
-						endTime: null
-					}
+				? cancelledOccurrence(date)
 				: { occurrenceDate: date, cancelled: false, ...override }
 		);
 	}

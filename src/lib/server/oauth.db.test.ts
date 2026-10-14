@@ -11,14 +11,14 @@ import {
 	revokeConnection,
 	verifyAccessToken
 } from './oauth';
+import { useTestDatabase } from './testing';
 
 const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
 const challenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('OAuth for MCP clients', () => {
 	it('issues single-use codes, rotates refresh tokens and revokes connections', async () => {
-		const previousDatabaseUrl = process.env.DATABASE_URL;
-		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+		const environment = await useTestDatabase('oauth');
 		vi.stubEnv('ORIGIN', 'https://studyloom.test');
 		const clientIds: string[] = [];
 		const authorize = async (clientId: string, redirectUri: string) => {
@@ -122,9 +122,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('OAuth for MCP clients', () => {
 			if (clientIds.length)
 				await db().delete(oauthClients).where(inArray(oauthClients.id, clientIds));
 			await closeDatabase();
+			await environment.restore();
 			vi.unstubAllEnvs();
-			if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-			else process.env.DATABASE_URL = previousDatabaseUrl;
 		}
 	});
 });
