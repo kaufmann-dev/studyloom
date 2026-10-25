@@ -25,3 +25,6 @@ vite.config.ts.timestamp-*
 .data/
 .playwright-cli/
 .agent-browser/
+
+# pnpm
+.pnpm-store/
