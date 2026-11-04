@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { access, readFile, writeFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { db, closeDatabase } from './db';
@@ -7,15 +7,20 @@ import { jobs, materials, outputs, projects, sourceChunks, studyAnswers } from '
 import { silenceMp3 } from './audio';
 import { speak, speechCatalog } from './elevenlabs';
 import { startWorkers } from './jobs';
-import { museRun } from './muse';
+import { claudeRun } from './claude';
 import { callApi, useTestDatabase } from './testing';
 
-vi.mock('./muse', async (importOriginal) => ({
-	...(await importOriginal<typeof import('./muse')>()),
+vi.mock('./claude', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./claude')>()),
 	validateModel: vi.fn(async () => {}),
-	museRun: vi.fn()
+	claudeRun: vi.fn()
 }));
-vi.mock('./elevenlabs', () => ({ speechCatalog: vi.fn(), speak: vi.fn() }));
+vi.mock('./elevenlabs', () => ({
+	speechCatalog: vi.fn(),
+	speak: vi.fn(),
+	transcribeFile: vi.fn(),
+	requireTranscription: vi.fn()
+}));
 // Audio summaries and study sessions share this file: their job workers must never run at the
 // same time, or one test's worker would claim the other's job.
 
@@ -74,19 +79,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 					{ modelId: 'eleven_v4', name: 'Eleven v4', costMultiplier: 1, maxCharacters: 10000 }
 				]
 			});
-			vi.mocked(museRun).mockImplementation(async (workspace) => {
-				await writeFile(
-					join(workspace, 'files', 'result.json'),
-					JSON.stringify({
-						title: 'How a compass works',
-						turns,
-						citations: [
-							{ materialId: material.id, locator: 'page:1', quote: 'the Earth acts like a magnet' }
-						]
-					})
-				);
-				return { text: 'done', stderr: '' };
-			});
+			vi.mocked(claudeRun).mockImplementation(async () => ({
+				text: 'done',
+				stderr: '',
+				structured: {
+					title: 'How a compass works',
+					turns,
+					citations: [
+						{ materialId: material.id, locator: 'page:1', quote: 'the Earth acts like a magnet' }
+					]
+				}
+			}));
 			vi.mocked(speak)
 				.mockResolvedValueOnce({ audio: part('one'), requestId: 'req-1' })
 				.mockRejectedValueOnce(new Error('ElevenLabs credits are used up.'));
@@ -135,7 +138,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 				.mockResolvedValueOnce({ audio: part('three'), requestId: 'req-3' });
 			expect((await call(`/api/jobs/${jobId}/retry`, { body: {} })).status).toBe(202);
 			const done = await waitFor(jobId, 'succeeded');
-			expect(museRun).toHaveBeenCalledTimes(1);
+			expect(claudeRun).toHaveBeenCalledTimes(1);
 			expect(speak).toHaveBeenCalledTimes(4);
 			// Each voice is stitched only to its own earlier requests.
 			expect(vi.mocked(speak).mock.calls[2][0]).toMatchObject({
@@ -240,17 +243,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Study sessions', () => {
 				modelAnswer: 'Water moves towards the salt.',
 				citations
 			});
-			vi.mocked(museRun).mockImplementation(async (workspace) => {
-				await writeFile(
-					join(workspace, 'files', 'result.json'),
-					JSON.stringify({
-						title: 'Osmosis out loud',
-						intro: 'Four parts follow.',
-						segments: [1, 2, 3, 4].map(segment)
-					})
-				);
-				return { text: 'done', stderr: '' };
-			});
+			vi.mocked(claudeRun).mockImplementation(async () => ({
+				text: 'done',
+				stderr: '',
+				structured: {
+					title: 'Osmosis out loud',
+					intro: 'Four parts follow.',
+					segments: [1, 2, 3, 4].map(segment)
+				}
+			}));
 			vi.mocked(speak).mockImplementation(async ({ text, format }) => {
 				expect(format).toBe('pcm_24000');
 				return { audio: Buffer.from(text), requestId: `req-${text.length}` };

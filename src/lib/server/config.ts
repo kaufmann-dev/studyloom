@@ -31,7 +31,7 @@ export function safeError(error: unknown): string {
 	}
 	let message = error instanceof Error ? error.message : 'The operation failed.';
 	for (const name of [
-		'TRANSCRIPTION_API_KEY',
+		'CLAUDE_CODE_OAUTH_TOKEN',
 		'ELEVENLABS_API_KEY',
 		'OIDC_CLIENT_SECRET',
 		'DATABASE_URL'
@@ -41,6 +41,6 @@ export function safeError(error: unknown): string {
 	}
 	return message
 		.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
-		.replace(/LLM_[A-Za-z0-9_-]+/g, '[redacted]')
+		.replace(/sk-ant-[A-Za-z0-9_-]+/g, '[redacted]')
 		.slice(0, 2000);
 }

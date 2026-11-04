@@ -8,8 +8,8 @@ import { jobs, materials, projects } from './db/schema';
 import { callApi, useTestDatabase } from './testing';
 import { fetchWebPage } from './web-page';
 
-vi.mock('./muse', async (importOriginal) => ({
-	...(await importOriginal<typeof import('./muse')>()),
+vi.mock('./claude', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./claude')>()),
 	validateModel: vi.fn(async () => {})
 }));
 vi.mock('./web-page', () => ({ fetchWebPage: vi.fn() }));

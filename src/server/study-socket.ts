@@ -8,7 +8,7 @@ import { safeError } from '../lib/server/config';
 import { audioDir } from '../lib/server/audio';
 import { speakStream, speechCatalog } from '../lib/server/elevenlabs';
 import { studyClipKey, type Snapshot } from '../lib/server/jobs';
-import { gradingModel } from '../lib/server/muse';
+import { gradingModel } from '../lib/server/claude';
 import {
 	openRealtimeAsr,
 	requireTranscription,
@@ -132,7 +132,7 @@ export async function studySession(
 		conversation = new TutorConversation(runId, modelId, async () =>
 			primerPrompt(plan, excerpts, answers)
 		);
-		// Priming runs while the first part plays.
+		// The tutor session starts while the first part plays.
 		const warming = conversation.warm();
 		void warming.catch(() => {});
 		let position: Position = { segmentIndex: run.segmentIndex, attempt: run.attempt };
@@ -241,7 +241,7 @@ export async function studySession(
 				}
 			};
 		}
-		/** Speaks a reply as it streams from Muse; returns the grading line and the spoken text. */
+		/** Speaks a reply as it streams from Claude; returns the grading line and the spoken text. */
 		async function speakReply(prompt: string, kind: ClipKind, withHeader: boolean) {
 			const voice = speaker();
 			let voiceSignal = lifetime.signal;
@@ -320,8 +320,8 @@ export async function studySession(
 						answer.ready();
 						send(client, { type: 'listen' });
 					},
-					onPartial: (text) => send(client, { type: 'partial', text }),
-					onComplete: (_turn, text) => answer.complete(text),
+					onPartial: (_turn, text) => send(client, { type: 'partial', text }),
+					onComplete: (turn) => answer.complete(turn.text),
 					onError: failed,
 					// Events before the close are handled first, so the last words still count.
 					onClose: () =>

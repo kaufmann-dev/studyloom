@@ -1,17 +1,23 @@
 import { WebSocket } from 'ws';
-import { required } from './config';
-import { TRANSCRIPTION_MODEL } from '../domain';
+import { openTranscriptionSocket } from './elevenlabs';
 
-// TRANSCRIPTION_API_KEY stays in this broker: never pass it to Muse, commands or the browser.
-const ASR_URL = 'wss://api.meta.ai/v1/asr/realtime';
+export { requireTranscription } from './elevenlabs';
 
-/** Fails before any state changes when transcription is not configured. */
-export const requireTranscription = () => void required('TRANSCRIPTION_API_KEY');
+/** After "end", a commit result closes the stream once nothing else arrives for this long. */
+const END_QUIET_MS = 700;
+/** "end" closes the stream after this long even when the provider sends nothing more. */
+const END_MAX_MS = 4_000;
+const TRANSCRIPT_EVENTS = new Set([
+	'session_started',
+	'partial_transcript',
+	'committed_transcript',
+	'committed_transcript_with_timestamps'
+]);
 
 export function providerErrorMessage(event: unknown): string {
 	const detail =
 		event && typeof event === 'object'
-			? (['errorType', 'message'] as const)
+			? (['message_type', 'error'] as const)
 					.map((key) => (event as Record<string, unknown>)[key])
 					.filter((value): value is string => typeof value === 'string' && value.length > 0)
 					.join(' — ')
@@ -19,21 +25,22 @@ export function providerErrorMessage(event: unknown): string {
 			: '';
 	return detail
 		? `Transcription stream interrupted: ${detail}.`
-		: 'Transcription API rejected the stream. Check the API key and usage limits.';
+		: 'ElevenLabs rejected the transcription stream. Check the API key and usage limits.';
 }
 
-/**
- * Provider events, handled one at a time in arrival order. `offsetMs` is the audio processed
- * so far in this stream, when the provider reports it.
- */
+/** A finished segment of speech; times are milliseconds from the start of this stream. */
+export interface AsrTurn {
+	turnId: number;
+	text: string;
+	startMs?: number;
+	endMs?: number;
+}
+/** Provider events, handled one at a time in arrival order. */
 export interface AsrEvents {
 	onReady(): void;
-	onSpeechStart?(turnId: number, offsetMs: number | undefined): void;
-	onSpeechEnd?(turnId: number, offsetMs: number | undefined): void;
-	onSpeaker?(label: string): void;
-	/** The whole current turn so far. */
-	onPartial?(text: string): void;
-	onComplete(turnId: number, text: string, offsetMs: number | undefined): void | Promise<void>;
+	/** The current, not yet committed segment so far. */
+	onPartial?(turnId: number, text: string): void;
+	onComplete(turn: AsrTurn): void | Promise<void>;
 	/** The connection failed, the provider reported an error, or a handler threw. */
 	onError(error: Error): void;
 	onClose(code: number): void;
@@ -41,7 +48,7 @@ export interface AsrEvents {
 export interface RealtimeAsr {
 	/** Sends 24 kHz signed 16-bit mono PCM; streams must arrive at recording speed. */
 	send(pcm: Buffer): Promise<void>;
-	/** Asks the provider to finish the last turn and close the stream cleanly (code 1000). */
+	/** Commits the last words and closes the stream cleanly (code 1000) once they arrived. */
 	end(): void;
 	terminate(): void;
 	/** Resolves once every event received so far has been handled. */
@@ -50,58 +57,85 @@ export interface RealtimeAsr {
 	readonly bufferedAmount: number;
 }
 
-/** Opens one realtime transcription stream with speech-turn detection and speaker labels. */
+const audioChunk = (pcm: Buffer, commit: boolean) =>
+	JSON.stringify({
+		message_type: 'input_audio_chunk',
+		audio_base_64: pcm.toString('base64'),
+		commit,
+		sample_rate: 24_000
+	});
+
+/** Opens one ElevenLabs realtime transcription stream that commits segments at pauses. */
 export function openRealtimeAsr(events: AsrEvents): RealtimeAsr {
-	const provider = new WebSocket(ASR_URL, { maxPayload: 4 * 1024 * 1024, handshakeTimeout: 10000 });
+	const provider = openTranscriptionSocket();
 	let chain = Promise.resolve();
-	provider.on('open', () =>
-		provider.send(
-			JSON.stringify({
-				authorization: { accessToken: 'Bearer ' + required('TRANSCRIPTION_API_KEY') },
-				audioEncoding: 'PCM_24KHZ',
-				model: TRANSCRIPTION_MODEL,
-				mode: 'DIARIZATION',
-				partialMode: 'CUMULATIVE',
-				emitAudioProgress: true
-			})
-		)
-	);
+	let turnId = 0;
+	let ending: { quiet?: NodeJS.Timeout; max: NodeJS.Timeout } | undefined;
+	const close = () => {
+		if (ending) {
+			clearTimeout(ending.quiet);
+			clearTimeout(ending.max);
+		}
+		if (provider.readyState === WebSocket.OPEN) provider.close(1000);
+	};
 	provider.on('error', (e) => events.onError(e));
-	provider.on('close', (code) => events.onClose(code));
+	provider.on('close', (code) => {
+		if (ending) {
+			clearTimeout(ending.quiet);
+			clearTimeout(ending.max);
+		}
+		events.onClose(code);
+	});
 	provider.on('message', (raw) => {
 		chain = chain
 			.then(async () => {
 				const event = JSON.parse(raw.toString());
-				if (typeof event.sessionId === 'string' && !event.type) return events.onReady();
-				if (event.type === 'error') {
+				const type = String(event.message_type ?? '');
+				if (!TRANSCRIPT_EVENTS.has(type)) {
+					if (typeof event.error !== 'string' && !type.endsWith('error')) return;
 					console.error('Transcription provider error:', JSON.stringify(event).slice(0, 1000));
 					throw new Error(providerErrorMessage(event));
 				}
-				const processed = Number(event.audioProcessedMs);
-				const offsetMs = Number.isFinite(processed) ? processed : undefined;
-				const turn = Number.isInteger(event.turnId) ? (event.turnId as number) : undefined;
-				if (event.type === 'speechStart' && turn !== undefined)
-					events.onSpeechStart?.(turn, offsetMs);
-				if (event.type === 'speechEnd' && turn !== undefined) events.onSpeechEnd?.(turn, offsetMs);
-				if (event.type === 'speaker' && typeof event.label === 'string')
-					events.onSpeaker?.(event.label);
-				if (event.type === 'transcript' && typeof event.transcript === 'string')
-					events.onPartial?.(event.transcript);
-				if (
-					event.type === 'speechComplete' &&
-					typeof event.transcript === 'string' &&
-					turn !== undefined
-				)
-					await events.onComplete(turn, event.transcript, offsetMs);
+				if (type === 'session_started') return events.onReady();
+				if (type === 'partial_transcript') {
+					// Keepalives repeat the partial or send it empty; only real text is worth showing.
+					if (typeof event.text === 'string' && event.text.trim())
+						events.onPartial?.(turnId, event.text);
+					return;
+				}
+				if (type !== 'committed_transcript_with_timestamps') return;
+				const text = typeof event.text === 'string' ? event.text.trim() : '';
+				const words = (Array.isArray(event.words) ? event.words : []).filter(
+					(word: { type?: string }) => (word.type ?? 'word') === 'word'
+				);
+				const seconds = (value: unknown) =>
+					typeof value === 'number' && Number.isFinite(value)
+						? Math.round(value * 1000)
+						: undefined;
+				if (text)
+					await events.onComplete({
+						turnId: turnId++,
+						text,
+						startMs: seconds(words[0]?.start),
+						endMs: seconds(words.at(-1)?.end)
+					});
+				if (ending) {
+					clearTimeout(ending.quiet);
+					ending.quiet = setTimeout(close, END_QUIET_MS);
+				}
 			})
 			.catch((e) => events.onError(e instanceof Error ? e : new Error('Transcription failed.')));
 	});
 	return {
 		send: (pcm) =>
 			new Promise<void>((resolve, reject) =>
-				provider.send(pcm, (error) => (error ? reject(error) : resolve()))
+				provider.send(audioChunk(pcm, false), (error) => (error ? reject(error) : resolve()))
 			),
-		end: () => provider.send(JSON.stringify({ type: 'endStream' })),
+		end: () => {
+			if (ending) return;
+			ending = { max: setTimeout(close, END_MAX_MS) };
+			provider.send(audioChunk(Buffer.alloc(0), true));
+		},
 		terminate: () => provider.terminate(),
 		settled: () => chain,
 		get open() {

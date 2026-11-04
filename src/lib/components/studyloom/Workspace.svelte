@@ -18,8 +18,8 @@
 		isActiveJob,
 		type Material,
 		type Occurrence,
-		type MuseModel,
-		type MuseStatus,
+		type ClaudeModel,
+		type ClaudeStatus,
 		type ProjectWorkspace
 	} from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
@@ -66,8 +66,8 @@
 		occurrences(events.items, today, addDays(today, SCHEDULE_DAYS)).slice(0, VISIBLE_EVENTS)
 	);
 	let data = $state.raw<ProjectWorkspace | null>(null);
-	let models = $state.raw<MuseModel[]>([]);
-	let museNotice = $state('');
+	let models = $state.raw<ClaudeModel[]>([]);
+	let claudeNotice = $state('');
 	let error = $state('');
 	let selected = $state<string[]>([]);
 	let selectedTab = $state('chat');
@@ -119,15 +119,12 @@
 
 	async function loadModels() {
 		try {
-			const status = await api<MuseStatus>('/api/muse');
+			const status = await api<ClaudeStatus>('/api/claude');
 			models = status.models;
-			museNotice =
-				status.error ??
-				(status.account.state === 'accountLogin'
-					? ''
-					: 'Connect your Muse subscription in Settings to use AI tools.');
+			claudeNotice =
+				status.error ?? (status.configured ? '' : 'Claude is not set up. See Settings.');
 		} catch (cause) {
-			museNotice = errorText(cause);
+			claudeNotice = errorText(cause);
 		}
 	}
 	async function closeViewer() {
@@ -182,13 +179,13 @@
 			{/key}
 		</div>
 	</div>
-	{#if museNotice}
+	{#if claudeNotice}
 		<div
 			class="mb-6 flex flex-wrap items-center justify-between gap-3 border-l-2 border-primary bg-muted px-4 py-3 text-sm"
 		>
-			<p>{museNotice}</p>
+			<p>{claudeNotice}</p>
 
-			<Button href={resolve('settings')} variant="outline" size="sm">Muse settings</Button>
+			<Button href={resolve('settings')} variant="outline" size="sm">Claude settings</Button>
 		</div>
 	{/if}
 	<div class="grid items-start gap-7 lg:grid-cols-[300px_minmax(0,1fr)]">

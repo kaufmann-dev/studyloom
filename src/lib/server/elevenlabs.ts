@@ -1,9 +1,15 @@
+import { openAsBlob } from 'node:fs';
+import { basename } from 'node:path';
+import { WebSocket } from 'ws';
 import { z } from 'zod';
 import { ClientError, safeError } from './config';
 import { MP3_FORMAT } from './audio';
 import type { SpeechModel, Voice } from '../domain';
-// ELEVENLABS_API_KEY stays in this module: never pass it to Muse, commands or the browser.
+// ELEVENLABS_API_KEY stays in this module: never pass it to Claude, commands or the browser.
 const BASE_URL = 'https://api.elevenlabs.io';
+/** ElevenLabs lists no transcription models; bump these when a newer Scribe version ships. */
+const TRANSCRIPTION_MODEL = 'scribe_v2';
+const REALTIME_TRANSCRIPTION_MODEL = 'scribe_v2_realtime';
 const CACHE_MS = 10 * 60_000;
 const RETRY_DELAYS_MS = [2000, 6000];
 
@@ -12,7 +18,7 @@ function apiKey() {
 	if (!key)
 		throw new ClientError(
 			503,
-			'Set ELEVENLABS_API_KEY to create audio summaries and study sessions.'
+			'Set ELEVENLABS_API_KEY to transcribe audio and to create audio summaries and study sessions.'
 		);
 	return key;
 }
@@ -218,4 +224,117 @@ export async function speechCatalog() {
 				: safeError(cause);
 		throw new ClientError(503, `Could not load ElevenLabs voices and models. ${reason}`);
 	}
+}
+
+const transcriptWordSchema = z.object({
+	text: z.string(),
+	start: z.number().nullish(),
+	end: z.number().nullish(),
+	type: z.string().default('word'),
+	speaker_id: z.string().nullish()
+});
+const transcriptSchema = z.object({
+	text: z.string().default(''),
+	words: z.array(transcriptWordSchema).default([])
+});
+export type TranscriptWord = z.input<typeof transcriptWordSchema>;
+export interface TranscriptTurn {
+	turnId: number;
+	startMs: number;
+	endMs: number;
+	transcript: string;
+	speaker?: string;
+}
+/** A pause this long between words starts a new turn. */
+const TURN_PAUSE_S = 1.5;
+/** A turn is closed at the next word once it has run this long. */
+const TURN_MAX_S = 60;
+const speakerLabel = (id: string | null | undefined) => {
+	const match = /^speaker_(\d+)$/.exec(id ?? '');
+	return match ? `Speaker ${Number(match[1]) + 1}` : id || undefined;
+};
+/**
+ * Groups transcribed words into turns: a new turn starts when the speaker changes, after a pause,
+ * or once a turn has run a minute. Times are in milliseconds from the start of the audio.
+ */
+export function wordsToTurns(words: TranscriptWord[]): TranscriptTurn[] {
+	const turns: TranscriptTurn[] = [];
+	let current: { start: number; end: number; speaker?: string; text: string } | undefined;
+	const flush = () => {
+		const text = current?.text.replace(/\s+/g, ' ').trim();
+		if (current && text)
+			turns.push({
+				turnId: turns.length,
+				startMs: Math.round(current.start * 1000),
+				endMs: Math.round(current.end * 1000),
+				transcript: text,
+				...(current.speaker && { speaker: current.speaker })
+			});
+		current = undefined;
+	};
+	for (const word of words) {
+		if ((word.type ?? 'word') === 'spacing') {
+			if (current) current.text += word.text;
+			continue;
+		}
+		// Audio events such as (laughter) are not speech.
+		if ((word.type ?? 'word') !== 'word') continue;
+		const start = word.start ?? current?.end ?? 0;
+		const end = Math.max(word.end ?? start, start);
+		const speaker = speakerLabel(word.speaker_id);
+		if (
+			current &&
+			(speaker !== current.speaker ||
+				start - current.end >= TURN_PAUSE_S ||
+				start - current.start >= TURN_MAX_S)
+		)
+			flush();
+		current ??= { start, end, speaker, text: '' };
+		current.text += word.text;
+		current.end = end;
+	}
+	flush();
+	return turns;
+}
+/**
+ * Transcribes an audio or video file of any common format with speaker labels. The file is
+ * streamed from disk; turn times are relative to the start of the file.
+ */
+export async function transcribeFile(path: string, signal?: AbortSignal) {
+	const form = new FormData();
+	form.set('model_id', TRANSCRIPTION_MODEL);
+	form.set('diarize', 'true');
+	form.set('timestamps_granularity', 'word');
+	form.set('tag_audio_events', 'false');
+	form.set('file', await openAsBlob(path), basename(path));
+	const response = await request('/v1/speech-to-text', {
+		method: 'POST',
+		body: form,
+		signal,
+		timeoutMs: 30 * 60_000
+	});
+	const result = transcriptSchema.parse(await response.json());
+	const last = result.words.findLast((word) => word.type === 'word');
+	return {
+		transcript: result.text,
+		audioDurationMs: Math.round((last?.end ?? 0) * 1000),
+		turns: wordsToTurns(result.words)
+	};
+}
+/** Fails before any state changes when transcription is not configured. */
+export const requireTranscription = () => void apiKey();
+/** Opens a realtime transcription socket for 24 kHz signed 16-bit mono PCM with VAD commits. */
+export function openTranscriptionSocket() {
+	const query = new URLSearchParams({
+		model_id: REALTIME_TRANSCRIPTION_MODEL,
+		audio_format: 'pcm_24000',
+		commit_strategy: 'vad',
+		include_timestamps: 'true',
+		keepalive_interval_ms: '5000'
+	});
+	return new WebSocket(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?${query}`, {
+		headers: { 'xi-api-key': apiKey() },
+		maxPayload: 4 * 1024 * 1024,
+		handshakeTimeout: 10_000
+	});
 }

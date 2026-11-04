@@ -1,8 +1,8 @@
 <script lang="ts" module>
-	import { DEFAULT_MODEL, type MuseModel } from '#lib/domain.js';
+	import { DEFAULT_MODEL, type ClaudeModel } from '#lib/domain.js';
 
 	/** The preferred model when the account still offers it, otherwise the first available one. */
-	export function availableModel(models: MuseModel[], preferred: string): string {
+	export function availableModel(models: ClaudeModel[], preferred: string): string {
 		return (
 			models.find((model) => model.modelId === preferred)?.modelId ??
 			models[0]?.modelId ??
@@ -21,7 +21,7 @@
 		class: className = 'w-full',
 		...rest
 	}: Omit<HTMLSelectAttributes, 'size' | 'value'> & {
-		models: MuseModel[];
+		models: ClaudeModel[];
 		value: string;
 		class?: string;
 	} = $props();
@@ -35,6 +35,6 @@
 	{#each models as model (model.modelId)}
 		<NativeSelect.Option value={model.modelId}>{model.displayLabel}</NativeSelect.Option>
 	{:else}
-		<NativeSelect.Option value={DEFAULT_MODEL}>{DEFAULT_MODEL}</NativeSelect.Option>
+		<NativeSelect.Option value={DEFAULT_MODEL}>Default (recommended)</NativeSelect.Option>
 	{/each}
 </NativeSelect.Root>

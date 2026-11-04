@@ -10,7 +10,7 @@
 		type Job,
 		type Material,
 		type Message,
-		type MuseModel
+		type ClaudeModel
 	} from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import * as Form from '#lib/components/ui/form/index.js';
@@ -35,7 +35,7 @@
 		projectId: string;
 		materialIds: string[];
 		materials: Material[];
-		models: MuseModel[];
+		models: ClaudeModel[];
 		conversations: Conversation[];
 		jobs: Job[];
 		onChanged: () => void | Promise<void>;
@@ -306,7 +306,7 @@
 		<p class="text-xs text-muted-foreground">
 			{plural(materialIds.length, 'source')} selected · Enter sends, Shift+Enter adds a line{models.length
 				? ''
-				: ' · Connect Muse in Settings to continue.'}
+				: ' · Set up Claude in Settings to continue.'}
 		</p>
 	</form>
 </div>

@@ -1,7 +1,7 @@
 import { error, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
-import { ClientError, safeError } from './config';
-import { museHost, museStatus } from './muse';
+import { ClientError } from './config';
+import { claudeStatus } from './claude';
 import { calendar } from './endpoints/calendar';
 import { events } from './endpoints/events';
 import type { Handler } from './endpoints/http';
@@ -13,23 +13,8 @@ import { speech } from './endpoints/speech';
 import { conversations, jobs, outputs } from './endpoints/study';
 import { tasks } from './endpoints/tasks';
 
-async function museAction<T>(operation: Promise<T>): Promise<T> {
-	try {
-		return await operation;
-	} catch (cause) {
-		console.error('Muse request failed:', safeError(cause));
-		throw new ClientError(503, 'Muse is unavailable. Check Settings and retry.');
-	}
-}
-const museCalls: Record<string, [method: string, params?: Record<string, unknown>]> = {
-	login: ['account/loginStart', { type: 'deviceCode' }],
-	'cancel-login': ['account/loginCancel'],
-	logout: ['account/logout']
-};
-const muse: Handler = async ({ method, id }) => {
-	if (method === 'GET') return Response.json(await museAction(museStatus()));
-	const call = method === 'POST' && id && Object.hasOwn(museCalls, id) ? museCalls[id] : undefined;
-	if (call) return Response.json(await museAction(museHost.call(...call)));
+const claude: Handler = async ({ method, id }) => {
+	if (method === 'GET' && !id) return Response.json(await claudeStatus());
 };
 
 const resources = new Map<string, Handler>(
@@ -39,7 +24,7 @@ const resources = new Map<string, Handler>(
 		tasks,
 		events,
 		calendar,
-		muse,
+		claude,
 		speech,
 		projects,
 		materials,

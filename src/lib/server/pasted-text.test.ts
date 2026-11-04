@@ -3,14 +3,14 @@ import { readFile } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { db, closeDatabase } from './db';
 import { materials, projects, sourceChunks } from './db/schema';
-import { pastedSections } from './sources';
+import { textSections } from './extract';
 import { originalPath } from './storage';
 import { callApi, useTestDatabase } from './testing';
 
 describe('Pasted text parts', () => {
 	it('keeps whole paragraphs together in citable parts', () => {
 		const paragraph = (word: string) => `${word} `.repeat(300).trim();
-		const sections = pastedSections(
+		const sections = textSections(
 			`${paragraph('alpha')}\r\n\r\n${paragraph('beta')}\n \n${paragraph('gamma')}`
 		);
 		expect(sections.map((s) => s.locator)).toEqual(['part:1', 'part:2']);
@@ -18,7 +18,7 @@ describe('Pasted text parts', () => {
 		expect(sections[1].text).toBe(paragraph('gamma'));
 	});
 	it('cuts an overlong paragraph at a word boundary and drops blank lines', () => {
-		const sections = pastedSections(`\n\n${'word '.repeat(2000)}\n\n`);
+		const sections = textSections(`\n\n${'word '.repeat(2000)}\n\n`);
 		expect(sections.length).toBe(3);
 		expect(sections.every((s) => s.text.length <= 4000 && !s.text.startsWith(' '))).toBe(true);
 		expect(sections.map((s) => s.text).join(' ')).toBe('word '.repeat(2000).trim());

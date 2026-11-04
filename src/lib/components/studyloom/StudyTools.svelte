@@ -11,7 +11,7 @@
 		DEFAULT_MODEL,
 		type StudyOutput,
 		type Material,
-		type MuseModel,
+		type ClaudeModel,
 		type SpeechModel,
 		type Voice
 	} from '#lib/domain.js';
@@ -38,7 +38,7 @@
 		kind: 'summary' | 'quiz' | 'audio' | 'session';
 		materialIds: string[];
 		materials: Material[];
-		models: MuseModel[];
+		models: ClaudeModel[];
 		outputs: StudyOutput[];
 		onChanged: () => void | Promise<void>;
 	} = $props();
@@ -411,7 +411,7 @@
 			<p class="text-xs text-muted-foreground">
 				{plural(materialIds.length, 'source')} selected{models.length
 					? ''
-					: ' · Connect Muse in Settings to continue.'}
+					: ' · Set up Claude in Settings to continue.'}
 			</p>
 			<div class="flex flex-wrap gap-2">
 				<Button type="submit" disabled={busy || !ready || !materialIds.length || !models.length}>

@@ -14,7 +14,6 @@ import {
 	requireTranscription,
 	type RealtimeAsr
 } from '../lib/server/realtime-asr';
-import { museHost } from '../lib/server/muse';
 import { send, tokenFrom, watchSession } from './socket';
 import { studySession } from './study-socket';
 const startSchema = z.object({
@@ -69,7 +68,6 @@ export async function attachRuntime(server: Server) {
 		wss.close();
 		await stopWorkers();
 		await stopMoodleSync();
-		museHost.close();
 		await closeDatabase();
 	};
 }
@@ -86,8 +84,6 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 	let chain = Promise.resolve();
 	let queuedBytes = 0;
 	let liveStart = 0;
-	let currentTurn: number | undefined;
-	const turns = new Map<number, { start: number; end?: number; speaker?: string }>();
 	let providerDoneResolve: (() => void) | undefined,
 		providerDoneReject: ((e: Error) => void) | undefined;
 	const providerDone = new Promise<void>((resolve, reject) => {
@@ -223,6 +219,8 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 						offsetMs !== undefined
 							? Math.round(startSample / 24 + offsetMs)
 							: Math.round(cursor / 24);
+					// A turn without timestamps starts where the previous one ended.
+					let lastEndMs = Math.round(startSample / 24);
 					provider = openRealtimeAsr({
 						onReady() {
 							ready = true;
@@ -230,56 +228,40 @@ async function live(client: WebSocket, id: string, sessionToken: string | undefi
 							liveStart = Date.now();
 							send(client, { type: 'ready', nextSequence });
 						},
-						onSpeechStart(turnId, offsetMs) {
-							currentTurn = turnId;
-							turns.set(turnId, { start: msAt(offsetMs) });
-						},
-						onSpeechEnd(turnId, offsetMs) {
-							const turn = turns.get(turnId);
-							if (turn) turn.end = msAt(offsetMs);
-						},
-						onSpeaker(label) {
-							const turn = currentTurn !== undefined ? turns.get(currentTurn) : undefined;
-							if (turn) turn.speaker = label;
-						},
-						onPartial(text) {
+						onPartial(turnId, text) {
 							send(client, {
 								type: 'transcript',
 								text,
 								final: false,
-								turnId: `${segmentId}:${currentTurn ?? 'pending'}`,
-								speaker: currentTurn !== undefined ? turns.get(currentTurn)?.speaker : undefined
+								turnId: `${segmentId}:${turnId}`
 							});
 						},
-						async onComplete(turnId, text, offsetMs) {
-							const turn = turns.get(turnId) ?? { start: Math.round(startSample / 24) };
+						async onComplete(turn) {
 							const values = {
 								materialId: id,
 								segmentId: segmentId!,
-								turnId,
-								startMs: turn.start,
-								endMs: turn.end ?? msAt(offsetMs),
-								text,
-								speaker: turn.speaker ?? null
+								turnId: turn.turnId,
+								startMs: turn.startMs !== undefined ? msAt(turn.startMs) : lastEndMs,
+								endMs: msAt(turn.endMs),
+								text: turn.text,
+								speaker: null
 							};
-							if (text.trim())
-								await db()
-									.insert(t.transcriptTurns)
-									.values(values)
-									.onConflictDoUpdate({
-										target: [t.transcriptTurns.segmentId, t.transcriptTurns.turnId],
-										set: { text: values.text, endMs: values.endMs, speaker: values.speaker }
-									});
+							lastEndMs = values.endMs;
+							await db()
+								.insert(t.transcriptTurns)
+								.values(values)
+								.onConflictDoUpdate({
+									target: [t.transcriptTurns.segmentId, t.transcriptTurns.turnId],
+									set: { text: values.text, endMs: values.endMs }
+								});
 							send(client, {
 								type: 'transcript',
-								text,
+								text: turn.text,
 								final: true,
-								turnId: `${segmentId}:${turnId}`,
-								speaker: turn.speaker,
+								turnId: `${segmentId}:${turn.turnId}`,
 								startMs: values.startMs,
 								endMs: values.endMs
 							});
-							turns.delete(turnId);
 						},
 						onError(e) {
 							providerDoneReject?.(new Error('Transcription connection failed.'));

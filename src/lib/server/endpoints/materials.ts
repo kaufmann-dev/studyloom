@@ -5,7 +5,7 @@ import { db } from '../db';
 import * as t from '../db/schema';
 import { idSchema, modelInput, UPLOAD_CHUNK_SIZE } from '../../domain';
 import { safeError } from '../config';
-import { validateModel } from '../muse';
+import { validateModel } from '../claude';
 import { assemble, originalPath, putChunk, removeMaterialFiles } from '../storage';
 import { accepted, boundedBody, download, ok, readJson, type Handler } from './http';
 import {

@@ -1,6 +1,6 @@
 import { z } from 'zod';
-export const DEFAULT_MODEL = 'muse-spark-1.3-contributor';
-export const TRANSCRIPTION_MODEL = 'muse-voice-transcribe-1.0';
+/** Claude Code's recommended model for the account; it follows new model releases. */
+export const DEFAULT_MODEL = 'default';
 export const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
 export const MIME_TYPE =
 	/^[A-Za-z0-9][A-Za-z0-9!#$%&'*+.^_`|~-]*\/[A-Za-z0-9][A-Za-z0-9!#$%&'*+.^_`|~-]*$/;
@@ -431,7 +431,7 @@ export const citedTextSchema = z.object({
 	content: z.string().min(1).max(200000),
 	citations: z.array(citationSchema).min(1).max(500)
 });
-/** The script Muse writes for an audio summary, one spoken turn per speech request. */
+/** The script Claude writes for an audio summary, one spoken turn per speech request. */
 export const audioScriptSchema = (style: AudioStyle) =>
 	z.object({
 		title: z.string().min(1).max(200),
@@ -666,21 +666,16 @@ export interface Job {
 	createdAt: string;
 	updatedAt: string;
 }
-export interface MuseAccount {
-	state: string;
-	label?: string;
-	credentialRequired: boolean;
-}
-export interface MuseStatus {
-	account: MuseAccount;
-	models: MuseModel[];
-	error?: string;
-}
-export interface MuseModel {
+/** One entry of Claude Code's live model list; aliases such as `opus` track the newest version. */
+export interface ClaudeModel {
 	modelId: string;
 	displayLabel: string;
-	contextLimit: number | null;
-	description: string | null;
+	description: string;
+}
+export interface ClaudeStatus {
+	configured: boolean;
+	models: ClaudeModel[];
+	error?: string;
 }
 export interface Voice {
 	voiceId: string;

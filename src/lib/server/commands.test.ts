@@ -2,16 +2,15 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { mkdtemp, mkdir, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runCommand } from './commands';
+import { runCommand, runTool } from './commands';
 
-const savedDatabaseUrl = process.env.DATABASE_URL;
-const savedTranscriptionKey = process.env.TRANSCRIPTION_API_KEY;
+const SECRETS = ['DATABASE_URL', 'ELEVENLABS_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] as const;
+const saved = Object.fromEntries(SECRETS.map((name) => [name, process.env[name]]));
 
 afterEach(() => {
-	if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-	else process.env.DATABASE_URL = savedDatabaseUrl;
-	if (savedTranscriptionKey === undefined) delete process.env.TRANSCRIPTION_API_KEY;
-	else process.env.TRANSCRIPTION_API_KEY = savedTranscriptionKey;
+	for (const name of SECRETS)
+		if (saved[name] === undefined) delete process.env[name];
+		else process.env[name] = saved[name];
 });
 
 async function jobDir() {
@@ -34,11 +33,12 @@ describe('runCommand', () => {
 	it('does not pass app secrets to commands', async () => {
 		const dir = await jobDir();
 		try {
-			process.env.DATABASE_URL = 'secret-database-url';
-			process.env.TRANSCRIPTION_API_KEY = 'secret-transcription-key';
-			const output = await runCommand(dir, 'env');
-			expect(output).not.toContain('secret-database-url');
-			expect(output).not.toContain('secret-transcription-key');
+			for (const name of SECRETS) process.env[name] = `secret-${name}`;
+			for (const output of [
+				await runCommand(dir, 'env'),
+				await runTool(dir, 'env', [], { timeoutMs: 10_000 })
+			])
+				expect(output).not.toContain('secret-');
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
@@ -48,6 +48,15 @@ describe('runCommand', () => {
 		try {
 			// "ä" is 0xC3 0xA4 in UTF-8; the pause makes the two bytes separate chunks.
 			expect(await runCommand(dir, "printf '\\303'; sleep 0.2; printf '\\244\\n'")).toBe('ä\n');
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+	it('runs a tool directly in the workspace, without a shell', async () => {
+		const dir = await jobDir();
+		try {
+			expect(await runTool(dir, 'echo', ['$HOME', '*'], { timeoutMs: 10_000 })).toBe('$HOME *\n');
+			expect(await runTool(dir, 'pwd', [], { timeoutMs: 10_000 })).toBe(join(dir, 'files') + '\n');
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

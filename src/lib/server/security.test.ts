@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { safeReturnTo, sessionAlive, hashToken } from './auth';
-import { museEnvironment } from './muse';
+import { claudeEnvironment } from './claude';
 import { scopedFile, wavHeader } from './storage';
-import { validateWav } from './transcribe';
 import { findInvalidCitation, validateCitations, gradeChoice, readArtifact } from './jobs';
 import { safeError } from './config';
 import {
@@ -58,17 +57,36 @@ describe('authentication boundaries', () => {
 		);
 		expect(hashToken('opaque session')).not.toContain('opaque');
 	});
-	it('passes only an explicit environment allowlist to subscription processes', () => {
-		const env = museEnvironment('/private/config');
-		for (const secret of [
-			'META_API_KEY',
-			'TRANSCRIPTION_API_KEY',
-			'OIDC_CLIENT_SECRET',
-			'DATABASE_URL',
-			'HOME'
-		])
-			expect(env).not.toHaveProperty(secret);
-		expect(env.XDG_CONFIG_HOME).toBe('/private/config');
+	it('gives Claude Code its login token but no other app secret', () => {
+		const saved = { ...process.env };
+		try {
+			Object.assign(process.env, {
+				CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-token',
+				ELEVENLABS_API_KEY: 'eleven',
+				OIDC_CLIENT_SECRET: 'oidc',
+				DATABASE_URL: 'postgres://secret',
+				ANTHROPIC_API_KEY: 'api-key',
+				DATA_DIR: '/private/data'
+			});
+			const env = claudeEnvironment();
+			expect(Object.keys(env).sort()).toEqual(
+				[
+					'CLAUDE_AGENT_SDK_CLIENT_APP',
+					'CLAUDE_CODE_OAUTH_TOKEN',
+					'CLAUDE_CONFIG_DIR',
+					'HOME',
+					'LANG',
+					'PATH',
+					...(process.env.SSL_CERT_DIR ? ['SSL_CERT_DIR'] : []),
+					...(process.env.SSL_CERT_FILE ? ['SSL_CERT_FILE'] : [])
+				].sort()
+			);
+			expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-token');
+			expect(env.CLAUDE_CONFIG_DIR).toBe('/private/data/claude/config');
+			expect(safeError(new Error('token sk-ant-oat01-token leaked'))).not.toContain('oat01');
+		} finally {
+			process.env = saved;
+		}
 	});
 });
 describe('source and tool boundaries', () => {
@@ -112,16 +130,16 @@ describe('source and tool boundaries', () => {
 			})
 		).toThrow('Unreadable');
 	});
-	it('reports missing and malformed Muse artifacts without exposing filesystem errors', async () => {
+	it('reports missing and malformed Claude artifacts without exposing filesystem errors', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'studyloom-artifact-'));
 		try {
 			await mkdir(join(root, 'files'));
 			await expect(readArtifact(root, 'extracted.json')).rejects.toThrow(
-				'Muse completed without writing extracted.json'
+				'Claude completed without writing extracted.json'
 			);
 			await writeFile(join(root, 'files', 'result.json'), '{');
 			await expect(readArtifact(root, 'result.json')).rejects.toThrow(
-				'Muse wrote invalid JSON in result.json'
+				'Claude wrote invalid JSON in result.json'
 			);
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -151,16 +169,8 @@ describe('source and tool boundaries', () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
-	it('accepts valid PCM WAV and rejects invalid format, rate and length', () => {
-		const valid = Buffer.concat([wavHeader(48000), Buffer.alloc(48000)]);
-		expect(() => validateWav(valid)).not.toThrow();
-		const stereo = Buffer.from(valid);
-		stereo.writeUInt16LE(2, 22);
-		expect(() => validateWav(stereo)).toThrow('mono');
-		const rate = Buffer.from(valid);
-		rate.writeUInt32LE(44100, 24);
-		expect(() => validateWav(rate)).toThrow('24 kHz');
-		expect(() => validateWav(valid.subarray(0, 100))).toThrow('Truncated');
+	it('writes WAV headers only for whole 16-bit samples', () => {
+		expect(wavHeader(48000).toString('ascii', 0, 4)).toBe('RIFF');
 		expect(() => wavHeader(3)).toThrow('Invalid PCM');
 	});
 	it('requires citations and quotes to resolve against selected source snapshots', () => {

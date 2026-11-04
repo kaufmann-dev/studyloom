@@ -27,8 +27,8 @@ vi.mock('../lib/server/realtime-asr', () => ({
 		};
 	}
 }));
-vi.mock('../lib/server/muse', async (importOriginal) => ({
-	...(await importOriginal<typeof import('../lib/server/muse')>()),
+vi.mock('../lib/server/claude', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../lib/server/claude')>()),
 	gradingModel: async (id: string) => id
 }));
 vi.mock('../lib/server/elevenlabs', () => ({
@@ -55,7 +55,7 @@ vi.mock('../lib/server/tutor', async (importOriginal) => {
 		async ask(prompt: string, onDelta: (delta: string) => void) {
 			prompts.push(prompt);
 			const reply = replies.shift() ?? '';
-			// Stream in small pieces, like Muse.
+			// Stream in small pieces, like Claude.
 			for (let i = 0; i < reply.length; i += 7) onDelta(reply.slice(i, i + 7));
 			return reply;
 		}
@@ -147,8 +147,7 @@ function browser(answers: string[]) {
 		if (message.type === 'listen') {
 			const answer = answers.shift() ?? '';
 			setTimeout(() => {
-				asr.events!.onSpeechStart?.(1, 0);
-				void asr.events!.onComplete(1, answer, 0);
+				void asr.events!.onComplete({ turnId: 0, text: answer, startMs: 0 });
 			}, 5);
 			// Pauses never end an answer: the learner presses I'm done.
 			setTimeout(() => reply({ type: 'done' }), 30);

@@ -31,10 +31,6 @@ vi.mock('../lib/server/jobs', () => ({
 	finishRecording: () => Promise.resolve()
 }));
 
-vi.mock('../lib/server/muse', () => ({
-	museHost: { close: () => {} }
-}));
-
 describe('runtime startup', () => {
 	it('applies migrations before crash recovery touches tables', async () => {
 		order.length = 0;
@@ -50,15 +46,14 @@ describe('transcription provider errors', () => {
 	it('surfaces the provider reason instead of blaming the API key', () => {
 		expect(
 			providerErrorMessage({
-				type: 'error',
-				message: 'Ingress audio slower than real-time',
-				errorType: 'invalid_request_error'
+				message_type: 'quota_exceeded',
+				error: 'You have used all your transcription credits'
 			})
 		).toBe(
-			'Transcription stream interrupted: invalid_request_error — Ingress audio slower than real-time.'
+			'Transcription stream interrupted: quota_exceeded — You have used all your transcription credits.'
 		);
 	});
 	it('falls back to the key guidance when the provider gives no detail', () => {
-		expect(providerErrorMessage({ type: 'error' })).toMatch(/API key and usage limits/);
+		expect(providerErrorMessage({})).toMatch(/API key and usage limits/);
 	});
 });

@@ -4,7 +4,7 @@ import { db } from '../db';
 import * as t from '../db/schema';
 import { answersSchema, idSchema, quizSchema, type StudyAnswer, type StudyRun } from '../../domain';
 import { gradeChoice, released } from '../jobs';
-import { gradingModel } from '../muse';
+import { gradingModel } from '../claude';
 import { audioFile } from '../audio';
 import { accepted, download, ok, readJson, type Handler } from './http';
 import { jobIsActive, lockProject, type Job } from './queries';
@@ -160,7 +160,7 @@ export const outputs: Handler = async ({ event, method, id, action }) => {
 		)
 			error(400, 'Answer each question exactly once.');
 		const grades = gradeChoice(quiz, answers);
-		// Multiple-choice answers are graded here; written answers need a Muse grading job.
+		// Multiple-choice answers are graded here; written answers need a Claude grading job.
 		const written = quiz.questions.some((question) => question.type === 'written');
 		const modelId = written ? await gradingModel(output.modelId) : output.modelId;
 		const { attempt, job } = await db().transaction(async (tx) => {

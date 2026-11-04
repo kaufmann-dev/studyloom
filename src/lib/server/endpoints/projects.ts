@@ -19,7 +19,7 @@ import { ClientError, maxUploadBytes, safeError } from '../config';
 import { removeAudioFiles } from '../audio';
 import { speechCatalog } from '../elevenlabs';
 import { sourceSnapshot } from '../jobs';
-import { validateModel } from '../muse';
+import { validateModel } from '../claude';
 import { addPastedText, addWebSource } from '../sources';
 import { removeMaterialFiles } from '../storage';
 import { accepted, created, ok, readJson, type Handler } from './http';

@@ -5,8 +5,9 @@ import type { z } from 'zod';
 import { db } from './db';
 import * as t from './db/schema';
 import { findProject, lockProject } from './endpoints/queries';
+import { textSections } from './extract';
 import { replaceSourceChunks } from './jobs';
-import { validateModel } from './muse';
+import { validateModel } from './claude';
 import { materialDir, originalPath, removeMaterialFiles } from './storage';
 import { fetchWebPage } from './web-page';
 import type { pastedTextInput, webSourceInput } from '../domain';
@@ -69,34 +70,6 @@ async function storeReadySource(
 	}
 }
 
-const PASTED_PART_CHARS = 4000;
-/**
- * Splits pasted text into citable parts of whole paragraphs; a paragraph longer than a part is
- * cut at a word boundary.
- */
-export function pastedSections(text: string) {
-	const parts: string[] = [];
-	let current = '';
-	const push = () => {
-		if (current.trim()) parts.push(current.trim());
-		current = '';
-	};
-	for (const paragraph of text.replace(/\r\n?/g, '\n').split(/\n\s*\n/)) {
-		let rest = paragraph.trim();
-		if (!rest) continue;
-		if (current && current.length + rest.length + 2 > PASTED_PART_CHARS) push();
-		while (rest.length > PASTED_PART_CHARS) {
-			push();
-			const cut = rest.lastIndexOf(' ', PASTED_PART_CHARS);
-			const at = cut > PASTED_PART_CHARS / 2 ? cut : PASTED_PART_CHARS;
-			parts.push(rest.slice(0, at).trim());
-			rest = rest.slice(at).trim();
-		}
-		current = current ? `${current}\n\n${rest}` : rest;
-	}
-	push();
-	return parts.map((part, i) => ({ locator: `part:${i + 1}`, text: part }));
-}
 /** Stores text pasted in the browser as-is, named after its first line unless named. */
 export function addPastedText(projectId: string, input: z.infer<typeof pastedTextInput>) {
 	const firstLine = input.text.trim().split('\n')[0].trim();
@@ -108,7 +81,7 @@ export function addPastedText(projectId: string, input: z.infer<typeof pastedTex
 		filename: `${name.replace(/[\\/:*?"<>|]/g, '-')}.txt`,
 		mimeType: 'text/plain',
 		original: input.text,
-		sections: pastedSections(input.text),
+		sections: textSections(input.text),
 		notes: 'Pasted text.'
 	});
 }

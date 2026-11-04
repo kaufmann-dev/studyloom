@@ -5,11 +5,11 @@ import Upload from './Upload.svelte';
 import WebSource from './WebSource.svelte';
 import PasteText from './PasteText.svelte';
 import type {
+	ClaudeModel,
 	Conversation,
 	LibraryEntry,
 	LibraryFolder,
 	Message,
-	MuseModel,
 	Occurrence,
 	Task
 } from '#lib/domain.js';
@@ -183,9 +183,7 @@ const conversations: Conversation[] = ['a', 'b', 'c', 'created'].map((id) => ({
 	createdAt: '2026-01-01T00:00:00Z',
 	updatedAt: '2026-01-01T00:00:00Z'
 }));
-const models: MuseModel[] = [
-	{ modelId: 'model-1', displayLabel: 'Model 1', contextLimit: null, description: null }
-];
+const models: ClaudeModel[] = [{ modelId: 'model-1', displayLabel: 'Model 1', description: '' }];
 
 function result(id: string) {
 	const message: Message = {
@@ -437,10 +435,9 @@ describe('Audio summary form', () => {
 			materials: [],
 			models: [
 				{
-					modelId: 'muse-spark-1.3-contributor',
-					displayLabel: 'Spark',
-					contextLimit: null,
-					description: null
+					modelId: 'opus',
+					displayLabel: 'Opus',
+					description: 'Most capable for complex work'
 				}
 			],
 			outputs: [],
