@@ -64,3 +64,11 @@ export function fileSize(bytes: number): string {
 export function plural(count: number, noun: string, many = `${noun}s`): string {
 	return `${count} ${count === 1 ? noun : many}`;
 }
+/** "just now", "12 min ago", "3 h ago", or the date for anything older than a day. */
+export function timeAgo(value: string | Date, now = new Date()): string {
+	const minutes = Math.floor((now.getTime() - new Date(value).getTime()) / 60_000);
+	if (minutes < 1) return 'just now';
+	if (minutes < 60) return `${minutes} min ago`;
+	const hours = Math.floor(minutes / 60);
+	return hours < 24 ? `${hours} h ago` : dateLabel(value);
+}

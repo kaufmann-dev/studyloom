@@ -59,7 +59,8 @@
 <section class="mt-8 border p-6" aria-labelledby="{uid}-heading">
 	<h2 id="{uid}-heading" class="text-lg font-semibold">Calendar feed</h2>
 	<p class="mt-1 text-sm text-muted-foreground">
-		Subscribe to your events and open tasks from a phone or another calendar app.
+		Subscribe to your events and open tasks, including those synced from Moodle, from a phone or
+		another calendar app.
 	</p>
 	<ErrorAlert message={error} class="mt-4" />
 	{#if !feed}

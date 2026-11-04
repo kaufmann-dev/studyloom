@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { MapPin, Repeat } from '@lucide/svelte';
+	import { GraduationCap, MapPin, Repeat } from '@lucide/svelte';
 	import type { Occurrence } from '#lib/domain.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { relativeDay, timeRange } from '#lib/calendar.js';
 
 	let {
@@ -29,7 +30,10 @@
 		<li>
 			<button
 				type="button"
-				class="flex w-full items-start gap-3 border-l-4 border-l-primary p-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+				class={[
+					'flex w-full items-start gap-3 border-l-4 p-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+					occurrence.source === 'moodle' ? 'border-l-primary/40' : 'border-l-primary'
+				]}
 				onclick={() => onSelect(occurrence)}
 			>
 				<span class="min-w-0 flex-1">
@@ -37,6 +41,9 @@
 						{occurrence.title}
 						{#if occurrence.repeating}
 							<Repeat class="size-3.5 shrink-0 text-muted-foreground" aria-label="Repeats" />
+						{/if}
+						{#if occurrence.source === 'moodle'}
+							<Badge variant="outline" class="gap-1 font-normal"><GraduationCap />Moodle</Badge>
 						{/if}
 					</span>
 					<span

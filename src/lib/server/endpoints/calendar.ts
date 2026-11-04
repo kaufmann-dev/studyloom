@@ -1,13 +1,14 @@
 import { error } from '@sveltejs/kit';
 import { randomBytes } from 'node:crypto';
-import { eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { isTimeZone } from '../../calendar';
 import { db, type Transaction } from '../db';
 import * as t from '../db/schema';
-import { feedInput, importInput, type ImportSummary } from '../../domain';
+import { feedInput, importInput, moodleInput, type ImportSummary } from '../../domain';
 import { ClientError, origin } from '../config';
 import { buildExport, buildFeed } from '../ics';
 import { parseIcs, type ParsedCalendar } from '../ics-import';
+import { connectMoodle, disconnectMoodle, moodleStatus, syncMoodle } from '../moodle';
 import { selectEvents } from './events';
 import { ok, readJson, type Handler } from './http';
 import { findProject } from './queries';
@@ -116,6 +117,29 @@ async function store(tx: Transaction, parsed: ParsedCalendar, projectId: string 
 			});
 	}
 }
+/** Leaves out entries already synced from Moodle; they change only through the sync. */
+async function withoutMoodle(parsed: ParsedCalendar): Promise<ParsedCalendar> {
+	const synced = new Set<string>();
+	for (const [table, items] of [
+		[t.events, parsed.events],
+		[t.tasks, parsed.tasks]
+	] as const)
+		for (const batch of batches(items.map((item) => item.uid)))
+			for (const row of await db()
+				.select({ uid: table.uid })
+				.from(table)
+				.where(and(eq(table.source, 'moodle'), inArray(table.uid, batch))))
+				synced.add(row.uid);
+	if (!synced.size) return parsed;
+	const events = parsed.events.filter((item) => !synced.has(item.uid));
+	const tasks = parsed.tasks.filter((item) => !synced.has(item.uid));
+	const count = parsed.events.length + parsed.tasks.length - events.length - tasks.length;
+	return {
+		events,
+		tasks,
+		skipped: [...parsed.skipped, { reason: 'Already synced from Moodle', count }]
+	};
+}
 async function existing(table: typeof t.events | typeof t.tasks, uids: string[]): Promise<number> {
 	let count = 0;
 	for (const batch of batches(uids))
@@ -125,6 +149,24 @@ async function existing(table: typeof t.events | typeof t.tasks, uids: string[])
 }
 
 export const calendar: Handler = async ({ event, method, id, action }) => {
+	if (id === 'moodle') {
+		if (action === 'sync' && method === 'POST') {
+			await syncMoodle();
+			return Response.json(await moodleStatus());
+		}
+		if (action) return;
+		if (method === 'GET') return Response.json(await moodleStatus());
+		if (method === 'PUT') {
+			const input = moodleInput.parse(await readJson(event));
+			await connectMoodle(input.url, timeZoneOf(input));
+			return Response.json(await moodleStatus());
+		}
+		if (method === 'DELETE') {
+			await disconnectMoodle();
+			return ok();
+		}
+		return;
+	}
 	if (action) return;
 	if (id === 'feed') {
 		if (method === 'GET') return Response.json(await feedSettings());
@@ -156,7 +198,11 @@ export const calendar: Handler = async ({ event, method, id, action }) => {
 		}
 	}
 	if (id === 'export' && method === 'GET') {
-		const [events, tasks] = await Promise.all([selectEvents(), selectTasks()]);
+		// Moodle items come back through the sync, so the backup holds only your own.
+		const [events, tasks] = await Promise.all([
+			selectEvents(eq(t.events.source, 'custom')),
+			selectTasks(eq(t.tasks.source, 'custom'))
+		]);
 		return calendarResponse(buildExport({ events, tasks }), {
 			'content-disposition': 'attachment; filename="studyloom.ics"'
 		});
@@ -164,7 +210,7 @@ export const calendar: Handler = async ({ event, method, id, action }) => {
 	if (id === 'import' && method === 'POST') {
 		const input = importInput.parse(await readJson(event));
 		if (input.projectId) await findProject(input.projectId);
-		const parsed = parseIcs(input.ics, timeZoneOf(input));
+		const parsed = await withoutMoodle(parseIcs(input.ics, timeZoneOf(input)));
 		const summary: ImportSummary = {
 			events: parsed.events.length,
 			tasks: parsed.tasks.length,

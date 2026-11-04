@@ -244,7 +244,7 @@ export async function validateModel(modelId: string) {
 	if (!(await availableModels()).some((m) => m.modelId === modelId))
 		throw new ClientError(409, 'This model is no longer available. Refresh the model list.');
 }
-/** The quiz's own model while Muse offers it; quizzes written by MCP clients use the default. */
+/** The quiz's own model while Muse offers it, otherwise the default. */
 export async function gradingModel(preferred: string) {
 	const models = await availableModels();
 	const modelId = models.some((m) => m.modelId === preferred) ? preferred : DEFAULT_MODEL;

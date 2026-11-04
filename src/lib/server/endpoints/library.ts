@@ -1,12 +1,11 @@
 import { error } from '@sveltejs/kit';
-import { and, asc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
+import { asc, eq, isNull, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db, type Transaction } from '../db';
 import * as t from '../db/schema';
 import {
 	libraryInput,
 	libraryPatchInput,
-	librarySearchInput,
 	libraryUploadInput,
 	UPLOAD_CHUNK_SIZE,
 	type LibraryKind
@@ -90,35 +89,6 @@ export async function libraryListing(id?: string | null) {
 		entry.kind === 'folder' ? childrenOf(entry.id) : []
 	]);
 	return { entry, children, ancestors: ancestors.map(({ id, name }) => ({ id, name })) };
-}
-const SEARCH_LIMIT = 50;
-/** Items whose name or text fields contain the query, with a short excerpt. */
-export async function searchLibrary({ query, kind }: z.infer<typeof librarySearchInput>) {
-	const pattern = `%${query.trim().replace(/[\\%_]/g, (c) => '\\' + c)}%`;
-	const e = t.libraryEntries;
-	const rows = await db()
-		.select()
-		.from(e)
-		.where(
-			and(
-				or(
-					...[e.name, e.notes, e.text, e.url, e.email, e.phone, e.website, e.filename].map(
-						(column) => ilike(column, pattern)
-					)
-				),
-				kind ? eq(e.kind, kind) : undefined
-			)
-		)
-		.orderBy(asc(e.name))
-		.limit(SEARCH_LIMIT);
-	return rows.map((row) => ({
-		id: row.id,
-		parentId: row.parentId,
-		kind: row.kind,
-		name: row.name,
-		excerpt: (row.text || row.notes || row.url || row.email || row.website).slice(0, 300),
-		updatedAt: row.updatedAt
-	}));
 }
 export async function createLibraryEntry(input: z.infer<typeof libraryInput>) {
 	await checkParent(input.parentId);

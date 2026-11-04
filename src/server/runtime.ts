@@ -8,6 +8,7 @@ import { origin, safeError } from '../lib/server/config';
 import { readSession } from '../lib/server/auth';
 import { putChunk } from '../lib/server/storage';
 import { finishRecording, startWorkers } from '../lib/server/jobs';
+import { startMoodleSync } from '../lib/server/moodle';
 import {
 	openRealtimeAsr,
 	requireTranscription,
@@ -39,6 +40,7 @@ export async function attachRuntime(server: Server) {
 		})
 		.where(eq(t.materials.status, 'recording'));
 	const stopWorkers = startWorkers();
+	const stopMoodleSync = startMoodleSync();
 	const wss = new WebSocketServer({ noServer: true, maxPayload: 96004 });
 	server.on('upgrade', async (req, socket, head) => {
 		try {
@@ -66,6 +68,7 @@ export async function attachRuntime(server: Server) {
 		await new Promise((r) => setTimeout(r, 250));
 		wss.close();
 		await stopWorkers();
+		await stopMoodleSync();
 		museHost.close();
 		await closeDatabase();
 	};

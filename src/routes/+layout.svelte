@@ -24,7 +24,7 @@
 	import './layout.css';
 	let { children } = $props();
 	// Sign-in and app consent render as standalone screens without the workspace chrome.
-	let bare = $derived(['/login', '/oauth/authorize'].includes(page.url.pathname));
+	let bare = $derived(page.url.pathname === '/login');
 	let column = $derived(page.route.id === '/projects/[id]' ? 'max-w-[1600px]' : 'max-w-5xl');
 	let menuOpen = $state(false);
 	const tasks = setTasks(new Tasks());

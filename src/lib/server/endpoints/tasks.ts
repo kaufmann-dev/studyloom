@@ -5,6 +5,7 @@ import type { z } from 'zod';
 import { db } from '../db';
 import * as t from '../db/schema';
 import { idSchema, taskInput, taskPatchInput } from '../../domain';
+import { ClientError } from '../config';
 import { created, ok, readJson, type Handler } from './http';
 import { findProject } from './queries';
 
@@ -30,6 +31,7 @@ function publicTask(row: TaskRow) {
 		dueDate: row.dueDate,
 		dueTime: row.dueTime,
 		completedAt: row.completedAt,
+		source: row.source,
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt
 	};
@@ -68,8 +70,11 @@ export async function createTask(input: z.infer<typeof taskInput>) {
 		.returning({ id: t.tasks.id });
 	return publicTask(await findTask(inserted.id));
 }
+const MOODLE_TASK = 'Moodle tasks can only be ticked off here; change them in Moodle.';
 export async function updateTask(id: string | undefined, patch: z.infer<typeof taskPatchInput>) {
 	const task = await findTask(id);
+	if (task.source === 'moodle' && Object.keys(patch).some((key) => key !== 'done'))
+		throw new ClientError(409, MOODLE_TASK);
 	if (patch.projectId) await findProject(patch.projectId);
 	await db()
 		.update(t.tasks)
@@ -88,6 +93,7 @@ export async function updateTask(id: string | undefined, patch: z.infer<typeof t
 }
 export async function deleteTask(id: string | undefined) {
 	const task = await findTask(id);
+	if (task.source === 'moodle') throw new ClientError(409, MOODLE_TASK);
 	await db().delete(t.tasks).where(eq(t.tasks.id, task.id));
 }
 

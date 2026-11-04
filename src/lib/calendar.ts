@@ -26,6 +26,7 @@ export type Series = Pick<
 	| 'exceptions'
 	| 'projectId'
 	| 'projectName'
+	| 'source'
 >;
 
 const pad = (value: number) => String(value).padStart(2, '0');
@@ -133,6 +134,7 @@ export function occurrences(events: Series[], from: string, to: string): Occurre
 		const base = {
 			eventId: event.id,
 			repeating,
+			source: event.source,
 			projectId: event.projectId,
 			projectName: event.projectName
 		};

@@ -19,6 +19,7 @@ function event(extra: Partial<IcsEvent> = {}): IcsEvent {
 		exceptions: [],
 		projectId: null,
 		projectName: null,
+		source: 'custom',
 		updatedAt,
 		...extra
 	};
@@ -31,6 +32,7 @@ function task(extra: Partial<IcsTask> = {}): IcsTask {
 		dueDate: '2026-10-09',
 		dueTime: null,
 		completedAt: null,
+		source: 'custom',
 		updatedAt,
 		...extra
 	};
@@ -106,6 +108,16 @@ describe('subscription feed', () => {
 		expect(output).toContain('DESCRIPTION:Project: Biology');
 		expect(output).toContain('DTSTART:20261009T120000Z\r\nSUMMARY:Due: Quiz');
 		expect(output).not.toContain('Old');
+	});
+	it('marks events and tasks synced from Moodle', () => {
+		const output = feed(
+			[event({ source: 'moodle' }), event({ id: 'e2', uid: 'own@studyloom', title: 'Own' })],
+			[task({ source: 'moodle', title: 'Forum' })]
+		);
+		expect(output).toContain('SUMMARY:[Moodle] Lecture\r\nCATEGORIES:Moodle\r\n');
+		expect(output).toContain('SUMMARY:[Moodle] Due: Forum\r\nCATEGORIES:Moodle\r\n');
+		expect(output).toContain('SUMMARY:Own\r\nLOCATION');
+		expect(output.match(/CATEGORIES/g)).toHaveLength(2);
 	});
 });
 

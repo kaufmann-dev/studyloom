@@ -27,6 +27,12 @@ import type {
 } from '../../domain';
 const time = (name: string) => timestamp(name, { withTimezone: true }).notNull().defaultNow();
 const pk = () => uuid('id').primaryKey().defaultRandom();
+/** Own items, or items synced read-only from the Moodle calendar. */
+const source = () =>
+	text('source', { enum: ['custom', 'moodle'] })
+		.notNull()
+		.default('custom');
+const SOURCE_VALUES = sql.raw(`'custom', 'moodle'`);
 export const sessions = pgTable(
 	'sessions',
 	{
@@ -47,60 +53,6 @@ export const authFlows = pgTable('auth_flows', {
 	returnTo: text('return_to').notNull(),
 	expiresAt: time('expires_at')
 });
-/** MCP clients registered through OAuth dynamic client registration. */
-export const oauthClients = pgTable('oauth_clients', {
-	id: text('id').primaryKey(),
-	secretHash: text('secret_hash'),
-	authMethod: text('auth_method', {
-		enum: ['none', 'client_secret_post', 'client_secret_basic']
-	}).notNull(),
-	name: text('name').notNull(),
-	redirectUris: jsonb('redirect_uris').$type<string[]>().notNull(),
-	createdAt: time('created_at'),
-	authorizedAt: timestamp('authorized_at', { withTimezone: true })
-});
-export const oauthCodes = pgTable('oauth_codes', {
-	id: text('id').primaryKey(),
-	clientId: text('client_id')
-		.notNull()
-		.references(() => oauthClients.id, { onDelete: 'cascade' }),
-	subject: text('subject').notNull(),
-	name: text('name').notNull(),
-	redirectUri: text('redirect_uri').notNull(),
-	codeChallenge: text('code_challenge').notNull(),
-	expiresAt: time('expires_at')
-});
-/** One consented MCP connection; its refresh token rotates on every use. */
-export const oauthGrants = pgTable(
-	'oauth_grants',
-	{
-		id: pk(),
-		clientId: text('client_id')
-			.notNull()
-			.references(() => oauthClients.id, { onDelete: 'cascade' }),
-		subject: text('subject').notNull(),
-		name: text('name').notNull(),
-		refreshHash: text('refresh_hash').notNull(),
-		refreshExpiresAt: time('refresh_expires_at'),
-		createdAt: time('created_at'),
-		lastUsedAt: time('last_used_at')
-	},
-	(t) => [
-		uniqueIndex('oauth_grants_refresh_idx').on(t.refreshHash),
-		index('oauth_grants_client_idx').on(t.clientId)
-	]
-);
-export const oauthTokens = pgTable(
-	'oauth_tokens',
-	{
-		id: text('id').primaryKey(),
-		grantId: uuid('grant_id')
-			.notNull()
-			.references(() => oauthGrants.id, { onDelete: 'cascade' }),
-		expiresAt: time('expires_at')
-	},
-	(t) => [index('oauth_tokens_expiry_idx').on(t.expiresAt)]
-);
 export const projects = pgTable('projects', {
 	id: pk(),
 	name: text('name').notNull(),
@@ -180,6 +132,7 @@ export const tasks = pgTable(
 		dueDate: date('due_date', { mode: 'string' }).notNull(),
 		dueTime: text('due_time'),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
+		source: source(),
 		createdAt: time('created_at'),
 		updatedAt: time('updated_at')
 	},
@@ -187,7 +140,8 @@ export const tasks = pgTable(
 		uniqueIndex('tasks_uid_idx').on(t.uid),
 		index('tasks_due_idx').on(t.completedAt, t.dueDate),
 		index('tasks_project_idx').on(t.projectId),
-		check('tasks_due_time_check', sql`${t.dueTime} is null or ${t.dueTime} ~ ${CLOCK_TIME}`)
+		check('tasks_due_time_check', sql`${t.dueTime} is null or ${t.dueTime} ~ ${CLOCK_TIME}`),
+		check('tasks_source_check', sql`${t.source} in (${SOURCE_VALUES})`)
 	]
 );
 export const events = pgTable(
@@ -205,6 +159,7 @@ export const events = pgTable(
 		endTime: text('end_time'),
 		repeat: text('repeat').$type<Repeat>().notNull().default('none'),
 		repeatUntil: date('repeat_until', { mode: 'string' }),
+		source: source(),
 		createdAt: time('created_at'),
 		updatedAt: time('updated_at')
 	},
@@ -224,7 +179,8 @@ export const events = pgTable(
 			'events_order_check',
 			sql`(${t.endDate}, coalesce(${t.endTime}, '')) >= (${t.startDate}, coalesce(${t.startTime}, ''))`
 		),
-		check('events_until_check', sql`${t.repeatUntil} is null or ${t.repeat} <> 'none'`)
+		check('events_until_check', sql`${t.repeatUntil} is null or ${t.repeat} <> 'none'`),
+		check('events_source_check', sql`${t.source} in (${SOURCE_VALUES})`)
 	]
 );
 export const eventExceptions = pgTable(
@@ -261,6 +217,19 @@ export const calendarFeed = pgTable(
 		updatedAt: time('updated_at')
 	},
 	(t) => [check('calendar_feed_single_check', sql`${t.id} = 1`)]
+);
+/** The Moodle calendar subscription; its URL holds an authentication token. */
+export const moodleCalendar = pgTable(
+	'moodle_calendar',
+	{
+		id: integer('id').primaryKey().default(1),
+		url: text('url'),
+		timeZone: text('time_zone').notNull(),
+		lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+		lastError: text('last_error'),
+		updatedAt: time('updated_at')
+	},
+	(t) => [check('moodle_calendar_single_check', sql`${t.id} = 1`)]
 );
 export const materials = pgTable(
 	'materials',
@@ -315,10 +284,7 @@ export const sourceChunks = pgTable(
 		locator: text('locator').notNull(),
 		text: text('text').notNull()
 	},
-	(t) => [
-		uniqueIndex('source_chunk_ordinal_idx').on(t.materialId, t.ordinal),
-		index('source_chunk_search_idx').using('gin', sql`to_tsvector('simple', ${t.text})`)
-	]
+	(t) => [uniqueIndex('source_chunk_ordinal_idx').on(t.materialId, t.ordinal)]
 );
 export const assets = pgTable(
 	'assets',

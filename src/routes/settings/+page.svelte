@@ -3,8 +3,8 @@
 	import { ExternalLink, Link, RefreshCw, Unplug } from '@lucide/svelte';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import ErrorAlert from '#lib/components/studyloom/ErrorAlert.svelte';
-	import ConnectedApps from '#lib/components/studyloom/ConnectedApps.svelte';
 	import FeedSettings from '#lib/components/studyloom/calendar/FeedSettings.svelte';
+	import MoodleSettings from '#lib/components/studyloom/calendar/MoodleSettings.svelte';
 	import type { MuseStatus } from '#lib/domain.js';
 	import { createPoller } from '#lib/polling.js';
 	import { api, errorText } from '#lib/ui.js';
@@ -112,7 +112,7 @@
 				>{/if}{/if}
 	</section>
 	<FeedSettings />
-	<ConnectedApps />
+	<MoodleSettings />
 	<section class="mt-8" aria-labelledby="models-heading">
 		<h2 id="models-heading" class="text-lg font-semibold">Available models</h2>
 		<p class="mt-2 text-sm text-muted-foreground">

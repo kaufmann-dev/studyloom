@@ -8,11 +8,12 @@
 		ChevronRight,
 		Download,
 		Ellipsis,
+		GraduationCap,
 		ListPlus,
 		Plus,
 		Upload
 	} from '@lucide/svelte';
-	import type { Occurrence, Task } from '#lib/domain.js';
+	import type { MoodleCalendar, Occurrence, Task } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { Toggle } from '#lib/components/ui/toggle/index.js';
@@ -40,7 +41,7 @@
 	import { Events } from '#lib/calendar.svelte.js';
 	import { IsMobile } from '#lib/hooks/is-mobile.svelte.js';
 	import { getTasks } from '#lib/tasks.svelte.js';
-	import { errorText } from '#lib/ui.js';
+	import { api, errorText, timeAgo } from '#lib/ui.js';
 
 	const VIEWS = { month: 'Month', week: 'Week', agenda: 'Agenda' } as const;
 	type View = keyof typeof VIEWS;
@@ -61,6 +62,7 @@
 	let showTasks = $state(true);
 	let agendaDays = $state(AGENDA_STEP);
 	let open = $state.raw<Open | null>(null);
+	let moodle = $state.raw<MoodleCalendar | null>(null);
 
 	let now = $derived(tasks.clock.now);
 	let today = $derived(localDate(now));
@@ -94,6 +96,11 @@
 
 	async function load() {
 		error = '';
+		// The sync status is a footnote; a failure to read it must not hide the calendar.
+		api<MoodleCalendar>('/api/calendar/moodle').then(
+			(status) => (moodle = status),
+			() => (moodle = null)
+		);
 		try {
 			await events.load(range.from, range.to);
 		} catch (cause) {
@@ -193,6 +200,15 @@
 	</div>
 </div>
 <ErrorAlert message={error} onRetry={load} class="mb-5" />
+{#if moodle?.connected}
+	{#if moodle.lastError}
+		<ErrorAlert message={`Moodle sync failed: ${moodle.lastError}`} class="mb-5" />
+	{:else if moodle.lastSyncedAt}
+		<p class="mb-5 flex items-center gap-1.5 text-sm text-muted-foreground">
+			<GraduationCap class="size-4" />Moodle synced {timeAgo(moodle.lastSyncedAt, now)}
+		</p>
+	{/if}
+{/if}
 {#if !ready}
 	<p role="status" class="py-12 text-muted-foreground">Loading calendar…</p>
 {:else if view === 'month'}

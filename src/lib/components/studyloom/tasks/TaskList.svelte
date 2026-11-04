@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
-	import { Pencil } from '@lucide/svelte';
+	import { GraduationCap, Pencil } from '@lucide/svelte';
+	import { Badge } from '#lib/components/ui/badge/index.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { dayLabel } from '#lib/calendar.js';
@@ -41,13 +42,16 @@
 				aria-label={task.completedAt ? `Reopen ${task.title}` : `Mark ${task.title} as done`}
 			/>
 			<div class="min-w-0 flex-1">
-				<p
-					class={[
-						'font-medium break-words',
-						task.completedAt && 'text-muted-foreground line-through'
-					]}
-				>
-					{task.title}
+				<p class="flex flex-wrap items-center gap-1.5">
+					<span
+						class={[
+							'font-medium break-words',
+							task.completedAt && 'text-muted-foreground line-through'
+						]}>{task.title}</span
+					>
+					{#if task.source === 'moodle'}
+						<Badge variant="outline" class="gap-1 font-normal"><GraduationCap />Moodle</Badge>
+					{/if}
 				</p>
 				{#if task.notes}
 					<p class="line-clamp-1 text-sm text-muted-foreground">{task.notes}</p>
@@ -63,13 +67,15 @@
 					{/if}
 				</p>
 			</div>
-			<Button
-				variant="ghost"
-				size="icon"
-				class="shrink-0"
-				aria-label={`Edit ${task.title}`}
-				onclick={() => (editing = task)}><Pencil /></Button
-			>
+			{#if task.source === 'custom'}
+				<Button
+					variant="ghost"
+					size="icon"
+					class="shrink-0"
+					aria-label={`Edit ${task.title}`}
+					onclick={() => (editing = task)}><Pencil /></Button
+				>
+			{/if}
 		</li>
 	{/each}
 </ul>

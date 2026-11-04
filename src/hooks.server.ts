@@ -4,20 +4,9 @@ import { building } from '$app/env';
 import { readSession, SESSION_COOKIE, safeReturnTo } from '#lib/server/auth.js';
 import { origin } from '#lib/server/config.js';
 
-/** OAuth clients call these without a browser session or Origin; each authenticates itself. */
-const isMachinePath = (path: string) =>
-	path === '/mcp' ||
-	path === '/oauth/token' ||
-	path === '/oauth/register' ||
-	path.startsWith('/.well-known/');
-
 export const handle: Handle = async ({ event, resolve }) => {
 	const path = event.url.pathname;
 	if (building) return resolve(event);
-	if (isMachinePath(path)) {
-		event.locals.session = null;
-		return resolve(event);
-	}
 	const active =
 		event.request.headers.get('x-studyloom-interaction') === '1' ||
 		event.request.headers.get('sec-fetch-dest') === 'document';

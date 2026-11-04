@@ -548,6 +548,7 @@ describe('Tasks and calendar', () => {
 		dueDate: today,
 		dueTime: null,
 		completedAt: null,
+		source: 'custom',
 		createdAt: '2026-09-01T00:00:00.000Z',
 		updatedAt: '2026-09-01T00:00:00.000Z',
 		...extra
@@ -585,6 +586,7 @@ describe('Tasks and calendar', () => {
 			endTime: '10:00',
 			repeating: true,
 			modified: false,
+			source: 'custom',
 			projectId: null,
 			projectName: null
 		};

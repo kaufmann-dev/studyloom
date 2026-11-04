@@ -26,6 +26,7 @@ function event(startDate: string, repeat: Repeat = 'none', extra: Partial<Series
 		exceptions: [],
 		projectId: null,
 		projectName: null,
+		source: 'custom',
 		...extra
 	};
 }

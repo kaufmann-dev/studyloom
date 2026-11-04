@@ -51,6 +51,13 @@ async function findEvent(id: string | undefined) {
 	if (!row) error(404, 'Event not found.');
 	return row;
 }
+/** An event that can be changed here; Moodle events change only in Moodle. */
+async function findOwnEvent(id: string | undefined) {
+	const row = await findEvent(id);
+	if (row.source === 'moodle')
+		throw new ClientError(409, 'Moodle events can only be changed in Moodle.');
+	return row;
+}
 /** The stored row in the shape the form and the input schema use. */
 const asInput = (row: EventRow) => ({
 	title: row.title,
@@ -93,7 +100,6 @@ function touching(from: string, to: string) {
 	);
 }
 
-export const getEvent = async (id: string | undefined) => publicEvent(await findEvent(id));
 /** Event series touching the range, with their single-occurrence changes. */
 export async function listEvents(range: z.infer<typeof rangeInput>) {
 	const span = diffDays(range.to, range.from);
@@ -117,7 +123,7 @@ export async function createEvent(input: z.infer<typeof eventInput>) {
 }
 /** Changes the whole series. A new start date or repeat drops its single-occurrence changes. */
 export async function updateEvent(id: string | undefined, patch: z.infer<typeof eventPatchInput>) {
-	const row = await findEvent(id);
+	const row = await findOwnEvent(id);
 	const input = eventInput.parse({ ...asInput(row), ...patch });
 	if (input.projectId) await findProject(input.projectId);
 	const next = stored(input);
@@ -141,7 +147,7 @@ export async function updateEvent(id: string | undefined, patch: z.infer<typeof 
 	return publicEvent(await findEvent(row.id));
 }
 export async function deleteEvent(id: string | undefined) {
-	const row = await findEvent(id);
+	const row = await findOwnEvent(id);
 	await db().delete(t.events).where(eq(t.events.id, row.id));
 }
 const touch = (tx: Transaction, id: string) =>
@@ -152,7 +158,7 @@ export async function setOccurrence(
 	occurrenceDate: string | undefined,
 	input: z.infer<typeof exceptionInput>
 ) {
-	const row = await findEvent(id);
+	const row = await findOwnEvent(id);
 	const date = day.parse(occurrenceDate);
 	if (row.repeat === 'none' || !isOccurrence(row, date))
 		throw new ClientError(400, 'That date is not part of this repeating event.');
@@ -187,7 +193,7 @@ export async function restoreOccurrence(
 	id: string | undefined,
 	occurrenceDate: string | undefined
 ) {
-	const row = await findEvent(id);
+	const row = await findOwnEvent(id);
 	const date = day.parse(occurrenceDate);
 	await db().transaction(async (tx) => {
 		await tx

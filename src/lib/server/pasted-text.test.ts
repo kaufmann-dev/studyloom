@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { db, closeDatabase } from './db';
-import { materials, projects } from './db/schema';
-import { pastedSections, searchSources } from './sources';
+import { materials, projects, sourceChunks } from './db/schema';
+import { pastedSections } from './sources';
 import { originalPath } from './storage';
 import { callApi, useTestDatabase } from './testing';
 
@@ -45,8 +45,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Pasted text sources', () => {
 				notes: 'Pasted text.'
 			});
 			expect(await readFile(originalPath(materialId), 'utf8')).toBe(text);
-			const [hit] = await searchSources({ query: 'membrane', projectId: project.id, limit: 5 });
-			expect(hit).toMatchObject({ materialId, locator: 'part:1' });
+			const chunks = await db()
+				.select({ locator: sourceChunks.locator, text: sourceChunks.text })
+				.from(sourceChunks)
+				.where(eq(sourceChunks.materialId, materialId));
+			expect(chunks).toEqual([{ locator: 'part:1', text }]);
 
 			const named = await (await call({ name: 'My notes', text: 'Short.' })).json();
 			const [second] = await db()

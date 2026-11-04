@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import type { z } from 'zod';
-	import { RotateCcw, Trash2 } from '@lucide/svelte';
+	import { GraduationCap, MapPin, RotateCcw, Trash2 } from '@lucide/svelte';
 	import type { CalendarEvent, eventInput, Occurrence } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as ToggleGroup from '#lib/components/ui/toggle-group/index.js';
+	import { dayLabel, timeRange } from '#lib/calendar.js';
 	import type { Events } from '#lib/calendar.svelte.js';
 	import EventForm from './EventForm.svelte';
 
@@ -76,54 +77,92 @@
 	}
 </script>
 
-<Dialog.Root open onOpenChange={(open) => !open && onClose()}>
-	<Dialog.Content class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
-		<Dialog.Header>
-			<Dialog.Title>{event ? 'Edit event' : 'New event'}</Dialog.Title>
-			<Dialog.Description>Something that happens at a set time.</Dialog.Description>
-		</Dialog.Header>
-		{#if repeating}
-			<div class="space-y-2">
-				<ToggleGroup.Root
-					type="single"
-					variant="outline"
-					class="w-full"
-					aria-label="What to change"
-					bind:value={() => scope, (next) => (scope = next === 'all' ? 'all' : 'one')}
-				>
-					<ToggleGroup.Item value="one" class="flex-1">Only this event</ToggleGroup.Item>
-					<ToggleGroup.Item value="all" class="flex-1">All events</ToggleGroup.Item>
-				</ToggleGroup.Root>
-				{#if scope === 'all' && event?.exceptions.length}
-					<p class="text-xs text-muted-foreground">
-						Changing the first date or the repeat removes the changes made to single events.
-					</p>
-				{/if}
+{#snippet moodleEvent(synced: Occurrence)}
+	<Dialog.Header>
+		<Dialog.Title>{synced.title}</Dialog.Title>
+		<Dialog.Description class="flex items-center gap-1.5">
+			<GraduationCap class="size-4" />Synced from Moodle. Change it in Moodle.
+		</Dialog.Description>
+	</Dialog.Header>
+	<dl class="space-y-2 text-sm">
+		<div>
+			<dt class="sr-only">When</dt>
+			<dd>
+				{dayLabel(synced.startDate)}{synced.endDate === synced.startDate
+					? ''
+					: ` – ${dayLabel(synced.endDate)}`} · {timeRange(synced)}
+			</dd>
+		</div>
+		{#if synced.location}
+			<div class="flex items-center gap-1.5">
+				<dt><MapPin class="size-4" aria-label="Location" /></dt>
+				<dd>{synced.location}</dd>
 			</div>
 		{/if}
-		{#key scope}
-			<EventForm
-				bind:this={form}
-				initial={values}
-				series={!single}
-				projectName={event?.projectName}
-				submitLabel={event ? 'Save' : 'Add event'}
-				onSubmit={submit}
-				onCancel={onClose}
-			>
-				{#snippet actions(busy)}
-					{#if event}
-						<Button variant="outline" disabled={busy} onclick={() => form?.run(remove)}>
-							<Trash2 />{single ? 'Skip this event' : repeating ? 'Delete all' : 'Delete'}
-						</Button>
-						{#if single && occurrence?.modified}
-							<Button variant="ghost" disabled={busy} onclick={() => form?.run(restore)}>
-								<RotateCcw />Restore original
-							</Button>
-						{/if}
+		{#if synced.notes}
+			<div>
+				<dt class="sr-only">Notes</dt>
+				<dd class="whitespace-pre-wrap text-muted-foreground">{synced.notes}</dd>
+			</div>
+		{/if}
+	</dl>
+	<Dialog.Footer>
+		<Button variant="outline" onclick={onClose}>Close</Button>
+	</Dialog.Footer>
+{/snippet}
+
+<Dialog.Root open onOpenChange={(open) => !open && onClose()}>
+	<Dialog.Content class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+		{#if occurrence?.source === 'moodle'}
+			{@render moodleEvent(occurrence)}
+		{:else}
+			<Dialog.Header>
+				<Dialog.Title>{event ? 'Edit event' : 'New event'}</Dialog.Title>
+				<Dialog.Description>Something that happens at a set time.</Dialog.Description>
+			</Dialog.Header>
+			{#if repeating}
+				<div class="space-y-2">
+					<ToggleGroup.Root
+						type="single"
+						variant="outline"
+						class="w-full"
+						aria-label="What to change"
+						bind:value={() => scope, (next) => (scope = next === 'all' ? 'all' : 'one')}
+					>
+						<ToggleGroup.Item value="one" class="flex-1">Only this event</ToggleGroup.Item>
+						<ToggleGroup.Item value="all" class="flex-1">All events</ToggleGroup.Item>
+					</ToggleGroup.Root>
+					{#if scope === 'all' && event?.exceptions.length}
+						<p class="text-xs text-muted-foreground">
+							Changing the first date or the repeat removes the changes made to single events.
+						</p>
 					{/if}
-				{/snippet}
-			</EventForm>
-		{/key}
+				</div>
+			{/if}
+			{#key scope}
+				<EventForm
+					bind:this={form}
+					initial={values}
+					series={!single}
+					projectName={event?.projectName}
+					submitLabel={event ? 'Save' : 'Add event'}
+					onSubmit={submit}
+					onCancel={onClose}
+				>
+					{#snippet actions(busy)}
+						{#if event}
+							<Button variant="outline" disabled={busy} onclick={() => form?.run(remove)}>
+								<Trash2 />{single ? 'Skip this event' : repeating ? 'Delete all' : 'Delete'}
+							</Button>
+							{#if single && occurrence?.modified}
+								<Button variant="ghost" disabled={busy} onclick={() => form?.run(restore)}>
+									<RotateCcw />Restore original
+								</Button>
+							{/if}
+						{/if}
+					{/snippet}
+				</EventForm>
+			{/key}
+		{/if}
 	</Dialog.Content>
 </Dialog.Root>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { GraduationCap } from '@lucide/svelte';
 	import type { Occurrence, Task } from '#lib/domain.js';
 	import TaskChip from '#lib/components/studyloom/tasks/TaskChip.svelte';
 	import { TONES } from '#lib/components/studyloom/tasks/urgency.js';
@@ -138,17 +139,26 @@
 						></button>
 					{/each}
 					{#each day.blocks as block (block.key)}
+						{@const moodle = block.occurrence.source === 'moodle'}
 						<button
 							type="button"
-							class="absolute flex flex-col items-stretch justify-start overflow-hidden border border-background bg-primary px-1.5 py-0.5 text-left text-xs text-primary-foreground outline-none hover:bg-primary/85 focus-visible:ring-2 focus-visible:ring-ring"
+							class={[
+								'absolute flex flex-col items-stretch justify-start overflow-hidden border px-1.5 py-0.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring',
+								moodle
+									? 'border-primary/50 bg-background text-foreground hover:bg-muted'
+									: 'border-background bg-primary text-primary-foreground hover:bg-primary/85'
+							]}
 							style:top={offset(block.start)}
 							style:height={offset(block.end - block.start)}
 							style:left={`${(block.column / block.columns) * 100}%`}
 							style:width={`${100 / block.columns}%`}
-							aria-label={`Event: ${block.occurrence.title}, ${timeRange(block.occurrence, day.date)}`}
+							aria-label={`${moodle ? 'Moodle event' : 'Event'}: ${block.occurrence.title}, ${timeRange(block.occurrence, day.date)}`}
 							onclick={() => onEvent(block.occurrence)}
 						>
-							<span class="block truncate font-medium">{block.occurrence.title}</span>
+							<span class="flex min-w-0 items-center gap-1 font-medium">
+								{#if moodle}<GraduationCap class="size-3 shrink-0" />{/if}
+								<span class="truncate">{block.occurrence.title}</span>
+							</span>
 							<span class="block truncate opacity-90">
 								{timeRange(block.occurrence, day.date)}{block.occurrence.location
 									? ` · ${block.occurrence.location}`
