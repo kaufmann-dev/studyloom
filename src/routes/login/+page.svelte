@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { AudioLines, ArrowRight } from '@lucide/svelte';
+	import { ArrowRight } from '@lucide/svelte';
+	import logo from '#lib/assets/favicon.svg';
 	import Button from '#lib/components/ui/button/button.svelte';
 	const legalDomain = 'studyloom.kaufmann.dev';
 	// The server only returns to local pages, whatever arrives here.
@@ -11,7 +12,7 @@
 
 <svelte:head><title>Sign in · Studyloom</title></svelte:head>
 <div class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12">
-	<AudioLines class="mb-7 size-10 text-foreground" />
+	<img src={logo} alt="" class="mb-7 size-10" />
 	<h1 class="text-3xl font-semibold tracking-tight">Studyloom</h1>
 	<p class="mt-4 leading-relaxed text-muted-foreground">
 		Bring your recordings and course materials together. Build understanding with source-backed
