@@ -73,15 +73,15 @@ Uploads default to 2 GiB per source, using 8 MiB HTTP chunks. Audio is mono sign
 
 ## Coolify Deployment
 
-- Build Pack: **Nixpacks**
+- Build Pack: **Railpack**
 - Base Directory: `/`
 - Domain: `https://studyloom.kaufmann.dev`
 - Persistent storage mount: `/data`, writable by the application process.
 - PostgreSQL: provision a dedicated production database and set `DATABASE_URL`.
-- The server applies pending Drizzle migrations on startup before serving traffic, so a fresh database or a fast restart cannot crash on missing tables. The optional Post-Deployment Command `npx --yes pnpm@11.18.0 db:migrate` (executed via `sh -c`) remains as a fallback.
+- The server applies pending Drizzle migrations on startup before serving traffic, so a fresh database or a fast restart cannot crash on missing tables. The optional Post-Deployment Command `pnpm db:migrate` (executed via `sh -c`) remains as a fallback.
 - Keep one replica. Enable WebSocket forwarding and allow at least 10 MiB request bodies in any additional proxy.
 
-`nixpacks.toml` installs FFmpeg, LibreOffice, Poppler, Tesseract (English/German), Python/Pillow and fonts **inside the app image**; the Claude Code binary comes with the npm package. It invokes the pinned pnpm version because Nixpacks 1.41 otherwise selects outdated package-manager tooling. Node is selected from `package.json`.
+`railpack.json` installs FFmpeg, LibreOffice, Poppler, Tesseract (English/German), Python/Pillow and fonts **inside the app image** as runtime Apt packages; the Claude Code binary comes with the npm package. Railpack selects Node and the pinned pnpm version from `package.json`.
 
 Required environment variables:
 

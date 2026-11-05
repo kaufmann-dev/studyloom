@@ -189,14 +189,14 @@ Avoid these legacy Svelte features in new or refactored code:
 ## Local Database and Deployment
 
 - **Database**: Use the manually managed Podman PostgreSQL database named `postgres-sveltekit` for local development. Treat production database provisioning as separate infrastructure.
-- **Debugging**: Keep deployment fixes scoped to the exact failing layer. Identify the failing command first in Coolify or Nixpacks before fixing it.
+- **Debugging**: Keep deployment fixes scoped to the exact failing layer. Identify the failing command first in Coolify or Railpack before fixing it.
 
-For Coolify and Nixpacks:
+For Coolify and Railpack:
 
 - If `pnpm-workspace.yaml` exists in a single-package app, keep a non-empty `packages` list with `.` included.
-- Use `engines.node` and `nixpacks.toml` to pin compatible Node behavior when dependencies require a minimum patch version.
+- Use `engines.node` to pin compatible Node behavior when dependencies require a minimum patch version. Railpack reads it as the runtime version; do not duplicate it in `railpack.json`.
 - Read deployment environment variables from `process.env`. Load `.env` only after checking that the file exists.
-- Let Nixpacks handle the install phase unless a project-specific reason requires otherwise.
+- Let Railpack handle the install phase unless a project-specific reason requires otherwise.
 - Prefer explicit deploy or runtime migration and seed steps when Coolify supports them.
 - Keep build-time migration and seed scripts idempotent when they must run during image builds.
 
@@ -220,6 +220,6 @@ For Coolify and Nixpacks:
 - Transcription is ElevenLabs only: `transcribeFile` in `src/lib/server/elevenlabs.ts` (batch, with speaker labels; uploads and recording recovery) and `src/lib/server/realtime-asr.ts` (realtime, VAD-committed segments, no speaker labels; recordings and study sessions). The Scribe model IDs are constants there because ElevenLabs lists no transcription models.
 - Study sessions: a `session` job has Claude write a cited plan (`studyPlanSchema`) and voices its intro, explanations and questions as PCM clips under `DATA_DIR/audio/<outputId>/parts`. `src/server/study-socket.ts` runs a session: it plays the clips, listens through `src/lib/server/realtime-asr.ts` (shared with recordings), collects an answer with `AnswerCollector` (`src/lib/server/study-run.ts`) until the learner presses I'm done (pauses never end an answer), and streams Claude's graded reply through `TutorConversation` (`src/lib/server/tutor.ts`) into `speakStream`. Each run has one tool-less `ClaudeConversation`; the primer (plan, cited excerpts, answers so far) is its system prompt, so a failed turn restarts the session from the saved answers and retries once if nothing was spoken. Runs and answers live in `study_runs` and `study_answers`; feedback is saved before it is confirmed as played, so a resumed run says it again exactly once. The browser opens the microphone only while the tutor listens; answer audio is never stored.
 - Browser audio is 24 kHz signed 16-bit mono PCM. Persist and acknowledge chunks before discarding them; retain exact sample offsets. Never replay recovery backlog into a live stream faster than real time.
-- Native processing packages belong in `nixpacks.toml`, inside the deployed app image. Their absence from a development terminal does not block implementation, type checks, unit tests or builds.
+- Native processing packages belong in `railpack.json` (`deploy.aptPackages`), inside the deployed app image. Their absence from a development terminal does not block implementation, type checks, unit tests or builds.
 - Generate migrations with `pnpm db:generate` and apply with `pnpm db:migrate`. Run a single application replica with persistent PostgreSQL and `/data` storage.
 - Run `pnpm check`, `pnpm test` and `pnpm build` before finishing changes to these flows. Native/browser integration checks run where the required runtime and configured services exist; report their actual coverage.
