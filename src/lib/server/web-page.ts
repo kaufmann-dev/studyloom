@@ -140,8 +140,8 @@ async function readBody(response: IncomingMessage, limit: number) {
 	if (!decoder) throw new ClientError(400, 'The page uses an unsupported content encoding.');
 	const parts: Buffer[] = [];
 	let size = 0;
-	await pipeline(response, decoder, async (source) => {
-		for await (const part of source as AsyncIterable<Buffer>) {
+	await pipeline(response, decoder, async (source: AsyncIterable<Buffer>) => {
+		for await (const part of source) {
 			size += part.length;
 			if (size > limit) throw tooLarge(limit);
 			parts.push(part);

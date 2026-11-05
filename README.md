@@ -19,7 +19,7 @@ A private learning workspace at **studyloom.kaufmann.dev**. The home page greets
 
 ## Development
 
-Requires Node **24.x**, pnpm **11.18.0**, and PostgreSQL. The existing local database container is `postgres-sveltekit`; use a separate `studyloom` database in it. Production PostgreSQL is separate infrastructure.
+Requires Node **26.x**, pnpm **12.16.1**, and PostgreSQL. The existing local database container is `postgres-sveltekit`; use a separate `studyloom` database in it. Production PostgreSQL is separate infrastructure.
 
 ```bash
 pnpm install

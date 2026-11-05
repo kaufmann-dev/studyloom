@@ -111,6 +111,8 @@
 	}
 	function show(nextView: View, date: string) {
 		const query = new URLSearchParams({ view: nextView, date });
+		// The rule cannot follow the query string appended to the resolve()-built path.
+		// eslint-disable-next-line svelte/no-navigation-without-resolve
 		return goto(`${resolve('/calendar')}?${query}`, { reset: false });
 	}
 	function step(direction: 1 | -1) {
@@ -165,7 +167,11 @@
 				</DropdownMenu.Item>
 				<DropdownMenu.Item>
 					{#snippet child({ props })}
-						<a {...props} href="/api/calendar/export" download="studyloom.ics">
+						<a
+							{...props}
+							href={resolve('/api/[...path]', { path: 'calendar/export' })}
+							download="studyloom.ics"
+						>
 							<Download />Export .ics
 						</a>
 					{/snippet}
