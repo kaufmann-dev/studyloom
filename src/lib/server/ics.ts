@@ -1,5 +1,5 @@
 import { addDays, isOccurrence, occurrences, toUtc, toWallClock, type Series } from '../calendar';
-import type { CalendarSource, Repeat } from '../domain';
+import type { Repeat } from '../domain';
 
 export interface IcsEvent extends Series {
 	uid: string;
@@ -14,7 +14,6 @@ export interface IcsTask {
 	completedAt: Date | null;
 	updatedAt: Date;
 	projectName?: string | null;
-	source: CalendarSource;
 }
 
 /** How far the subscription feed reaches around today. */
@@ -87,11 +86,6 @@ function spanLines(span: Span, at: (date: string, time: string) => string) {
 		`DTEND:${at(span.endDate, span.endTime)}`
 	];
 }
-/** Moodle items are marked in the title and by category, so a phone shows where they came from. */
-const fromMoodle = (source: CalendarSource) => source === 'moodle';
-const summary = (title: string, source: CalendarSource) =>
-	text('SUMMARY', fromMoodle(source) ? `[Moodle] ${title}` : title);
-const categories = (source: CalendarSource) => (fromMoodle(source) ? ['CATEGORIES:Moodle'] : []);
 const stamps = (updatedAt: Date) => [
 	`DTSTAMP:${utc(updatedAt)}`,
 	`LAST-MODIFIED:${utc(updatedAt)}`
@@ -127,8 +121,7 @@ export function buildFeed(input: {
 			`UID:${occurrence.occurrenceDate}-${event.uid}`,
 			...stamps(event.updatedAt),
 			...spanLines(occurrence, at),
-			...summary(occurrence.title, occurrence.source),
-			...categories(occurrence.source),
+			...text('SUMMARY', occurrence.title),
 			...text('LOCATION', occurrence.location),
 			...text('DESCRIPTION', describe(occurrence.notes, occurrence.projectName)),
 			'END:VEVENT'
@@ -146,8 +139,7 @@ export function buildFeed(input: {
 						`DTSTART;VALUE=DATE:${compactDate(task.dueDate)}`,
 						`DTEND;VALUE=DATE:${compactDate(addDays(task.dueDate, 1))}`
 					]),
-			...summary(`Due: ${task.title}`, task.source),
-			...categories(task.source),
+			...text('SUMMARY', `Due: ${task.title}`),
 			...text('DESCRIPTION', describe(task.notes, task.projectName)),
 			'END:VEVENT'
 		);
