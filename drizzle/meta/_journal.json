@@ -92,6 +92,13 @@
       "when": 1794448022400,
       "tag": "0012_contact_lecturer_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794484557604,
+      "tag": "0013_drop_project_course",
+      "breakpoints": true
     }
   ]
 }

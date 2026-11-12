@@ -25,7 +25,6 @@
 	} = $props();
 	const values = (project: Project) => ({
 		name: project.name,
-		course: project.course,
 		lecturerIds: project.lecturers.map((lecturer) => lecturer.id),
 		description: project.description
 	});
@@ -90,11 +89,11 @@
 				</Form.Control>
 				<Form.FieldErrors />
 			</Form.Field>
-			<Form.Field form={editor} name="course">
+			<Form.Field form={editor} name="description">
 				<Form.Control>
 					{#snippet children({ props })}
-						<Form.Label>Course designation</Form.Label>
-						<Input {...props} bind:value={$form.course} autocomplete="off" />
+						<Form.Label>Description</Form.Label>
+						<Textarea {...props} bind:value={$form.description} rows={3} />
 					{/snippet}
 				</Form.Control>
 				<Form.FieldErrors />
@@ -108,15 +107,6 @@
 							bind:value={$form.lecturerIds}
 							selected={project.lecturers}
 						/>
-					{/snippet}
-				</Form.Control>
-				<Form.FieldErrors />
-			</Form.Field>
-			<Form.Field form={editor} name="description">
-				<Form.Control>
-					{#snippet children({ props })}
-						<Form.Label>Description</Form.Label>
-						<Textarea {...props} bind:value={$form.description} rows={3} />
 					{/snippet}
 				</Form.Control>
 				<Form.FieldErrors />

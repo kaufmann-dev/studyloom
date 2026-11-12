@@ -30,7 +30,6 @@ type ProjectRow = typeof t.projects.$inferSelect;
 
 const cleaned = (input: z.infer<typeof projectInput>) => ({
 	name: input.name.trim(),
-	course: input.course.trim(),
 	description: input.description.trim()
 });
 

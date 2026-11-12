@@ -162,22 +162,16 @@
 	<div class="mb-8 flex flex-wrap items-start justify-between gap-4">
 		<div class="min-w-0">
 			<h1 class="text-3xl font-semibold tracking-tight break-words">{data.project.name}</h1>
-			{#if data.project.course || data.project.lecturers.length}
-				<p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-					{#if data.project.course}<span class="break-words">{data.project.course}</span>{/if}
-					{#if data.project.lecturers.length}
-						<span class="flex flex-wrap items-center gap-x-1.5">
-							<UserRound class="size-3.5 shrink-0" aria-hidden="true" />
-							<span class="sr-only">Lecturers:</span>
-							{#each data.project.lecturers as lecturer, index (lecturer.id)}
-								<a
-									href={resolve('/library/[id]', { id: lecturer.id })}
-									class="underline-offset-4 hover:text-foreground hover:underline"
-									>{lecturer.name}</a
-								>{index < data.project.lecturers.length - 1 ? ',' : ''}
-							{/each}
-						</span>
-					{/if}
+			{#if data.project.lecturers.length}
+				<p class="mt-2 flex flex-wrap items-center gap-x-1.5 text-sm text-muted-foreground">
+					<UserRound class="size-3.5 shrink-0" aria-hidden="true" />
+					<span class="sr-only">Lecturers:</span>
+					{#each data.project.lecturers as lecturer, index (lecturer.id)}
+						<a
+							href={resolve('/library/[id]', { id: lecturer.id })}
+							class="underline-offset-4 hover:text-foreground hover:underline">{lecturer.name}</a
+						>{index < data.project.lecturers.length - 1 ? ',' : ''}
+					{/each}
 				</p>
 			{/if}
 			{#if data.project.description}

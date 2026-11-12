@@ -135,8 +135,13 @@
 						<PinButton {pins} targetType="project" targetId={project.id} name={project.name} />
 					</div>
 				</div>
-				<p class={['mt-2 truncate text-sm text-muted-foreground', !project.course && 'opacity-60']}>
-					{project.course || 'No course designation'}
+				<p
+					class={[
+						'mt-2 line-clamp-2 text-sm text-muted-foreground',
+						!project.description && 'opacity-60'
+					]}
+				>
+					{project.description || 'No description'}
 				</p>
 				<p
 					class={[
@@ -179,17 +184,17 @@
 				</Form.Control>
 				<Form.FieldErrors />
 			</Form.Field>
-			<Form.Field form={projectForm} name="course">
+			<Form.Field form={projectForm} name="description">
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label>
-							Course designation <span class="font-normal text-muted-foreground">(optional)</span>
+							Description <span class="font-normal text-muted-foreground">(optional)</span>
 						</Form.Label>
-						<Input
+						<Textarea
 							{...props}
-							bind:value={$form.course}
+							bind:value={$form.description}
+							rows={2}
 							placeholder="e.g. SpFB26: 17/1 - Techn III"
-							autocomplete="off"
 						/>
 					{/snippet}
 				</Form.Control>
@@ -202,17 +207,6 @@
 							Lecturers <span class="font-normal text-muted-foreground">(optional)</span>
 						</Form.Label>
 						<LecturerSelect {...props} bind:value={$form.lecturerIds} />
-					{/snippet}
-				</Form.Control>
-				<Form.FieldErrors />
-			</Form.Field>
-			<Form.Field form={projectForm} name="description">
-				<Form.Control>
-					{#snippet children({ props })}
-						<Form.Label>
-							Description <span class="font-normal text-muted-foreground">(optional)</span>
-						</Form.Label>
-						<Textarea {...props} bind:value={$form.description} rows={2} />
 					{/snippet}
 				</Form.Control>
 				<Form.FieldErrors />

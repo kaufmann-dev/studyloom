@@ -102,7 +102,7 @@ describe('source and tool boundaries', () => {
 		expect(libraryPatchInput.parse({ name: 'hello ' }).name).toBe('hello ');
 		expect(libraryPatchInput.parse({ parentId: id })).toEqual({ parentId: id });
 		expect(() => projectInput.parse({ name: '   ', description: '' })).toThrow();
-		expect(projectInput.parse({ name: 'Course' })).toMatchObject({ course: '', lecturerIds: [] });
+		expect(projectInput.parse({ name: 'Course' })).toMatchObject({ lecturerIds: [] });
 		expect(() => projectInput.parse({ name: 'Course', lecturerIds: [id, id] })).toThrow(
 			'Each lecturer can be listed once.'
 		);

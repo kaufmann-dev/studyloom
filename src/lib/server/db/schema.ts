@@ -57,7 +57,6 @@ export const authFlows = pgTable('auth_flows', {
 export const projects = pgTable('projects', {
 	id: pk(),
 	name: text('name').notNull(),
-	course: text('course').notNull().default(''),
 	description: text('description').notNull().default(''),
 	createdAt: time('created_at'),
 	updatedAt: time('updated_at')

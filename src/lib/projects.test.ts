@@ -5,7 +5,6 @@ import { isProjectSort, sortProjects } from './projects';
 const project = (name: string, updatedAt: string, lecturers: string[] = []): Project => ({
 	id: name,
 	name,
-	course: '',
 	lecturers: lecturers.map((lecturer) => ({ id: lecturer, name: lecturer })),
 	description: '',
 	createdAt: updatedAt,
