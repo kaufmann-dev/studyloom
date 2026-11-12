@@ -12,6 +12,7 @@
 	import Button from '#lib/components/ui/button/button.svelte';
 	import { api, errorText } from '#lib/ui.js';
 	import ConfirmDialog from './ConfirmDialog.svelte';
+	import LecturerSelect from './LecturerSelect.svelte';
 
 	let {
 		project,
@@ -22,9 +23,15 @@
 		onSaved: () => void | Promise<void>;
 		onDeleted: () => void | Promise<void>;
 	} = $props();
+	const values = (project: Project) => ({
+		name: project.name,
+		course: project.course,
+		lecturerIds: project.lecturers.map((lecturer) => lecturer.id),
+		description: project.description
+	});
 	const editor = superForm(
 		defaults(
-			untrack(() => ({ name: project.name, description: project.description })),
+			untrack(() => values(project)),
 			zod4(projectInput)
 		),
 		{
@@ -40,7 +47,7 @@
 	let error = $state('');
 
 	function show() {
-		$form = { name: project.name, description: project.description };
+		$form = values(project);
 		error = '';
 		open = true;
 	}
@@ -79,6 +86,28 @@
 					{#snippet children({ props })}
 						<Form.Label>Name</Form.Label>
 						<Input {...props} bind:value={$form.name} autocomplete="off" />
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
+			<Form.Field form={editor} name="course">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label>Course designation</Form.Label>
+						<Input {...props} bind:value={$form.course} autocomplete="off" />
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
+			<Form.Field form={editor} name="lecturerIds">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label>Lecturers</Form.Label>
+						<LecturerSelect
+							{...props}
+							bind:value={$form.lecturerIds}
+							selected={project.lecturers}
+						/>
 					{/snippet}
 				</Form.Control>
 				<Form.FieldErrors />

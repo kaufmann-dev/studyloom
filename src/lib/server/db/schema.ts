@@ -10,7 +10,8 @@ import {
 	jsonb,
 	index,
 	uniqueIndex,
-	check
+	check,
+	primaryKey
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
@@ -56,6 +57,7 @@ export const authFlows = pgTable('auth_flows', {
 export const projects = pgTable('projects', {
 	id: pk(),
 	name: text('name').notNull(),
+	course: text('course').notNull().default(''),
 	description: text('description').notNull().default(''),
 	createdAt: time('created_at'),
 	updatedAt: time('updated_at')
@@ -91,6 +93,23 @@ export const libraryEntries = pgTable(
 			'library_size_check',
 			sql`${t.size} >= 0 and ${t.receivedBytes} >= 0 and ${t.receivedBytes} <= ${t.size}`
 		)
+	]
+);
+/** Library contacts lecturing a project, in the order the user listed them. */
+export const projectLecturers = pgTable(
+	'project_lecturers',
+	{
+		projectId: uuid('project_id')
+			.notNull()
+			.references(() => projects.id, { onDelete: 'cascade' }),
+		contactId: uuid('contact_id')
+			.notNull()
+			.references(() => libraryEntries.id, { onDelete: 'cascade' }),
+		position: integer('position').notNull()
+	},
+	(t) => [
+		primaryKey({ columns: [t.projectId, t.contactId] }),
+		index('project_lecturers_contact_idx').on(t.contactId)
 	]
 );
 export const libraryUploadChunks = pgTable(

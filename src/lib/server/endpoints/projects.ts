@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
-import { db } from '../db';
+import { db, type Transaction } from '../db';
 import * as t from '../db/schema';
 import {
 	chatInput,
@@ -26,20 +26,71 @@ import { accepted, created, ok, readJson, type Handler } from './http';
 import { findProject, hasActiveJob, lockProject } from './queries';
 import { publicJob, publicOutput } from './study';
 
-const cleaned = (input: { name: string; description: string }) => ({
+type ProjectRow = typeof t.projects.$inferSelect;
+
+const cleaned = (input: z.infer<typeof projectInput>) => ({
 	name: input.name.trim(),
+	course: input.course.trim(),
 	description: input.description.trim()
 });
 
-export const listProjects = () =>
-	db().select().from(t.projects).orderBy(desc(t.projects.updatedAt));
+/** Attaches each project's lecturers, in the order the user listed them. */
+async function withLecturers<P extends ProjectRow>(rows: P[]) {
+	const lecturers = rows.length
+		? await db()
+				.select({
+					projectId: t.projectLecturers.projectId,
+					id: t.libraryEntries.id,
+					name: t.libraryEntries.name
+				})
+				.from(t.projectLecturers)
+				.innerJoin(t.libraryEntries, eq(t.libraryEntries.id, t.projectLecturers.contactId))
+				.where(
+					inArray(
+						t.projectLecturers.projectId,
+						rows.map((row) => row.id)
+					)
+				)
+				.orderBy(asc(t.projectLecturers.position))
+		: [];
+	return rows.map((row) => ({
+		...row,
+		lecturers: lecturers
+			.filter((lecturer) => lecturer.projectId === row.id)
+			.map(({ id, name }) => ({ id, name }))
+	}));
+}
+/** Replaces a project's lecturers; every id must be a Library contact. */
+async function setLecturers(tx: Transaction, projectId: string, contactIds: string[]) {
+	if (contactIds.length) {
+		const contacts = await tx
+			.select({ id: t.libraryEntries.id })
+			.from(t.libraryEntries)
+			.where(and(inArray(t.libraryEntries.id, contactIds), eq(t.libraryEntries.kind, 'contact')));
+		if (contacts.length !== contactIds.length)
+			throw new ClientError(400, 'Choose lecturers from your Library contacts.');
+	}
+	await tx.delete(t.projectLecturers).where(eq(t.projectLecturers.projectId, projectId));
+	if (contactIds.length)
+		await tx
+			.insert(t.projectLecturers)
+			.values(contactIds.map((contactId, position) => ({ projectId, contactId, position })));
+}
+
+export const listProjects = async () =>
+	withLecturers(await db().select().from(t.projects).orderBy(desc(t.projects.updatedAt)));
 export async function createProject(input: z.infer<typeof projectInput>) {
-	const [project] = await db().insert(t.projects).values(cleaned(input)).returning();
-	return project;
+	const project = await db().transaction(async (tx) => {
+		const [project] = await tx.insert(t.projects).values(cleaned(input)).returning();
+		await setLecturers(tx, project.id, input.lecturerIds);
+		return project;
+	});
+	const [result] = await withLecturers([project]);
+	return result;
 }
 /** A project with its sources, conversations, generated outputs and recent jobs. */
 export async function projectWorkspace(rawId: string | undefined) {
-	const project = await findProject(rawId);
+	const [project] = await withLecturers([await findProject(rawId)]);
 	const id = project.id;
 	const [materials, conversations, outputs, jobs, readableChunks] = await Promise.all([
 		db()
@@ -114,12 +165,18 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 	const id = project.id;
 	if (!action && method === 'PATCH') {
 		const input = projectInput.parse(await readJson(event));
-		const [updated] = await db()
-			.update(t.projects)
-			.set({ ...cleaned(input), updatedAt: new Date() })
-			.where(eq(t.projects.id, id))
-			.returning();
-		return Response.json({ project: updated });
+		const updated = await db().transaction(async (tx) => {
+			if (!(await lockProject(tx, id))) error(404, 'Project not found.');
+			const [updated] = await tx
+				.update(t.projects)
+				.set({ ...cleaned(input), updatedAt: new Date() })
+				.where(eq(t.projects.id, id))
+				.returning();
+			await setLecturers(tx, id, input.lecturerIds);
+			return updated;
+		});
+		const [project] = await withLecturers([updated]);
+		return Response.json({ project });
 	}
 	if (!action && method === 'DELETE') {
 		const files = await db().transaction(async (tx) => {

@@ -15,6 +15,12 @@ const modelId = z.string().min(1).max(160).default(DEFAULT_MODEL);
 export const modelInput = z.object({ modelId });
 export const projectInput = z.object({
 	name: nonBlank(z.string().max(160), 'Project name is required.'),
+	course: z.string().max(160).default(''),
+	lecturerIds: z
+		.array(idSchema)
+		.max(20, 'Choose at most 20 lecturers.')
+		.default([])
+		.refine((ids) => new Set(ids).size === ids.length, 'Each lecturer can be listed once.'),
 	description: z.string().max(4000).default('')
 });
 export const materialUploadInput = z.object({
@@ -497,9 +503,18 @@ export type JobKind =
 	'ingest' | 'chat' | 'summary' | 'quiz' | 'audio' | 'session' | 'grade' | 'recover';
 export const isActiveJob = (job: { status: JobStatus }) =>
 	job.status === 'queued' || job.status === 'running';
+/** A Library contact lecturing a project. */
+export interface ProjectLecturer {
+	id: string;
+	name: string;
+}
+export type ProjectSort = 'updated' | 'name' | 'lecturer';
 export interface Project {
 	id: string;
 	name: string;
+	course: string;
+	/** In the order the user listed them. */
+	lecturers: ProjectLecturer[];
 	description: string;
 	createdAt: string;
 	updatedAt: string;

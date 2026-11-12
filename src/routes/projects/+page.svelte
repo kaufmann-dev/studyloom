@@ -1,19 +1,23 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { defaults, superForm } from 'sveltekit-superforms';
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
-	import { FolderOpen, Plus } from '@lucide/svelte';
+	import { FolderOpen, Plus, UserRound } from '@lucide/svelte';
 	import { projectInput, type Project } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Form from '#lib/components/ui/form/index.js';
 	import Input from '#lib/components/ui/input/input.svelte';
+	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
 	import Textarea from '#lib/components/ui/textarea/textarea.svelte';
 	import ErrorAlert from '#lib/components/studyloom/ErrorAlert.svelte';
+	import LecturerSelect from '#lib/components/studyloom/LecturerSelect.svelte';
 	import PinButton from '#lib/components/studyloom/PinButton.svelte';
 	import { Pins } from '#lib/pins.svelte.js';
+	import { isProjectSort, PROJECT_SORTS, sortProjects } from '#lib/projects.js';
 	import { api, dateLabel, errorText } from '#lib/ui.js';
 
 	const pins = new Pins();
@@ -29,6 +33,18 @@
 	let showCreate = $state(false);
 	let creating = $state(false);
 	let createError = $state('');
+	const sort = $derived.by(() => {
+		const value = page.url.searchParams.get('sort');
+		return isProjectSort(value) ? value : 'updated';
+	});
+	const sorted = $derived(sortProjects(projects, sort));
+
+	function changeSort(value: string) {
+		const query = value === 'updated' ? '' : `?${new URLSearchParams({ sort: value })}`;
+		// The rule cannot follow the query string appended to the resolve()-built path.
+		// eslint-disable-next-line svelte/no-navigation-without-resolve
+		void goto(`${resolve('/projects')}${query}`, { replace: true, reset: false });
+	}
 
 	async function loadProjects() {
 		loading = true;
@@ -73,7 +89,20 @@
 			Keep each course, research topic, or meeting in its own workspace.
 		</p>
 	</div>
-	<Button onclick={() => (showCreate = true)}><Plus />New project</Button>
+	<div class="flex flex-wrap items-center gap-2">
+		{#if projects.length > 1}
+			<NativeSelect.Root
+				aria-label="Sort projects"
+				value={sort}
+				onchange={(event) => changeSort(event.currentTarget.value)}
+			>
+				{#each Object.entries(PROJECT_SORTS) as [value, label] (value)}
+					<NativeSelect.Option {value}>Sort: {label}</NativeSelect.Option>
+				{/each}
+			</NativeSelect.Root>
+		{/if}
+		<Button onclick={() => (showCreate = true)}><Plus />New project</Button>
+	</div>
 </div>
 <ErrorAlert message={error} onRetry={loadProjects} class="mb-5" />
 {#if loading}
@@ -91,7 +120,7 @@
 	</div>
 {:else}
 	<ul class="grid gap-4 sm:grid-cols-2">
-		{#each projects as project (project.id)}
+		{#each sorted as project (project.id)}
 			<li class="relative min-w-0 border p-6 hover:bg-muted/40">
 				<div class="flex items-start justify-between gap-3">
 					<h2 class="min-w-0 truncate text-lg font-semibold">
@@ -106,8 +135,20 @@
 						<PinButton {pins} targetType="project" targetId={project.id} name={project.name} />
 					</div>
 				</div>
-				<p class="mt-2 line-clamp-2 min-h-10 text-sm text-muted-foreground">
-					{project.description || 'Add sources and start learning.'}
+				<p class={['mt-2 truncate text-sm text-muted-foreground', !project.course && 'opacity-60']}>
+					{project.course || 'No course designation'}
+				</p>
+				<p
+					class={[
+						'mt-1 flex items-center gap-1.5 text-sm text-muted-foreground',
+						!project.lecturers.length && 'opacity-60'
+					]}
+				>
+					<UserRound class="size-3.5 shrink-0" aria-hidden="true" />
+					<span class="sr-only">Lecturers:</span>
+					<span class="truncate">
+						{project.lecturers.map((lecturer) => lecturer.name).join(', ') || 'No lecturers'}
+					</span>
 				</p>
 				<p class="mt-6 text-xs text-muted-foreground">Updated {dateLabel(project.updatedAt)}</p>
 			</li>
@@ -134,6 +175,33 @@
 							placeholder="e.g. Biology — autumn semester"
 							autocomplete="off"
 						/>
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
+			<Form.Field form={projectForm} name="course">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label>
+							Course designation <span class="font-normal text-muted-foreground">(optional)</span>
+						</Form.Label>
+						<Input
+							{...props}
+							bind:value={$form.course}
+							placeholder="e.g. SpFB26: 17/1 - Techn III"
+							autocomplete="off"
+						/>
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
+			<Form.Field form={projectForm} name="lecturerIds">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label>
+							Lecturers <span class="font-normal text-muted-foreground">(optional)</span>
+						</Form.Label>
+						<LecturerSelect {...props} bind:value={$form.lecturerIds} />
 					{/snippet}
 				</Form.Control>
 				<Form.FieldErrors />

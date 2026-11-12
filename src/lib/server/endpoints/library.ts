@@ -131,6 +131,14 @@ export const library: Handler = async ({ event, method, id, action, seq }) => {
 				.where(eq(t.libraryEntries.kind, 'folder'))
 				.orderBy(asc(t.libraryEntries.name))
 		});
+	if (id === 'contacts' && method === 'GET')
+		return Response.json({
+			contacts: await db()
+				.select({ id: t.libraryEntries.id, name: t.libraryEntries.name })
+				.from(t.libraryEntries)
+				.where(eq(t.libraryEntries.kind, 'contact'))
+				.orderBy(asc(t.libraryEntries.name))
+		});
 	if (id === 'uploads' && method === 'POST') {
 		const input = libraryUploadInput
 			.extend({ size: libraryUploadInput.shape.size.max(maxUploadBytes()) })
