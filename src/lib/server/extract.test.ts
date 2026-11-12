@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-	pdfImagePages,
 	prepareSource,
 	sheetName,
 	sniff,
@@ -111,21 +110,6 @@ describe('document units', () => {
 		expect(splitPages('One\fTwo\f')).toEqual(['One', 'Two']);
 		expect(splitPages('One\f\f')).toEqual(['One', '']);
 		expect(splitPages('Only')).toEqual(['Only']);
-	});
-	it('finds figures but not logos repeated on most pages', () => {
-		const list = [
-			'page   num  type   width height color comp bpc  enc interp  object ID x-ppi y-ppi size ratio',
-			'--------------------------------------------------------------------------------------------',
-			...[1, 2, 3, 4].map(
-				(page) =>
-					`   ${page}     0 image     400   400  rgb     3   8  jpeg   no         7  0   150   150 20K 4%`
-			),
-			'   2     1 image    1200   800  rgb     3   8  jpeg   no        12  0   150   150 90K 3%',
-			'   2     2 smask    1200   800  gray    1   8  image  no        13  0   150   150 10K 1%',
-			'   3     3 image      64    64  rgb     3   8  image  no        15  0    72    72  1K 9%'
-		].join('\n');
-		expect([...pdfImagePages(list, 4)]).toEqual([2]);
-		expect(pdfImagePages('', 3).size).toBe(0);
 	});
 	it('names spreadsheet units after their sheets', () => {
 		expect(sheetName('input-grades-Summer term.csv', 'input-grades')).toBe('Summer term');

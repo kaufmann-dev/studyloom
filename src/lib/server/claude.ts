@@ -207,7 +207,7 @@ export function boundedOutput(output: string) {
 		: output;
 }
 /** The job workspace tools; paths are relative to the workspace and cannot leave it. */
-export function workspaceTools(jobDir: string, signal: AbortSignal) {
+export function workspaceTools(jobDir: string, signal: AbortSignal, viewed?: Set<string>) {
 	const files = join(jobDir, 'files');
 	return createSdkMcpServer({
 		name: 'studyloom',
@@ -241,10 +241,10 @@ export function workspaceTools(jobDir: string, signal: AbortSignal) {
 						const file = await scopedFile(files, path);
 						if ((await stat(file)).size > 8 * 1024 * 1024)
 							throw new Error('Resize the image below 8 MiB.');
+						const data = (await readFile(file)).toString('base64');
+						viewed?.add(file);
 						return {
-							content: [
-								{ type: 'image', mimeType, data: (await readFile(file)).toString('base64') }
-							]
+							content: [{ type: 'image', mimeType, data }]
 						};
 					})
 			),
@@ -319,11 +319,13 @@ export async function claudeRun(input: {
 	system: string;
 	prompt: string;
 	schema?: z.ZodType;
+	requiredImages?: string[];
 	signal: AbortSignal;
 	progress: (text: string) => void;
 }): Promise<ClaudeResult> {
 	await validateModel(input.modelId);
 	const files = join(input.workspace, 'files');
+	const viewed = new Set<string>();
 	await mkdir(files, { recursive: true, mode: 0o700 });
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), RUN_TIMEOUT_MS);
@@ -344,7 +346,7 @@ export async function claudeRun(input: {
 				systemPrompt: input.system,
 				cwd: files,
 				tools: [],
-				mcpServers: { studyloom: workspaceTools(input.workspace, controller.signal) },
+				mcpServers: { studyloom: workspaceTools(input.workspace, controller.signal, viewed) },
 				// dontAsk denies whatever is not listed; StructuredOutput delivers the schema result.
 				allowedTools: [`${TOOLS}*`, ...(input.schema ? ['StructuredOutput'] : [])],
 				maxTurns: 100,
@@ -370,6 +372,10 @@ export async function claudeRun(input: {
 	state.stderr = stderr.text;
 	const result = state.result;
 	if (result?.subtype !== 'success' || result.is_error) throw new Error(runFailure(state));
+	for (const image of input.requiredImages ?? []) {
+		if (!viewed.has(await scopedFile(files, image)))
+			throw new Error(`Visual review incomplete: ${image}`);
+	}
 	return { text: result.result, structured: result.structured_output, stderr: stderr.text };
 }
 

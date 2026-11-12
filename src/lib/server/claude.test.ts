@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -123,6 +123,13 @@ describe('Claude runs', () => {
 			progress: () => {},
 			...overrides
 		});
+	it('rejects successful runs that did not view required images', async () => {
+		const files = join(data, 'jobs', 'job-1', 'files');
+		await mkdir(files, { recursive: true });
+		await writeFile(join(files, 'page.jpg'), 'image');
+		sdk.messages.push(success());
+		await expect(run({ requiredImages: ['page.jpg'] })).rejects.toThrow('Visual review incomplete');
+	});
 	it('runs without built-in tools, settings or prompts, and returns the structured result', async () => {
 		const progress = vi.fn();
 		sdk.messages.push(

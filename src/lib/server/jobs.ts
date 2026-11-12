@@ -26,6 +26,8 @@ import {
 	type Grade,
 	type Quiz
 } from '../domain';
+import { pageReviewSchema, validatePages, assemblePages, pageBatches } from './page-review';
+import { sniffFile } from './extract';
 import { claudeRun, type ClaudeResult } from './claude';
 import { transcribeFile } from './elevenlabs';
 import { prepareSource, transcriptChunk, type Ingestion, type Prepared } from './extract';
@@ -252,11 +254,12 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 			.slice(-180);
 	const input = join(workspace, 'files', fileName);
 	await copyFile(originalPath(material.id), input);
+	const sourceKind = (await sniffFile(input)).kind;
 	let prepared: Prepared | undefined;
 	try {
 		prepared = await prepareSource(input, workspace, signal, progress);
 	} catch (cause) {
-		if (signal.aborted) throw cause;
+		if (signal.aborted || ['pdf', 'slides', 'document', 'office'].includes(sourceKind)) throw cause;
 		console.error('Source preparation failed:', safeError(cause));
 		progress('Preparation failed; Claude will read the file');
 	}
@@ -270,6 +273,53 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 		mimeType: material.mimeType,
 		...(material.sourceUrl && { sourceUrl: material.sourceUrl })
 	};
+	if (prepared?.type === 'review' && prepared.kind !== 'spreadsheet') {
+		const reviewed: z.infer<typeof pageReviewSchema>['pages'] = [];
+		for (const { offset, units } of pageBatches(prepared.units)) {
+			signal.throwIfAborted();
+			if (units.some((unit) => !unit.image)) throw new Error('Missing page review image.');
+			const inputName = `review-${offset}.json`;
+			const outputName = `review-${offset}-result.json`;
+			await writeData(workspace, inputName, {
+				source,
+				units,
+				context: prepared.units
+					.slice(Math.max(0, offset - 1), offset + 9)
+					.filter((unit) => !units.includes(unit))
+			});
+			let feedback = '';
+			for (let attempt = 0; attempt < 2; attempt++) {
+				await rm(join(workspace, 'files', outputName), { force: true });
+				progress(
+					`Reviewing pages ${offset + 1}–${offset + units.length} of ${prepared.units.length}`
+				);
+				let validating = false;
+				try {
+					await claudeRun({
+						workspace,
+						modelId,
+						system: systemPrompt,
+						signal,
+						progress,
+						requiredImages: units.map((unit) => unit.image!),
+						prompt: `Read ${inputName}. Visually inspect EVERY assigned unit image with view_image. Context pages are only context; emit exactly one record per assigned unit in order. Preserve original language, all meaningful prose, table headers and row/value associations, signs, units, formulas and diagram relationships. Remove running headers, footers and page numbers. Use Markdown tables where useful. Keep chunks within a page, using its locator or a #1, #2 suffix. Label continuations. Render higher-resolution crops with available tools if needed. Never guess unclear values: report partial/unreadable and explain limitations. Blank pages have no chunks. Save ${outputName} with schema ${JSON.stringify(z.toJSONSchema(pageReviewSchema))}. ${feedback}`
+					});
+					validating = true;
+					reviewed.push(...validatePages(await readArtifact(workspace, outputName), units));
+					break;
+				} catch (cause) {
+					if (
+						signal.aborted ||
+						attempt ||
+						(!validating && !safeError(cause).startsWith('Visual review incomplete:'))
+					)
+						throw cause;
+					feedback = `Correct this validation failure: ${safeError(cause)}`;
+				}
+			}
+		}
+		return saveIngestion(job, material, assemblePages(reviewed), workspace, signal);
+	}
 	if (prepared)
 		await writeData(workspace, 'prepared.json', { kind: prepared.kind, units: prepared.units });
 	await runClaudeWithArtifact(

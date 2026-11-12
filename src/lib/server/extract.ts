@@ -16,7 +16,7 @@ export interface Unit {
 	text: string;
 	/** The text was read from a rendered page with OCR and may contain errors. */
 	ocr?: true;
-	/** A workspace-relative render of the page, for pages with little text or a figure. */
+	/** A workspace-relative render of the page, for every paginated document unit. */
 	image?: string;
 }
 export type DocumentKind = 'pdf' | 'slides' | 'document' | 'spreadsheet';
@@ -35,10 +35,6 @@ const MAX_TEXT_BYTES = 32 * 1024 * 1024;
 const MAX_CENTRAL_DIRECTORY = 16 * 1024 * 1024;
 /** Pages with fewer visible characters than this have no usable text layer and are OCR'd. */
 const OCR_BELOW = 20;
-/** Pages with fewer visible characters than this are rendered so Claude can look at them. */
-const SPARSE_BELOW = 300;
-/** Embedded images at least this large on both sides count as figures. */
-const FIGURE_MIN_PX = 200;
 const MINUTE = 60_000;
 
 const visibleChars = (text: string) => text.replace(/\s/g, '').length;
@@ -174,31 +170,6 @@ export function splitPages(text: string) {
 	if (text.endsWith('\f')) pages.pop();
 	return pages;
 }
-/**
- * Pages with a figure, from `pdfimages -list`: an image at least 200 px on both sides that is
- * not repeated on most pages, as logos and backgrounds are.
- */
-export function pdfImagePages(list: string, pageCount: number) {
-	const images = list
-		.split('\n')
-		.slice(2)
-		.map((line) => line.trim().split(/\s+/))
-		.filter((cols) => cols.length >= 11 && cols[2] === 'image')
-		.map((cols) => ({
-			page: Number(cols[0]),
-			width: Number(cols[3]),
-			height: Number(cols[4]),
-			object: cols[10]
-		}))
-		.filter((image) => image.width >= FIGURE_MIN_PX && image.height >= FIGURE_MIN_PX);
-	const pagesOf = new Map<string, Set<number>>();
-	for (const image of images)
-		pagesOf.set(image.object, (pagesOf.get(image.object) ?? new Set()).add(image.page));
-	const repeated = Math.max(2, pageCount / 2);
-	return new Set(
-		images.filter((image) => pagesOf.get(image.object)!.size <= repeated).map((i) => i.page)
-	);
-}
 /** LibreOffice names one CSV per sheet `<base>-<sheet>.csv`; a lone `<base>.csv` is sheet 1. */
 export function sheetName(file: string, base: string) {
 	if (file === `${base}.csv`) return '1';
@@ -209,16 +180,15 @@ async function pdfUnits(ctx: Context, pdf: string, unit: 'page' | 'slide') {
 	const { jobDir, files, signal, progress } = ctx;
 	await mkdir(join(files, 'pages'), { recursive: true });
 	progress('Extracting text');
-	await runTool(jobDir, 'pdftotext', ['-enc', 'UTF-8', pdf, 'converted/text.txt'], {
+	await runTool(jobDir, 'pdftotext', ['-layout', '-enc', 'UTF-8', pdf, 'converted/text.txt'], {
 		signal,
 		timeoutMs: 5 * MINUTE
 	});
 	const pages = splitPages(await readFile(join(files, 'converted', 'text.txt'), 'utf8'));
-	const imageList = await runTool(jobDir, 'pdfimages', ['-list', pdf], {
-		signal,
-		timeoutMs: 5 * MINUTE
-	}).catch(() => '');
-	const figures = pdfImagePages(imageList, pages.length);
+	const info = await runTool(jobDir, 'pdfinfo', [pdf], { signal, timeoutMs: MINUTE });
+	const count = Number(info.match(/^Pages:\s+(\d+)/m)?.[1]);
+	if (!Number.isInteger(count) || count < 1 || pages.length !== count)
+		throw new Error('PDF page count does not match extracted text.');
 	const units: Unit[] = [];
 	for (const [i, layer] of pages.entries()) {
 		const n = i + 1;
@@ -238,15 +208,36 @@ async function pdfUnits(ctx: Context, pdf: string, unit: 'page' | 'slide') {
 				})
 			).trim();
 		}
-		let image: string | undefined;
-		if (ocr || visibleChars(layer) < SPARSE_BELOW || figures.has(n)) {
-			image = `pages/${unit}-${String(n).padStart(3, '0')}`;
-			await runTool(jobDir, 'pdftoppm', ['-r', '110', '-png', ...range, pdf, image], {
-				signal,
-				timeoutMs: 2 * MINUTE
-			});
-			image += '.png';
+		signal.throwIfAborted();
+		progress(`Rendering ${unit} ${n} of ${pages.length}`);
+		const image = `pages/${unit}-${String(n).padStart(3, '0')}.jpg`;
+		await runTool(
+			jobDir,
+			'pdftoppm',
+			[
+				'-r',
+				'150',
+				'-scale-to',
+				'2000',
+				'-jpeg',
+				'-jpegopt',
+				'quality=85',
+				...range,
+				pdf,
+				image.slice(0, -4)
+			],
+			{ signal, timeoutMs: 2 * MINUTE }
+		);
+		if ((await stat(join(files, image))).size > 8 * 1024 * 1024) {
+			await runTool(
+				jobDir,
+				'pdftoppm',
+				['-scale-to', '1200', '-jpeg', '-jpegopt', 'quality=60', ...range, pdf, image.slice(0, -4)],
+				{ signal, timeoutMs: 2 * MINUTE }
+			);
 		}
+		if ((await stat(join(files, image))).size > 8 * 1024 * 1024)
+			throw new Error(`Page ${n} image exceeds the review size limit.`);
 		units.push({
 			locator: `${unit}:${n}`,
 			text,

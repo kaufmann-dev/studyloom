@@ -96,19 +96,33 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Source ingestion', () => {
 			vi.mocked(prepareSource).mockResolvedValueOnce({
 				type: 'review',
 				kind: 'pdf',
-				units: [{ locator: 'page:1', text: 'UNIVERSITY LOGO\nWater follows salt.' }]
+				units: [
+					{
+						locator: 'page:1',
+						text: 'UNIVERSITY LOGO\nWater follows salt.',
+						image: 'pages/page-001.jpg'
+					}
+				]
 			});
-			writesExtraction(pdf.workspace);
+			vi.mocked(claudeRun).mockImplementationOnce(async () => {
+				await writeFile(
+					join(pdf.workspace, 'files', 'review-0-result.json'),
+					JSON.stringify({
+						pages: [
+							{
+								locator: 'page:1',
+								outcome: 'readable',
+								chunks: [{ locator: 'page:1', text: 'Water follows salt.' }],
+								assets: [],
+								notes: ''
+							}
+						]
+					})
+				);
+				return { text: 'Done', stderr: '' };
+			});
 			await pdf.run();
-			const review = vi.mocked(claudeRun).mock.calls[0][0];
-			expect(review.prompt).toContain('prepared.json');
-			expect(review.prompt).toContain('running headers and footers');
-			expect(
-				JSON.parse(await readFile(join(pdf.workspace, 'files', 'prepared.json'), 'utf8'))
-			).toEqual({
-				kind: 'pdf',
-				units: [{ locator: 'page:1', text: 'UNIVERSITY LOGO\nWater follows salt.' }]
-			});
+			expect(vi.mocked(claudeRun).mock.calls[0][0].requiredImages).toEqual(['pages/page-001.jpg']);
 			expect(await stored(pdf.material.id)).toMatchObject({
 				material: { status: 'ready' },
 				chunks: [{ locator: 'page:1', text: 'Water follows salt.' }]
