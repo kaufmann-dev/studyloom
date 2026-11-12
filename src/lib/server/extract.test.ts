@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
 	prepareSource,
-	sheetName,
 	sniff,
 	sniffFile,
 	splitPages,
@@ -110,11 +109,6 @@ describe('document units', () => {
 		expect(splitPages('One\fTwo\f')).toEqual(['One', 'Two']);
 		expect(splitPages('One\f\f')).toEqual(['One', '']);
 		expect(splitPages('Only')).toEqual(['Only']);
-	});
-	it('names spreadsheet units after their sheets', () => {
-		expect(sheetName('input-grades-Summer term.csv', 'input-grades')).toBe('Summer term');
-		expect(sheetName('input-grades.csv', 'input-grades')).toBe('1');
-		expect(sheetName('text.txt', 'input-grades')).toBeUndefined();
 	});
 	it('locates transcript turns by their time span', () => {
 		expect(

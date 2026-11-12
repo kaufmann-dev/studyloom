@@ -24,7 +24,9 @@ export function validatePages(value: unknown, units: Unit[]) {
 		if (page.locator !== unit.locator)
 			throw new Error('Page records must match assigned pages in order.');
 		const owns = (locator: string) =>
-			locator === unit.locator || new RegExp(`^${unit.locator}#[1-9][0-9]*$`).test(locator);
+			locator === unit.locator ||
+			(locator.startsWith(`${unit.locator}#`) &&
+				/^[1-9][0-9]*$/.test(locator.slice(unit.locator.length + 1)));
 		if (page.chunks.some((c) => !owns(c.locator)) || page.assets.some((a) => !owns(a.locator)))
 			throw new Error('Invalid page locator.');
 		if (new Set(page.chunks.map((c) => c.locator)).size !== page.chunks.length)
@@ -35,6 +37,10 @@ export function validatePages(value: unknown, units: Unit[]) {
 			throw new Error('Readable page has no chunks.');
 		if (['partial', 'unreadable'].includes(page.outcome) && !page.notes.trim())
 			throw new Error('Missing page limitation.');
+		if (unit.limitations?.length) {
+			if (page.outcome === 'readable' || page.outcome === 'blank') page.outcome = 'partial';
+			page.notes = [...unit.limitations, page.notes].filter(Boolean).join('\n').slice(0, 10000);
+		}
 	}
 	return result.pages;
 }
@@ -58,8 +64,18 @@ export function assemblePages(pages: z.infer<typeof pageReviewSchema>['pages']):
 }
 
 export function pageBatches(units: Unit[]) {
-	return Array.from({ length: Math.ceil(units.length / 8) }, (_, i) => ({
-		offset: i * 8,
-		units: units.slice(i * 8, i * 8 + 8)
-	}));
+	const batches: { offset: number; units: Unit[] }[] = [];
+	let offset = 0;
+	while (offset < units.length) {
+		const start = offset;
+		let chars = 0;
+		while (offset < units.length && offset - start < 8) {
+			const next = units[offset].text.length;
+			if (offset > start && chars + next > 100000) break;
+			chars += next;
+			offset++;
+		}
+		batches.push({ offset: start, units: units.slice(start, offset) });
+	}
+	return batches;
 }

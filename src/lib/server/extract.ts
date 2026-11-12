@@ -1,5 +1,6 @@
+import { spreadsheetUnits } from './spreadsheet';
 import { mkdir, open, readdir, readFile, stat } from 'node:fs/promises';
-import { basename, extname, join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { z } from 'zod';
 import { runTool } from './commands';
 import { transcribeFile } from './elevenlabs';
@@ -16,6 +17,8 @@ export interface Unit {
 	text: string;
 	/** The text was read from a rendered page with OCR and may contain errors. */
 	ocr?: true;
+	/** Preparation limitations that must survive model review. */
+	limitations?: string[];
 	/** A workspace-relative render of the page, for every paginated document unit. */
 	image?: string;
 }
@@ -170,12 +173,6 @@ export function splitPages(text: string) {
 	if (text.endsWith('\f')) pages.pop();
 	return pages;
 }
-/** LibreOffice names one CSV per sheet `<base>-<sheet>.csv`; a lone `<base>.csv` is sheet 1. */
-export function sheetName(file: string, base: string) {
-	if (file === `${base}.csv`) return '1';
-	return file.startsWith(`${base}-`) ? file.slice(base.length + 1, -'.csv'.length) : undefined;
-}
-
 async function pdfUnits(ctx: Context, pdf: string, unit: 'page' | 'slide') {
 	const { jobDir, files, signal, progress } = ctx;
 	await mkdir(join(files, 'pages'), { recursive: true });
@@ -270,29 +267,6 @@ async function officeUnits(ctx: Context, input: string, unit: 'page' | 'slide') 
 	const pdf = (await libreOffice(ctx, input, 'pdf')).find((name) => name.endsWith('.pdf'));
 	if (!pdf) throw new Error('LibreOffice could not convert the document.');
 	return pdfUnits(ctx, pdf, unit);
-}
-async function sheetUnits(ctx: Context, input: string) {
-	const base = basename(input, extname(input));
-	const csvs = (
-		await libreOffice(
-			ctx,
-			input,
-			'csv:Text - txt - csv (StarCalc):44,34,76,1,,0,false,true,false,false,false,-1'
-		)
-	).filter((name) => name.endsWith('.csv'));
-	// LibreOffice writes the sheets in order, so their write times keep that order.
-	const written = await Promise.all(
-		csvs.map(async (name) => ({ name, time: (await stat(join(ctx.files, name))).mtimeMs }))
-	);
-	written.sort((a, b) => a.time - b.time || a.name.localeCompare(b.name));
-	const units: Unit[] = [];
-	for (const { name } of written) {
-		const sheet = sheetName(basename(name), base);
-		const text = (await readFile(join(ctx.files, name), 'utf8')).trim();
-		if (sheet && text) units.push({ locator: `sheet:${sheet}`, text });
-	}
-	if (!units.length) throw new Error('LibreOffice could not read the spreadsheet.');
-	return units;
 }
 async function textChunks(path: string, size: number): Promise<Prepared | undefined> {
 	if (size > MAX_TEXT_BYTES) return undefined;
@@ -391,6 +365,21 @@ export async function prepareSource(
 	if (kind === 'pdf') return { type: 'review', kind, units: await pdfUnits(ctx, name, 'page') };
 	if (kind === 'slides')
 		return { type: 'review', kind, units: await officeUnits(ctx, name, 'slide') };
-	if (kind === 'spreadsheet') return { type: 'review', kind, units: await sheetUnits(ctx, name) };
+	if (kind === 'spreadsheet' || kind === 'office') {
+		const units = await spreadsheetUnits(jobDir, name, signal, progress);
+		if (units)
+			return units.length
+				? { type: 'review', kind: 'spreadsheet', units }
+				: {
+						type: 'chunks',
+						result: {
+							status: 'unreadable',
+							notes: 'The workbook contains no readable cells or drawings.',
+							chunks: [],
+							assets: []
+						}
+					};
+		if (kind === 'spreadsheet') throw new Error('The workbook could not be read as a spreadsheet.');
+	}
 	return { type: 'review', kind: 'document', units: await officeUnits(ctx, name, 'page') };
 }

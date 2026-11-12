@@ -6,9 +6,9 @@ for (const [command, args] of [
 	['libreoffice', ['--headless', '--version']],
 	['pdftotext', ['-v']],
 	['pdftoppm', ['-v']],
-	['pdfimages', ['-v']],
+	['pdfinfo', ['-v']],
 	['tesseract', ['--version']],
-	['python3', ['--version']]
+	['/usr/bin/python3', ['-c', 'import uno']]
 ]) {
 	const result = spawnSync(command, args, { timeout: 30000, encoding: 'utf8' });
 	if (result.error || result.status !== 0)

@@ -235,9 +235,6 @@ const webPageNote =
 	"This file is a copy of the web page at sourceUrl that Studyloom already downloaded; read the file and do not fetch anything from the network. Extract the content a reader came for: the title, byline and date if shown, then the article or document body in reading order with its headings, lists, tables, figure captions and meaningful image alt text. Leave out navigation, menus, cookie and consent notices, ads, share buttons, related-article teasers, comments and footers. Parse the HTML properly (for example with Python html.parser) instead of stripping tags, ignore script and style content, and look at embedded JSON or metadata only when the visible text is empty. Use one chunk per heading section with locators like 'section:Heading', and split sections longer than a few thousand characters. If the page holds little or no readable text because it needs JavaScript, a sign-in or a consent step, set status partial or unreadable and say so in notes.";
 const ingestionContract = () =>
 	`Save extracted.json with schema: ${JSON.stringify(z.toJSONSchema(ingestionSchema))}. Locators must be unique. Assets are optional relative paths to generated files, never the input. Set partial if any parts are unreadable, and unreadable if nothing could be read. Report limitations in notes; retain the original.`;
-/** Claude reviews text the server already extracted, one unit per page, slide or sheet. */
-const reviewPrompt = (source: object) =>
-	`Review this source: ${JSON.stringify(source)}. Studyloom already extracted it into prepared.json ({ kind, units: [{ locator, text, ocr?, image? }] }, one unit per page, slide or sheet in reading order). Do not run extraction tools on the input again unless a unit's text is clearly broken. Remove content that is not part of the document: logos, running headers and footers, page numbers, watermarks and slide-template text. Repair broken line wraps and hyphenation. Split or merge units into logical chunks by heading or topic. Locators point at the original units ('page:3', 'pages:3-5', 'slide:4', 'sheet:Grades'); when you split a long unit, add a suffix such as 'page:3#2'. Use view_image on the listed unit images where text is missing or a figure carries meaning, and describe such figures in the chunk text. ocr marks text read with OCR, which may contain errors: check its image when it looks wrong. prepared.json can be large: process it with a Python script and inspect samples instead of reading it whole or retyping text. Assets may include a unit image with an important figure. ${ingestionContract()}`;
 /** Claude reads a file the server cannot, choosing its own tools. */
 const agenticPrompt = (source: object, webPage: boolean) =>
 	`Extract this source: ${JSON.stringify(source)}. Inspect content, then choose tools yourself.${webPage ? ' ' + webPageNote : ''} For images/diagrams use view_image. For audio/video use transcribe_audio (extract the audio track of large videos with FFmpeg first), retaining absolute timestamps in locators. For slides/docs/scans choose LibreOffice, Poppler, Tesseract, Python or other installed tools. Use useful locators such as 'page:3', 'slide:4', 'time:120000-150000', or named sections. Split long documents into logical chunks. ${ingestionContract()}`;
@@ -259,7 +256,11 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 	try {
 		prepared = await prepareSource(input, workspace, signal, progress);
 	} catch (cause) {
-		if (signal.aborted || ['pdf', 'slides', 'document', 'office'].includes(sourceKind)) throw cause;
+		if (
+			signal.aborted ||
+			['pdf', 'slides', 'document', 'office', 'spreadsheet'].includes(sourceKind)
+		)
+			throw cause;
 		console.error('Source preparation failed:', safeError(cause));
 		progress('Preparation failed; Claude will read the file');
 	}
@@ -273,7 +274,7 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 		mimeType: material.mimeType,
 		...(material.sourceUrl && { sourceUrl: material.sourceUrl })
 	};
-	if (prepared?.type === 'review' && prepared.kind !== 'spreadsheet') {
+	if (prepared?.type === 'review') {
 		const reviewed: z.infer<typeof pageReviewSchema>['pages'] = [];
 		for (const { offset, units } of pageBatches(prepared.units)) {
 			signal.throwIfAborted();
@@ -284,14 +285,14 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 				source,
 				units,
 				context: prepared.units
-					.slice(Math.max(0, offset - 1), offset + 9)
+					.slice(Math.max(0, offset - 1), offset + units.length + 1)
 					.filter((unit) => !units.includes(unit))
 			});
 			let feedback = '';
 			for (let attempt = 0; attempt < 2; attempt++) {
 				await rm(join(workspace, 'files', outputName), { force: true });
 				progress(
-					`Reviewing pages ${offset + 1}–${offset + units.length} of ${prepared.units.length}`
+					`Reviewing units ${offset + 1}–${offset + units.length} of ${prepared.units.length}`
 				);
 				let validating = false;
 				try {
@@ -302,7 +303,7 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 						signal,
 						progress,
 						requiredImages: units.map((unit) => unit.image!),
-						prompt: `Read ${inputName}. Visually inspect EVERY assigned unit image with view_image. Context pages are only context; emit exactly one record per assigned unit in order. Preserve original language, all meaningful prose, table headers and row/value associations, signs, units, formulas and diagram relationships. Remove running headers, footers and page numbers. Use Markdown tables where useful. Keep chunks within a page, using its locator or a #1, #2 suffix. Label continuations. Render higher-resolution crops with available tools if needed. Never guess unclear values: report partial/unreadable and explain limitations. Blank pages have no chunks. Save ${outputName} with schema ${JSON.stringify(z.toJSONSchema(pageReviewSchema))}. ${feedback}`
+						prompt: `Read ${inputName}. Visually inspect EVERY assigned unit image with view_image. Adjacent units are only context; emit exactly one record per assigned unit in order. Preserve original language, all meaningful prose, table headers and row/value associations, signs, units, formulas and diagram relationships. Remove running headers, footers and page numbers. Use Markdown tables where useful. Keep chunks within an assigned unit, using its exact locator or a #1, #2 suffix. Label continuations. Render higher-resolution crops with available tools if needed. Never guess unclear values: report partial/unreadable and explain limitations. Blank units have no chunks. Spreadsheet unit text is structured JSON: preserve addresses, formulas, merged ranges, number formats, named ranges and chart source relationships. Separate originalCache (original OOXML cached result, if present) from engineValue (LibreOffice imported value); never claim the latter is a verified original result or a new calculation. Report missing caches, formula errors, external dependencies, unsupported features and material discrepancies as limitations. Hidden rows and columns are revealed for review and labeled as originally hidden in cell data. Describe charts from images, not just their data. Generated region boundaries are not original print layout. Save ${outputName} with schema ${JSON.stringify(z.toJSONSchema(pageReviewSchema))}. ${feedback}`
 					});
 					validating = true;
 					reviewed.push(...validatePages(await readArtifact(workspace, outputName), units));
@@ -320,12 +321,10 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 		}
 		return saveIngestion(job, material, assemblePages(reviewed), workspace, signal);
 	}
-	if (prepared)
-		await writeData(workspace, 'prepared.json', { kind: prepared.kind, units: prepared.units });
 	await runClaudeWithArtifact(
 		workspace,
 		modelId,
-		prepared ? reviewPrompt(source) : agenticPrompt(source, Boolean(material.sourceUrl)),
+		agenticPrompt(source, Boolean(material.sourceUrl)),
 		'extracted.json',
 		signal,
 		progress
