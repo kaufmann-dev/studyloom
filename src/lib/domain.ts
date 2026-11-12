@@ -60,6 +60,7 @@ const libraryFields = {
 	phone: z.string().max(100),
 	email: z.union([z.email(), z.literal('')]),
 	website: libraryWebUrl,
+	lecturer: z.boolean(),
 	notes: z.string().max(10000),
 	text: z.string().max(100000)
 };
@@ -72,6 +73,7 @@ export const libraryInput = z
 		phone: libraryFields.phone.default(''),
 		email: libraryFields.email.default(''),
 		website: libraryFields.website.default(''),
+		lecturer: libraryFields.lecturer.default(false),
 		notes: libraryFields.notes.default(''),
 		text: libraryFields.text.default('')
 	})
@@ -107,6 +109,8 @@ export interface LibraryEntry {
 	phone: string;
 	email: string;
 	website: string;
+	/** Only contacts; lecturers can be assigned to projects. */
+	lecturer: boolean;
 	notes: string;
 	text: string;
 	filename: string | null;
@@ -503,7 +507,7 @@ export type JobKind =
 	'ingest' | 'chat' | 'summary' | 'quiz' | 'audio' | 'session' | 'grade' | 'recover';
 export const isActiveJob = (job: { status: JobStatus }) =>
 	job.status === 'queued' || job.status === 'running';
-/** A Library contact lecturing a project. */
+/** A Library contact marked as lecturer, as assigned to a project. */
 export interface ProjectLecturer {
 	id: string;
 	name: string;

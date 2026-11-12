@@ -89,4 +89,48 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Library and pins', () => {
 			await environment.restore();
 		}
 	});
+	it('lets only contacts marked as lecturers lecture projects', async () => {
+		const environment = await useTestDatabase('lecturers');
+		const call = (path: string, method = 'GET', body?: unknown) => callApi(path, { method, body });
+		const parse = async <T>(path: string, method = 'GET', body?: unknown): Promise<T> =>
+			(await call(path, method, body)).json();
+		type Entry = { id: string; lecturer: boolean };
+		type Listed = { project: { lecturers: { id: string }[] } };
+		const created: string[] = [];
+		const add = async (body: object) => {
+			const { entry } = await parse<{ entry: Entry }>('/api/library', 'POST', body);
+			created.push(entry.id);
+			return entry;
+		};
+		try {
+			const contact = await add({ kind: 'contact', name: 'Kalam' });
+			const note = await add({ kind: 'note', name: 'Memo', lecturer: true });
+			expect([contact.lecturer, note.lecturer]).toEqual([false, false]);
+			const assign = (lecturerIds: string[]) =>
+				call('/api/projects', 'POST', { name: 'Course', lecturerIds });
+			await expect(assign([contact.id])).rejects.toMatchObject({ status: 400 });
+
+			await parse(`/api/library/${contact.id}`, 'PATCH', { lecturer: true });
+			const { lecturers } = await parse<{ lecturers: { id: string }[] }>('/api/library/lecturers');
+			expect(lecturers.map((lecturer) => lecturer.id)).toEqual([contact.id]);
+			const { project } = await (await assign([contact.id])).json();
+			expect(project.lecturers.map((lecturer: { id: string }) => lecturer.id)).toEqual([
+				contact.id
+			]);
+
+			// Editing other details keeps the flag and the assignment.
+			await parse(`/api/library/${contact.id}`, 'PATCH', { phone: '+43 1' });
+			expect((await parse<Listed>(`/api/projects/${project.id}`)).project.lecturers).toHaveLength(
+				1
+			);
+
+			await parse(`/api/library/${contact.id}`, 'PATCH', { lecturer: false });
+			expect((await parse<Listed>(`/api/projects/${project.id}`)).project.lecturers).toEqual([]);
+			await call(`/api/projects/${project.id}`, 'DELETE');
+		} finally {
+			for (const id of created) await call(`/api/library/${id}`, 'DELETE');
+			await closeDatabase();
+			await environment.restore();
+		}
+	});
 });

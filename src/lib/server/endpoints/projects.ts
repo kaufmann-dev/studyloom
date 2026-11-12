@@ -60,15 +60,21 @@ async function withLecturers<P extends ProjectRow>(rows: P[]) {
 			.map(({ id, name }) => ({ id, name }))
 	}));
 }
-/** Replaces a project's lecturers; every id must be a Library contact. */
+/** Replaces a project's lecturers; every id must be a Library contact marked as lecturer. */
 async function setLecturers(tx: Transaction, projectId: string, contactIds: string[]) {
 	if (contactIds.length) {
 		const contacts = await tx
 			.select({ id: t.libraryEntries.id })
 			.from(t.libraryEntries)
-			.where(and(inArray(t.libraryEntries.id, contactIds), eq(t.libraryEntries.kind, 'contact')));
+			.where(
+				and(
+					inArray(t.libraryEntries.id, contactIds),
+					eq(t.libraryEntries.kind, 'contact'),
+					eq(t.libraryEntries.lecturer, true)
+				)
+			);
 		if (contacts.length !== contactIds.length)
-			throw new ClientError(400, 'Choose lecturers from your Library contacts.');
+			throw new ClientError(400, 'Choose contacts marked as lecturers in the Library.');
 	}
 	await tx.delete(t.projectLecturers).where(eq(t.projectLecturers.projectId, projectId));
 	if (contactIds.length)

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { ArrowUpRight, Download, Mail, Phone } from '@lucide/svelte';
+	import { ArrowUpRight, Download, GraduationCap, Mail, Phone } from '@lucide/svelte';
+	import Badge from '#lib/components/ui/badge/badge.svelte';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import type { LibraryEntry } from '#lib/domain.js';
 	import { fileSize } from '#lib/ui.js';
@@ -43,6 +44,9 @@
 			<span class="truncate">{entry.url}</span><ArrowUpRight class="size-4 shrink-0" />
 		</a>
 	{:else if entry.kind === 'contact'}
+		{#if entry.lecturer}
+			<Badge variant="secondary"><GraduationCap />Lecturer</Badge>
+		{/if}
 		<dl class="space-y-3 text-sm">
 			{#if entry.phone}
 				<div class="flex items-center gap-2">

@@ -18,16 +18,16 @@
 	}: Omit<PopoverPrimitive.TriggerProps, 'value' | 'children' | 'child'> & {
 		/** Contact ids, in the order they were picked. */
 		value: string[];
-		/** The lecturers already saved, so their names show before the contacts load. */
+		/** The lecturers already saved, so their names show before the list loads. */
 		selected?: ProjectLecturer[];
 	} = $props();
-	let contacts = $state.raw<ProjectLecturer[] | null>(null);
+	let lecturers = $state.raw<ProjectLecturer[] | null>(null);
 	let open = $state(false);
 
 	const nameOf = (id: string) =>
-		contacts?.find((contact) => contact.id === id)?.name ??
+		lecturers?.find((lecturer) => lecturer.id === id)?.name ??
 		selected.find((lecturer) => lecturer.id === id)?.name ??
-		'Unknown contact';
+		'Unknown lecturer';
 
 	function toggle(id: string) {
 		value = value.includes(id) ? value.filter((other) => other !== id) : [...value, id];
@@ -35,8 +35,8 @@
 
 	onMount(async () => {
 		// Without the list only the lecturers already chosen are shown.
-		contacts = await api<{ contacts: ProjectLecturer[] }>('/api/library/contacts')
-			.then((result) => result.contacts)
+		lecturers = await api<{ lecturers: ProjectLecturer[] }>('/api/library/lecturers')
+			.then((result) => result.lecturers)
 			.catch(() => []);
 	});
 </script>
@@ -62,30 +62,30 @@
 						? 1
 						: 0}
 			>
-				<Command.Input placeholder="Search contacts…" />
+				<Command.Input placeholder="Search lecturers…" />
 				<Command.List>
-					{#if contacts === null}
-						<Command.Loading>Loading contacts…</Command.Loading>
-					{:else if contacts.length === 0}
+					{#if lecturers === null}
+						<Command.Loading>Loading lecturers…</Command.Loading>
+					{:else if lecturers.length === 0}
 						<div class="px-3 py-6 text-center text-sm text-muted-foreground">
-							No contacts yet.
+							No lecturers yet.
 							<a
 								href={resolve('/library')}
 								class="underline underline-offset-4 hover:text-foreground"
-								>Add a contact in the Library</a
+								>Mark a contact as lecturer in the Library</a
 							>.
 						</div>
 					{:else}
-						<Command.Empty>No matching contacts.</Command.Empty>
+						<Command.Empty>No matching lecturers.</Command.Empty>
 						<Command.Group>
-							{#each contacts as contact (contact.id)}
+							{#each lecturers as lecturer (lecturer.id)}
 								<Command.Item
-									value={contact.id}
-									keywords={[contact.name]}
-									data-checked={value.includes(contact.id)}
-									onSelect={() => toggle(contact.id)}
+									value={lecturer.id}
+									keywords={[lecturer.name]}
+									data-checked={value.includes(lecturer.id)}
+									onSelect={() => toggle(lecturer.id)}
 								>
-									{contact.name}
+									{lecturer.name}
 								</Command.Item>
 							{/each}
 						</Command.Group>

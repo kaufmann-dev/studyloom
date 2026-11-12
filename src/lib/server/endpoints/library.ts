@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db, type Transaction } from '../db';
 import * as t from '../db/schema';
@@ -75,6 +75,7 @@ function contentOf(input: z.infer<typeof libraryInput>) {
 		phone: kind === 'contact' ? input.phone : '',
 		email: kind === 'contact' ? input.email : '',
 		website: kind === 'contact' ? input.website : '',
+		lecturer: kind === 'contact' && input.lecturer,
 		notes: kind === 'link' || kind === 'contact' ? input.notes : '',
 		text: kind === 'note' ? input.text : ''
 	};
@@ -110,12 +111,17 @@ export async function updateLibraryEntry(
 		entry.kind === 'file'
 			? { name: patch.name?.trim() ?? entry.name }
 			: contentOf(libraryInput.parse({ ...entry, ...patch }));
-	const [updated] = await db()
-		.update(t.libraryEntries)
-		.set({ ...content, parentId, updatedAt: new Date() })
-		.where(eq(t.libraryEntries.id, entry.id))
-		.returning();
-	return updated;
+	return db().transaction(async (tx) => {
+		const [updated] = await tx
+			.update(t.libraryEntries)
+			.set({ ...content, parentId, updatedAt: new Date() })
+			.where(eq(t.libraryEntries.id, entry.id))
+			.returning();
+		// Only lecturers can lecture a project.
+		if (!updated.lecturer)
+			await tx.delete(t.projectLecturers).where(eq(t.projectLecturers.contactId, entry.id));
+		return updated;
+	});
 }
 
 export const library: Handler = async ({ event, method, id, action, seq }) => {
@@ -131,12 +137,12 @@ export const library: Handler = async ({ event, method, id, action, seq }) => {
 				.where(eq(t.libraryEntries.kind, 'folder'))
 				.orderBy(asc(t.libraryEntries.name))
 		});
-	if (id === 'contacts' && method === 'GET')
+	if (id === 'lecturers' && method === 'GET')
 		return Response.json({
-			contacts: await db()
+			lecturers: await db()
 				.select({ id: t.libraryEntries.id, name: t.libraryEntries.name })
 				.from(t.libraryEntries)
-				.where(eq(t.libraryEntries.kind, 'contact'))
+				.where(and(eq(t.libraryEntries.kind, 'contact'), eq(t.libraryEntries.lecturer, true)))
 				.orderBy(asc(t.libraryEntries.name))
 		});
 	if (id === 'uploads' && method === 'POST') {

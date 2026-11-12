@@ -85,6 +85,13 @@
       "when": 1794446221022,
       "tag": "0011_project_lecturers",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794448022400,
+      "tag": "0012_contact_lecturer_flag",
+      "breakpoints": true
     }
   ]
 }

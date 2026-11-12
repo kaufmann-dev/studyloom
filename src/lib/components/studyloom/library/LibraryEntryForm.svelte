@@ -6,6 +6,7 @@
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Form from '#lib/components/ui/form/index.js';
 	import Input from '#lib/components/ui/input/input.svelte';
+	import { Switch } from '#lib/components/ui/switch/index.js';
 	import Textarea from '#lib/components/ui/textarea/textarea.svelte';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import { api, errorText } from '#lib/ui.js';
@@ -34,6 +35,7 @@
 				phone: entry?.phone ?? '',
 				email: entry?.email ?? '',
 				website: entry?.website ?? '',
+				lecturer: entry?.lecturer ?? false,
 				notes: entry?.notes ?? '',
 				text: entry?.text ?? ''
 			})),
@@ -119,6 +121,20 @@
 					/>
 				{/snippet}
 			</Form.Control>
+			<Form.FieldErrors />
+		</Form.Field>
+		<Form.Field form={editor} name="lecturer">
+			<Form.Control>
+				{#snippet children({ props })}
+					<div class="flex items-center gap-2">
+						<Switch {...props} bind:checked={$form.lecturer} />
+						<Form.Label>Lecturer</Form.Label>
+					</div>
+				{/snippet}
+			</Form.Control>
+			<Form.Description>
+				Lecturers can be assigned to projects. Turning this off removes them from their projects.
+			</Form.Description>
 			<Form.FieldErrors />
 		</Form.Field>
 	{:else if kind === 'note'}

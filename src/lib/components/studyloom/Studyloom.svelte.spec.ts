@@ -345,6 +345,7 @@ function libraryEntry(overrides: Partial<LibraryEntry>): LibraryEntry {
 		phone: '',
 		email: '',
 		website: '',
+		lecturer: false,
 		notes: '',
 		text: '',
 		filename: null,

@@ -75,6 +75,8 @@ export const libraryEntries = pgTable(
 		phone: text('phone').notNull().default(''),
 		email: text('email').notNull().default(''),
 		website: text('website').notNull().default(''),
+		/** Contacts marked as lecturers can be assigned to projects. */
+		lecturer: boolean('lecturer').notNull().default(false),
 		notes: text('notes').notNull().default(''),
 		text: text('text').notNull().default(''),
 		filename: text('filename'),
@@ -89,6 +91,7 @@ export const libraryEntries = pgTable(
 		index('library_parent_idx').on(t.parentId),
 		check('library_kind_check', sql`${t.kind} in ('folder', 'file', 'link', 'contact', 'note')`),
 		check('library_not_own_parent_check', sql`${t.parentId} is distinct from ${t.id}`),
+		check('library_lecturer_contact_check', sql`not ${t.lecturer} or ${t.kind} = 'contact'`),
 		check(
 			'library_size_check',
 			sql`${t.size} >= 0 and ${t.receivedBytes} >= 0 and ${t.receivedBytes} <= ${t.size}`
