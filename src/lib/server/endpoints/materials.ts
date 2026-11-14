@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import * as t from '../db/schema';
@@ -65,8 +65,13 @@ export const materials: Handler = async ({ event, method, id: rawId, action, seq
 	if (!action && method === 'DELETE') {
 		await db().transaction(async (tx) => {
 			if (!(await lockProject(tx, source.projectId))) error(404, 'Project not found.');
-			if (await hasActiveJob(tx, eq(t.jobs.projectId, source.projectId)))
-				error(409, 'Cancel active jobs before deleting.');
+			// Jobs on other sources go on; one that reads this source must end first.
+			const usesSource = or(
+				eq(t.jobs.materialId, id),
+				sql`jsonb_exists(${t.jobs.payload} -> 'materialIds', ${id})`
+			)!;
+			if (await hasActiveJob(tx, and(eq(t.jobs.projectId, source.projectId), usesSource)!))
+				error(409, 'Cancel the jobs that use this source before deleting it.');
 			const [locked] = await tx
 				.select({ status: t.materials.status })
 				.from(t.materials)

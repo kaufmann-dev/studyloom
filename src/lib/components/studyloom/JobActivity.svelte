@@ -5,7 +5,12 @@
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { api, errorText } from '#lib/ui.js';
 
-	let { jobs, onChanged }: { jobs: Job[]; onChanged: () => void | Promise<void> } = $props();
+	/** The project's running jobs, with the interrupted ones behind a disclosure. */
+	let {
+		jobs,
+		onChanged,
+		class: className = ''
+	}: { jobs: Job[]; onChanged: () => void | Promise<void>; class?: string } = $props();
 
 	const KIND_LABELS: Record<JobKind, string> = {
 		ingest: 'Processing source',
@@ -36,52 +41,63 @@
 	}
 </script>
 
-{#if active.length}
-	<section aria-labelledby="active-jobs-heading" class="space-y-3">
-		<h2 id="active-jobs-heading" class="text-sm font-semibold">In progress</h2>
-		{#each active as job (job.id)}
-			<div class="border p-3">
-				<p class="flex items-center gap-2 text-xs font-medium">
-					<Spinner class="size-3" role="presentation" />{KIND_LABELS[job.kind]}
-					{#if job.status === 'queued'}<span class="font-normal text-muted-foreground"
-							>· queued</span
-						>{/if}
-				</p>
-				<p class="mt-1 line-clamp-3 text-xs break-words text-muted-foreground">
-					{job.progress || 'Waiting for processing…'}
-				</p>
-				<Button
-					variant="ghost"
-					size="sm"
-					class="mt-2"
-					disabled={busy === job.id}
-					onclick={() => act(job, 'cancel')}>Cancel</Button
-				>
-			</div>
-		{/each}
-	</section>
-{/if}
-{#if interrupted.length}
-	<details>
-		<summary class="cursor-pointer text-xs text-muted-foreground">
-			Interrupted jobs ({interrupted.length})
-		</summary>
-		<ul class="mt-2 space-y-2">
-			{#each interrupted as job (job.id)}
-				<li class="border p-3 text-xs">
-					<p class="font-medium">{KIND_LABELS[job.kind]}</p>
-					<p class="mt-1 break-words text-destructive">
-						{job.error || (job.status === 'cancelled' ? 'Cancelled' : 'Failed')}
-					</p>
-					<Button
-						variant="ghost"
-						size="sm"
-						class="mt-2"
-						disabled={busy === job.id}
-						onclick={() => act(job, 'retry')}>Retry</Button
-					>
-				</li>
-			{/each}
-		</ul>
-	</details>
+{#if active.length || interrupted.length}
+	<div class={['space-y-3', className]}>
+		{#if active.length}
+			<section aria-labelledby="active-jobs-heading">
+				<h2 id="active-jobs-heading" class="mb-2 text-sm font-semibold">
+					In progress <span class="font-normal text-muted-foreground">({active.length})</span>
+				</h2>
+				<ul class="max-h-56 divide-y overflow-y-auto border">
+					{#each active as job (job.id)}
+						<li class="flex items-center gap-3 px-3 py-2">
+							<Spinner class="size-3 shrink-0" role="presentation" />
+							<div class="min-w-0 flex-1 text-xs">
+								<p class="font-medium">
+									{KIND_LABELS[job.kind]}
+									{#if job.status === 'queued'}
+										<span class="font-normal text-muted-foreground">· queued</span>
+									{/if}
+								</p>
+								<p class="truncate text-muted-foreground" title={job.progress}>
+									{job.progress || 'Waiting for processing…'}
+								</p>
+							</div>
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={busy === job.id}
+								onclick={() => act(job, 'cancel')}>Cancel</Button
+							>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
+		{#if interrupted.length}
+			<details>
+				<summary class="cursor-pointer text-xs text-muted-foreground">
+					Interrupted jobs ({interrupted.length})
+				</summary>
+				<ul class="mt-2 divide-y border">
+					{#each interrupted as job (job.id)}
+						<li class="flex items-center gap-3 px-3 py-2 text-xs">
+							<div class="min-w-0 flex-1">
+								<p class="font-medium">{KIND_LABELS[job.kind]}</p>
+								<p class="break-words text-destructive">
+									{job.error || (job.status === 'cancelled' ? 'Cancelled' : 'Failed')}
+								</p>
+							</div>
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={busy === job.id}
+								onclick={() => act(job, 'retry')}>Retry</Button
+							>
+						</li>
+					{/each}
+				</ul>
+			</details>
+		{/if}
+	</div>
 {/if}

@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, like } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db, type Transaction } from '../db';
 import * as t from '../db/schema';
@@ -24,7 +24,7 @@ import { addPastedText, addWebSource } from '../sources';
 import { removeMaterialFiles } from '../storage';
 import { accepted, created, ok, readJson, type Handler } from './http';
 import { findProject, hasActiveJob, lockProject } from './queries';
-import { publicJob, publicOutput } from './study';
+import { publicJob } from './study';
 
 type ProjectRow = typeof t.projects.$inferSelect;
 
@@ -97,19 +97,24 @@ export async function createProject(input: z.infer<typeof projectInput>) {
 export async function projectWorkspace(rawId: string | undefined) {
 	const [project] = await withLecturers([await findProject(rawId)]);
 	const id = project.id;
-	const [materials, conversations, outputs, jobs, readableChunks] = await Promise.all([
-		db()
-			.select()
-			.from(t.materials)
-			.where(eq(t.materials.projectId, id))
-			.orderBy(desc(t.materials.createdAt)),
+	const inProject = eq(t.materials.projectId, id);
+	const [materials, conversations, outputs, jobs, chunkCounts, figureCounts] = await Promise.all([
+		db().select().from(t.materials).where(inProject).orderBy(desc(t.materials.createdAt)),
 		db()
 			.select()
 			.from(t.conversations)
 			.where(eq(t.conversations.projectId, id))
 			.orderBy(desc(t.conversations.updatedAt)),
+		// Lists need no content; a whole output comes from its own endpoint.
 		db()
-			.select()
+			.select({
+				id: t.outputs.id,
+				projectId: t.outputs.projectId,
+				kind: t.outputs.kind,
+				title: t.outputs.title,
+				materialIds: t.outputs.materialIds,
+				createdAt: t.outputs.createdAt
+			})
 			.from(t.outputs)
 			.where(eq(t.outputs.projectId, id))
 			.orderBy(desc(t.outputs.createdAt)),
@@ -120,18 +125,30 @@ export async function projectWorkspace(rawId: string | undefined) {
 			.orderBy(desc(t.jobs.createdAt))
 			.limit(100),
 		db()
-			.select({ materialId: t.sourceChunks.materialId })
+			.select({ materialId: t.sourceChunks.materialId, total: count() })
 			.from(t.sourceChunks)
 			.innerJoin(t.materials, eq(t.materials.id, t.sourceChunks.materialId))
-			.where(eq(t.materials.projectId, id))
-			.groupBy(t.sourceChunks.materialId)
+			.where(inProject)
+			.groupBy(t.sourceChunks.materialId),
+		db()
+			.select({ materialId: t.assets.materialId, total: count() })
+			.from(t.assets)
+			.innerJoin(t.materials, eq(t.materials.id, t.assets.materialId))
+			.where(and(inProject, like(t.assets.mimeType, 'image/%')))
+			.groupBy(t.assets.materialId)
 	]);
+	const totals = (rows: { materialId: string; total: number }[]) =>
+		new Map(rows.map((row) => [row.materialId, row.total]));
+	const chunks = totals(chunkCounts);
+	const figures = totals(figureCounts);
 	return {
 		project,
-		materials,
-		readableMaterialIds: readableChunks.map((chunk) => chunk.materialId),
+		materials: materials.map((material) => ({
+			...material,
+			counts: { chunks: chunks.get(material.id) ?? 0, figures: figures.get(material.id) ?? 0 }
+		})),
 		conversations,
-		outputs: outputs.map(publicOutput),
+		outputs,
 		jobs: jobs.map(publicJob)
 	};
 }

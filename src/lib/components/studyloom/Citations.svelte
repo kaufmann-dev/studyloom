@@ -19,7 +19,7 @@
 		{#each unique as citation (`${citation.materialId}:${citation.locator}`)}<a
 				class="inline-flex max-w-full items-center gap-1.5 border bg-background px-2 py-1 text-xs text-primary hover:underline"
 				href={resolve(
-					`/projects/${projectId}?material=${encodeURIComponent(citation.materialId)}&locator=${encodeURIComponent(citation.locator)}` as Path
+					`/projects/${projectId}/sources/${citation.materialId}?locator=${encodeURIComponent(citation.locator)}` as Path
 				)}
 				title={citation.quote ?? citation.locator}
 				><BookOpen class="size-3 shrink-0" /><span class="truncate"

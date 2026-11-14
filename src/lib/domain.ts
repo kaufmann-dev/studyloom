@@ -538,6 +538,15 @@ export interface Material {
 	createdAt: string;
 	updatedAt: string;
 }
+/** How much was extracted from a source. */
+export interface MaterialCounts {
+	chunks: number;
+	figures: number;
+}
+/** A source as the project overview lists it. */
+export interface ProjectMaterial extends Material {
+	counts: MaterialCounts;
+}
 export interface SourceChunk {
 	id: string;
 	materialId: string;
@@ -561,14 +570,21 @@ export interface MaterialDetails {
 	turns: TranscriptTurn[];
 	assets: Asset[];
 }
+/** A saved overview, quiz, audio summary or study session as lists show it. */
+export type OutputSummary = Pick<
+	StudyOutput,
+	'id' | 'projectId' | 'kind' | 'title' | 'materialIds' | 'createdAt'
+>;
 export interface ProjectWorkspace {
 	project: Project;
-	materials: Material[];
-	readableMaterialIds: string[];
+	materials: ProjectMaterial[];
 	conversations: Conversation[];
-	outputs: StudyOutput[];
+	outputs: OutputSummary[];
 	jobs: Job[];
 }
+/** Whether a source holds extracted text that chat and study tools can use. */
+export const isReadable = (material: ProjectMaterial) =>
+	(material.status === 'ready' || material.status === 'partial') && material.counts.chunks > 0;
 export interface Asset {
 	id: string;
 	materialId: string;

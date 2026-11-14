@@ -1,7 +1,9 @@
 <script lang="ts">
-	import { page } from '$app/state';
-	import Workspace from '#lib/components/studyloom/Workspace.svelte';
-	let projectId = $derived(page.params.id ?? '');
+	import AddSources from '#lib/components/studyloom/AddSources.svelte';
+	import SourcesTable from '#lib/components/studyloom/SourcesTable.svelte';
 </script>
 
-{#key projectId}<Workspace {projectId} />{/key}
+<div class="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_300px]">
+	<SourcesTable />
+	<aside class="min-w-0" aria-label="Add sources"><AddSources /></aside>
+</div>

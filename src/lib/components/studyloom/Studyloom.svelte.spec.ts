@@ -20,7 +20,7 @@ import Chat from './Chat.svelte';
 import LibraryBrowser from './library/LibraryBrowser.svelte';
 import MoveDialog from './library/MoveDialog.svelte';
 import Markdown from './Markdown.svelte';
-import StudyTools from './StudyTools.svelte';
+import GenerateForm from './GenerateForm.svelte';
 import StudyPlayer from './StudyPlayer.svelte';
 import type { TutorSession } from '#lib/study/tutor.svelte.js';
 import Projects from '../../../routes/projects/+page.svelte';
@@ -429,11 +429,10 @@ describe('Audio summary form', () => {
 			}
 			return response({});
 		});
-		render(StudyTools, {
+		render(GenerateForm, {
 			projectId: 'project-1',
 			kind: 'audio',
 			materialIds: ['material-1'],
-			materials: [],
 			models: [
 				{
 					modelId: 'opus',
@@ -441,8 +440,7 @@ describe('Audio summary form', () => {
 					description: 'Most capable for complex work'
 				}
 			],
-			outputs: [],
-			onChanged: () => {}
+			onCreated: () => {}
 		});
 		await expect.element(page.getByLabelText('Narrator voice')).toHaveValue('voice1');
 		await page.getByLabelText('Style').selectOptions('dialogue');

@@ -1,39 +1,25 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { beforeNavigate } from '$app/navigation';
 	import { Mic, Pause, Play, Square, RotateCcw } from '@lucide/svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
 	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
-	import { BrowserRecorder } from '#lib/recording/recorder.svelte.js';
+	import { getProject } from '#lib/project.svelte.js';
 	import type { RecordingSource, LocalRecording } from '#lib/recording/storage.js';
 
-	let { projectId, onSaved }: { projectId: string; onSaved?: (materialId: string) => void } =
-		$props();
+	/** The controls of the project's recorder, which keeps running on the project's other pages. */
+	let { onSaved }: { onSaved?: (materialId: string) => void } = $props();
 	const uid = $props.id();
-	const recorder = new BrowserRecorder();
+	const project = getProject();
+	const { recorder, projectId } = project;
 	let source = $state<RecordingSource>('microphone');
 	let deviceId = $state('');
-	let navigationWarning = $state(false);
 	let inactive = $derived(['idle', 'complete'].includes(recorder.state));
 	let busy = $derived(['starting', 'pausing', 'saving'].includes(recorder.state));
-
-	onMount(() => {
-		void recorder.initialize(projectId);
-		return () => recorder.destroy();
-	});
-
-	beforeNavigate((navigation) => {
-		if (navigation.shallow) return;
-		if (!recorder.needsAttention) return;
-		navigation.cancel();
-		if (!navigation.willUnload) navigationWarning = true;
-	});
 
 	async function save() {
 		const id = await recorder.stop();
 		if (id) {
-			navigationWarning = false;
+			project.leaveWarning = false;
 			onSaved?.(id);
 		}
 	}
@@ -110,7 +96,7 @@
 	{#if recorder.error}
 		<p role="alert" class="text-sm text-destructive">{recorder.error}</p>
 	{/if}
-	{#if navigationWarning}
+	{#if project.leaveWarning}
 		<p role="alert" class="text-sm">Stop and save the recording before leaving this project.</p>
 	{/if}
 	{#if recorder.pending > 0 && recorder.state === 'interrupted'}
