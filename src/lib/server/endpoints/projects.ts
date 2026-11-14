@@ -7,8 +7,8 @@ import {
 	chatInput,
 	generationInput,
 	materialUploadInput,
-	modelInput,
 	pastedTextInput,
+	processInput,
 	projectInput,
 	recordingInput,
 	UPLOAD_CHUNK_SIZE,
@@ -98,54 +98,66 @@ export async function projectWorkspace(rawId: string | undefined) {
 	const [project] = await withLecturers([await findProject(rawId)]);
 	const id = project.id;
 	const inProject = eq(t.materials.projectId, id);
-	const [materials, conversations, outputs, jobs, chunkCounts, figureCounts] = await Promise.all([
-		db().select().from(t.materials).where(inProject).orderBy(desc(t.materials.createdAt)),
-		db()
-			.select()
-			.from(t.conversations)
-			.where(eq(t.conversations.projectId, id))
-			.orderBy(desc(t.conversations.updatedAt)),
-		// Lists need no content; a whole output comes from its own endpoint.
-		db()
-			.select({
-				id: t.outputs.id,
-				projectId: t.outputs.projectId,
-				kind: t.outputs.kind,
-				title: t.outputs.title,
-				materialIds: t.outputs.materialIds,
-				createdAt: t.outputs.createdAt
-			})
-			.from(t.outputs)
-			.where(eq(t.outputs.projectId, id))
-			.orderBy(desc(t.outputs.createdAt)),
-		db()
-			.select()
-			.from(t.jobs)
-			.where(eq(t.jobs.projectId, id))
-			.orderBy(desc(t.jobs.createdAt))
-			.limit(100),
-		db()
-			.select({ materialId: t.sourceChunks.materialId, total: count() })
-			.from(t.sourceChunks)
-			.innerJoin(t.materials, eq(t.materials.id, t.sourceChunks.materialId))
-			.where(inProject)
-			.groupBy(t.sourceChunks.materialId),
-		db()
-			.select({ materialId: t.assets.materialId, total: count() })
-			.from(t.assets)
-			.innerJoin(t.materials, eq(t.materials.id, t.assets.materialId))
-			.where(and(inProject, like(t.assets.mimeType, 'image/%')))
-			.groupBy(t.assets.materialId)
-	]);
+	const [materials, conversations, outputs, jobs, chunkCounts, exerciseCounts, figureCounts] =
+		await Promise.all([
+			db().select().from(t.materials).where(inProject).orderBy(desc(t.materials.createdAt)),
+			db()
+				.select()
+				.from(t.conversations)
+				.where(eq(t.conversations.projectId, id))
+				.orderBy(desc(t.conversations.updatedAt)),
+			// Lists need no content; a whole output comes from its own endpoint.
+			db()
+				.select({
+					id: t.outputs.id,
+					projectId: t.outputs.projectId,
+					kind: t.outputs.kind,
+					title: t.outputs.title,
+					materialIds: t.outputs.materialIds,
+					createdAt: t.outputs.createdAt
+				})
+				.from(t.outputs)
+				.where(eq(t.outputs.projectId, id))
+				.orderBy(desc(t.outputs.createdAt)),
+			db()
+				.select()
+				.from(t.jobs)
+				.where(eq(t.jobs.projectId, id))
+				.orderBy(desc(t.jobs.createdAt))
+				.limit(100),
+			db()
+				.select({ materialId: t.sourceChunks.materialId, total: count() })
+				.from(t.sourceChunks)
+				.innerJoin(t.materials, eq(t.materials.id, t.sourceChunks.materialId))
+				.where(inProject)
+				.groupBy(t.sourceChunks.materialId),
+			db()
+				.select({ materialId: t.sourceChunks.materialId, total: count() })
+				.from(t.sourceChunks)
+				.innerJoin(t.materials, eq(t.materials.id, t.sourceChunks.materialId))
+				.where(and(inProject, eq(t.sourceChunks.kind, 'exercise')))
+				.groupBy(t.sourceChunks.materialId),
+			db()
+				.select({ materialId: t.assets.materialId, total: count() })
+				.from(t.assets)
+				.innerJoin(t.materials, eq(t.materials.id, t.assets.materialId))
+				.where(and(inProject, like(t.assets.mimeType, 'image/%')))
+				.groupBy(t.assets.materialId)
+		]);
 	const totals = (rows: { materialId: string; total: number }[]) =>
 		new Map(rows.map((row) => [row.materialId, row.total]));
 	const chunks = totals(chunkCounts);
 	const figures = totals(figureCounts);
+	const exercises = totals(exerciseCounts);
 	return {
 		project,
 		materials: materials.map((material) => ({
 			...material,
-			counts: { chunks: chunks.get(material.id) ?? 0, figures: figures.get(material.id) ?? 0 }
+			counts: {
+				chunks: chunks.get(material.id) ?? 0,
+				figures: figures.get(material.id) ?? 0,
+				exercises: exercises.get(material.id) ?? 0
+			}
 		})),
 		conversations,
 		outputs,
@@ -247,9 +259,9 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 		return created({ materialId: material.id });
 	}
 	if (action === 'web-sources' && method === 'POST') {
-		const input = webSourceInput.extend(modelInput.shape).parse(await readJson(event));
+		const input = webSourceInput.extend(processInput.shape).parse(await readJson(event));
 		const { material, job } = await addWebSource(id, input);
-		return accepted({ materialId: material.id, jobId: job.id });
+		return accepted({ materialId: material.id, jobId: job?.id });
 	}
 	if (action === 'recordings' && method === 'POST') {
 		const input = recordingInput.parse(await readJson(event));

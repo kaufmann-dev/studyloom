@@ -115,6 +115,7 @@ describe('document units', () => {
 			transcriptChunk({ startMs: 0, endMs: 4200, speaker: 'Speaker 1', text: 'Hello.' })
 		).toEqual({
 			locator: 'time:0-4200',
+			kind: 'text',
 			text: '[Speaker 1] Hello.'
 		});
 		expect(transcriptChunk({ startMs: 5, endMs: 9, speaker: null, text: 'Hi.' }).text).toBe('Hi.');
@@ -142,7 +143,7 @@ describe('source preparation', () => {
 			result: {
 				status: 'ready',
 				notes: '',
-				chunks: [{ locator: 'part:1', text: '# Osmosis\n\nWater follows salt.' }],
+				chunks: [{ locator: 'part:1', kind: 'text', text: '# Osmosis\n\nWater follows salt.' }],
 				assets: []
 			}
 		});

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, copyFile, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
-import { and, asc, eq, inArray, isNull, lt, ne, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, like, lt, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, type Transaction } from './db';
 import * as t from './db/schema';
@@ -22,11 +22,20 @@ import {
 	citedTextSchema,
 	ingestionSchema,
 	quizSchema,
+	type ChunkKind,
 	type Citation,
 	type Grade,
-	type Quiz
+	type Quiz,
+	type Snapshot
 } from '../domain';
-import { pageReviewSchema, validatePages, assemblePages, pageBatches } from './page-review';
+import {
+	pageReviewSchema,
+	validatePages,
+	assemblePages,
+	pageBatches,
+	figureProblem
+} from './page-review';
+import { FIGURE_REFERENCE, MAX_FIGURE_BYTES, figureReferences, imageType } from './figures';
 import { sniffFile } from './extract';
 import { claudeRun, type ClaudeResult } from './claude';
 import { transcribeFile } from './elevenlabs';
@@ -49,7 +58,7 @@ import {
 	writeManifest
 } from './voicing';
 type Job = typeof t.jobs.$inferSelect;
-export type Snapshot = typeof t.outputs.$inferSelect.sourceSnapshot;
+export type { Snapshot };
 type Progress = (text: string) => void;
 type Queue = Job['queue'];
 const LEASE_MS = 60_000;
@@ -113,10 +122,27 @@ export async function sourceSnapshot(projectId: string, ids: string[]): Promise<
 	}
 	if (selected.some((m) => !chunksByMaterial.has(m.id)))
 		throw new ClientError(400, 'Each selected source must contain readable text.');
+	const figures = await db()
+		.select({
+			id: t.assets.id,
+			materialId: t.assets.materialId,
+			label: t.assets.label,
+			locator: t.assets.locator,
+			mimeType: t.assets.mimeType
+		})
+		.from(t.assets)
+		.where(and(inArray(t.assets.materialId, unique), like(t.assets.mimeType, 'image/%')));
 	return selected.map((m) => ({
 		id: m.id,
 		name: m.name,
-		chunks: (chunksByMaterial.get(m.id) ?? []).map((c) => ({ locator: c.locator, text: c.text }))
+		chunks: (chunksByMaterial.get(m.id) ?? []).map((c) => ({
+			locator: c.locator,
+			text: c.text,
+			kind: c.kind
+		})),
+		figures: figures
+			.filter((figure) => figure.materialId === m.id)
+			.map(({ id, label, locator, mimeType }) => ({ id, label, locator, mimeType }))
 	}));
 }
 /** The first citation whose locator is unknown or whose quote is not in that source chunk. */
@@ -219,7 +245,7 @@ async function writeData(workspace: string, name: string, value: unknown) {
 export async function replaceSourceChunks(
 	tx: Transaction,
 	materialId: string,
-	chunks: { locator: string; text: string }[]
+	chunks: { locator: string; text: string; kind: ChunkKind }[]
 ) {
 	await tx.delete(t.sourceChunks).where(eq(t.sourceChunks.materialId, materialId));
 	for (let n = 0; n < chunks.length; n += SOURCE_CHUNK_BATCH)
@@ -228,6 +254,7 @@ export async function replaceSourceChunks(
 				materialId,
 				ordinal: n + i,
 				locator: chunk.locator,
+				kind: chunk.kind,
 				text: chunk.text
 			}))
 		);
@@ -238,8 +265,11 @@ const answerFormat =
 	'Write Markdown. GitHub tables, LaTeX math ($…$ inline, $$…$$ on its own lines; write a literal dollar sign as \\$) and ```mermaid diagrams are rendered. Never write image references.';
 const webPageNote =
 	"This file is a copy of the web page at sourceUrl that Studyloom already downloaded; read the file and do not fetch anything from the network. Extract the content a reader came for: the title, byline and date if shown, then the article or document body in reading order with its headings, lists, tables, figure captions and meaningful image alt text. Leave out navigation, menus, cookie and consent notices, ads, share buttons, related-article teasers, comments and footers. Parse the HTML properly (for example with Python html.parser) instead of stripping tags, ignore script and style content, and look at embedded JSON or metadata only when the visible text is empty. Use one chunk per heading section with locators like 'section:Heading', and split sections longer than a few thousand characters. If the page holds little or no readable text because it needs JavaScript, a sign-in or a consent step, set status partial or unreadable and say so in notes.";
+/** How extracted text is written, for every source Claude reads. */
+const EXTRACTION_FORMAT =
+	'Write each chunk as Markdown in the original language. Tables: GitHub pipe tables that keep header and row associations. Formulas: LaTeX, $…$ inline and $$…$$ on its own lines; amounts and plain numbers are not formulas, and a literal dollar sign is written \\$. Figures that carry content (diagrams, charts, annotated photos; not logos, decorations or header bars): cut each one out of its page image with crop_image, check the returned crop and crop again if it is cut off, list it in assets with the returned path, mimeType image/png, the locator of its page and a short label, and reference it where it appears as ![label](figure:<returned path>), followed by one or two sentences saying what it shows. When a figure is a flow, hierarchy, cycle or matrix whose structure you can state exactly, add a ```mermaid block after the reference; never invent nodes or relations. Exercises: every numbered task, question or exercise is its own chunk with kind "exercise", holding its number, full wording, answer options, tables and figures; sub-tasks stay in the same chunk. Answer keys and worked solutions are chunks with kind "solution" that name the exercise number. Write visual marks out: answer options marked by colour, bold type or a tick become task-list items (- [x] marked, - [ ] unmarked), and a mark in a table cell becomes X. Everything else has kind "text".';
 const ingestionContract = () =>
-	`Save extracted.json with schema: ${JSON.stringify(z.toJSONSchema(ingestionSchema))}. Locators must be unique. Assets are optional relative paths to generated files, never the input. Set partial if any parts are unreadable, and unreadable if nothing could be read. Report limitations in notes; retain the original.`;
+	`${EXTRACTION_FORMAT} Save extracted.json with schema: ${JSON.stringify(z.toJSONSchema(ingestionSchema))}. Locators must be unique. Assets are only the figures you cropped, never the input. Set partial if any parts are unreadable, and unreadable if nothing could be read. Report limitations in notes; retain the original.`;
 /** Claude reads a file the server cannot, choosing its own tools. */
 const agenticPrompt = (source: object, webPage: boolean) =>
 	`Extract this source: ${JSON.stringify(source)}. Inspect content, then choose tools yourself.${webPage ? ' ' + webPageNote : ''} For images/diagrams use view_image. For audio/video use transcribe_audio (extract the audio track of large videos with FFmpeg first), retaining absolute timestamps in locators. For slides/docs/scans choose LibreOffice, Poppler, Tesseract, Python or other installed tools. Use useful locators such as 'page:3', 'slide:4', 'time:120000-150000', or named sections. Split long documents into logical chunks. ${ingestionContract()}`;
@@ -269,8 +299,9 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 		console.error('Source preparation failed:', safeError(cause));
 		progress('Preparation failed; Claude will read the file');
 	}
+	// Text and transcripts are stored as they came; what Claude extracts is Markdown.
 	if (prepared?.type === 'chunks')
-		return saveIngestion(job, material, prepared.result, workspace, signal);
+		return saveIngestion(job, material, prepared.result, 'plain', workspace, signal);
 	const modelId = String(job.payload.modelId || DEFAULT_MODEL);
 	const source = {
 		materialId: material.id,
@@ -308,10 +339,15 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 						signal,
 						progress,
 						requiredImages: units.map((unit) => unit.image!),
-						prompt: `Read ${inputName}. Visually inspect EVERY assigned unit image with view_image. Adjacent units are only context; emit exactly one record per assigned unit in order. Preserve original language, all meaningful prose, table headers and row/value associations, signs, units, formulas and diagram relationships. Remove running headers, footers and page numbers. Use Markdown tables where useful. Keep chunks within an assigned unit, using its exact locator or a #1, #2 suffix. Label continuations. Render higher-resolution crops with available tools if needed. Never guess unclear values: report partial/unreadable and explain limitations. Blank units have no chunks. Spreadsheet unit text is structured JSON: preserve addresses, formulas, merged ranges, number formats, named ranges and chart source relationships. Separate originalCache (original OOXML cached result, if present) from engineValue (LibreOffice imported value); never claim the latter is a verified original result or a new calculation. Report missing caches, formula errors, external dependencies, unsupported features and material discrepancies as limitations. Hidden rows and columns are revealed for review and labeled as originally hidden in cell data. Describe charts from images, not just their data. Generated region boundaries are not original print layout. Save ${outputName} with schema ${JSON.stringify(z.toJSONSchema(pageReviewSchema))}. ${feedback}`
+						prompt: `Read ${inputName}. Visually inspect EVERY assigned unit image with view_image. Adjacent units are only context; emit exactly one record per assigned unit in order. Preserve all meaningful prose, table headers and row/value associations, signs, units, formulas and diagram relationships. Remove running headers, footers and page numbers. ${EXTRACTION_FORMAT} Keep chunks within an assigned unit, using its exact locator or a #1, #2 suffix. Label continuations. Render higher-resolution crops with available tools if you need a closer look. Never guess unclear values: report partial/unreadable and explain limitations. Blank units have no chunks. Spreadsheet unit text is structured JSON: preserve addresses, formulas, merged ranges, number formats, named ranges and chart source relationships. Separate originalCache (original OOXML cached result, if present) from engineValue (LibreOffice imported value); never claim the latter is a verified original result or a new calculation. Report missing caches, formula errors, external dependencies, unsupported features and material discrepancies as limitations. Hidden rows and columns are revealed for review and labeled as originally hidden in cell data. Describe charts from images, not just their data. Generated region boundaries are not original print layout. Save ${outputName} with schema ${JSON.stringify(z.toJSONSchema(pageReviewSchema))}. ${feedback}`
 					});
 					validating = true;
-					reviewed.push(...validatePages(await readArtifact(workspace, outputName), units));
+					const pages = validatePages(await readArtifact(workspace, outputName), units);
+					for (const asset of pages.flatMap((page) => page.assets))
+						await scopedFile(join(workspace, 'files'), asset.path).catch(() => {
+							throw new Error(`The asset ${asset.path} does not exist. Crop it with crop_image.`);
+						});
+					reviewed.push(...pages);
 					break;
 				} catch (cause) {
 					if (
@@ -324,7 +360,7 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 				}
 			}
 		}
-		return saveIngestion(job, material, assemblePages(reviewed), workspace, signal);
+		return saveIngestion(job, material, assemblePages(reviewed), 'markdown', workspace, signal);
 	}
 	await runClaudeWithArtifact(
 		workspace,
@@ -335,13 +371,19 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 		progress
 	);
 	const result = ingestionSchema.parse(await readArtifact(workspace, 'extracted.json'));
-	await saveIngestion(job, material, result, workspace, signal);
+	const problem = figureProblem(result.chunks, result.assets);
+	if (problem) throw new Error(`${problem} Retry this job.`);
+	await saveIngestion(job, material, result, 'markdown', workspace, signal);
 }
-/** Stores an extraction: its chunks, any generated assets and the source's new status. */
+/**
+ * Stores an extraction: its chunks, the figures cut out for it and the source's new status.
+ * Figure references in the text change from workspace paths to the ids of the stored assets.
+ */
 async function saveIngestion(
 	job: Job,
 	material: typeof t.materials.$inferSelect,
 	result: Ingestion,
+	contentFormat: 'plain' | 'markdown',
 	workspace: string,
 	signal: AbortSignal
 ) {
@@ -349,6 +391,7 @@ async function saveIngestion(
 		throw new Error('Extracted source locators must be unique.');
 	const assets: (typeof t.assets.$inferInsert)[] = [];
 	const copiedAssets: string[] = [];
+	const stored = new Map<string, string>();
 	const replaced = await db()
 		.select({ path: t.assets.path })
 		.from(t.assets)
@@ -357,30 +400,47 @@ async function saveIngestion(
 	try {
 		for (const asset of result.assets) {
 			const source = await scopedFile(join(workspace, 'files'), asset.path);
+			if ((await stat(source)).size > MAX_FIGURE_BYTES)
+				throw new Error('An extracted figure exceeds 8 MiB.');
+			// The browser shows only real images, so the type comes from the file, not from Claude.
+			const mimeType = imageType(await readFile(source));
+			if (!mimeType) throw new Error(`The figure ${asset.path} is not a PNG, JPEG or WebP image.`);
 			const id = randomUUID();
 			const destination = join(materialDir(material.id), 'assets', id);
-			if ((await stat(source)).size > 128 * 1024 * 1024)
-				throw new Error('Generated asset exceeds 128 MiB.');
 			copiedAssets.push(destination);
 			await copyFile(source, destination);
+			stored.set(asset.path, id);
 			assets.push({
 				id,
 				materialId: material.id,
 				path: destination,
 				label: asset.label,
-				mimeType: asset.mimeType,
+				mimeType,
 				locator: asset.locator
 			});
 		}
+		const chunks = result.chunks.map((chunk) => {
+			const unknown = figureReferences(chunk.text).find((path) => !stored.has(path));
+			if (unknown) throw new Error(`The text refers to figure:${unknown}, which was not saved.`);
+			return {
+				...chunk,
+				text: chunk.text.replace(
+					FIGURE_REFERENCE,
+					(_, open: string, path: string, close: string) =>
+						`${open}asset:${stored.get(path)}${close}`
+				)
+			};
+		});
 		signal.throwIfAborted();
 		await completeJob(job, async (tx) => {
-			await replaceSourceChunks(tx, material.id, result.chunks);
+			await replaceSourceChunks(tx, material.id, chunks);
 			await tx.delete(t.assets).where(eq(t.assets.materialId, material.id));
 			if (assets.length) await tx.insert(t.assets).values(assets);
 			await tx
 				.update(t.materials)
 				.set({
 					status: result.status === 'unreadable' ? 'failed' : result.status,
+					contentFormat,
 					notes: result.notes,
 					updatedAt: new Date()
 				})
@@ -967,9 +1027,18 @@ export async function settleJobTarget(
 			job.kind === 'recover' && (outcome === 'cancelled' || !job.payload.finalize)
 				? 'paused'
 				: 'failed';
+		// Reprocessing replaces nothing until it succeeds: the earlier extraction stays in use.
+		const previous = job.payload.previous as
+			{ status: 'ready' | 'partial'; notes: string } | undefined;
 		await tx
 			.update(t.materials)
-			.set({ status: outcome === 'retried' ? 'processing' : stopped, notes, updatedAt: new Date() })
+			.set(
+				outcome === 'retried'
+					? { status: 'processing', notes, updatedAt: new Date() }
+					: previous
+						? { ...previous, updatedAt: new Date() }
+						: { status: stopped, notes, updatedAt: new Date() }
+			)
 			.where(eq(t.materials.id, job.materialId));
 	}
 	if (job.attemptId)

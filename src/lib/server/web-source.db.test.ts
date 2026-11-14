@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { ClientError } from './config';
@@ -23,7 +23,7 @@ const page = {
 };
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('Web page sources', () => {
-	it('stores the downloaded copy, queues extraction and can retry from the copy', async () => {
+	it('stores the downloaded copy, queues extraction and can process the copy again', async () => {
 		const environment = await useTestDatabase('web');
 		const { data } = environment;
 		const [project] = await db().insert(projects).values({ name: 'Leadership' }).returning();
@@ -62,11 +62,70 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Web page sources', () => {
 			// A failed extraction is retried from the stored copy; the page is not downloaded again.
 			await db().update(jobs).set({ status: 'failed' }).where(eq(jobs.id, jobId));
 			await db().update(materials).set({ status: 'failed' }).where(eq(materials.id, materialId));
-			const retry = await call(`/api/materials/${materialId}/retry`, { modelId: 'test-model' });
+			const retry = await call(`/api/materials/${materialId}/process`, { modelId: 'test-model' });
 			expect(retry.status).toBe(202);
 			expect((await retry.json()).jobId).not.toBe(jobId);
 			expect(fetchWebPage).toHaveBeenCalledTimes(1);
 			expect(await readFile(join(data, 'materials', materialId, 'original'))).toEqual(page.body);
+
+			// A source that is already extracted can be processed again; until the new result is
+			// saved it stays usable, and a cancelled run leaves it as it was.
+			await db().update(jobs).set({ status: 'failed' }).where(eq(jobs.materialId, materialId));
+			await db()
+				.update(materials)
+				.set({ status: 'ready', notes: 'Read in full.' })
+				.where(eq(materials.id, materialId));
+			const again = await call(`/api/materials/${materialId}/process`, { modelId: 'test-model' });
+			const reprocess = (await again.json()).jobId;
+			const [queued] = await db().select().from(jobs).where(eq(jobs.id, reprocess));
+			expect(queued.payload).toMatchObject({
+				previous: { status: 'ready', notes: 'Read in full.' }
+			});
+			await call(`/api/jobs/${reprocess}/cancel`, {});
+			const [restored] = await db().select().from(materials).where(eq(materials.id, materialId));
+			expect(restored).toMatchObject({ status: 'ready', notes: 'Read in full.' });
+
+			// While a job reads the source, it cannot be replaced underneath it.
+			const [reader] = await db()
+				.insert(jobs)
+				.values({
+					projectId: project.id,
+					kind: 'quiz',
+					queue: 'background',
+					payload: { materialIds: [materialId] }
+				})
+				.returning();
+			const blocked = await call(`/api/materials/${materialId}/process`, {
+				modelId: 'test-model'
+			}).catch((cause) => cause);
+			expect(blocked).toMatchObject({ status: 409 });
+			await db().delete(jobs).where(eq(jobs.id, reader.id));
+
+			// Processing can be put off: the page is downloaded and stored, and nothing is queued.
+			vi.mocked(fetchWebPage).mockResolvedValueOnce(page);
+			const later = await call(`/api/projects/${project.id}/web-sources`, {
+				url: 'https://example.test/articles/compass',
+				modelId: 'test-model',
+				process: false
+			});
+			const storedOnly = await later.json();
+			expect(storedOnly.jobId).toBeUndefined();
+			const [waiting] = await db()
+				.select()
+				.from(materials)
+				.where(eq(materials.id, storedOnly.materialId));
+			expect(waiting.status).toBe('stored');
+			const started = await call(`/api/materials/${storedOnly.materialId}/process`, {
+				modelId: 'test-model'
+			});
+			expect(started.status).toBe(202);
+			const [processing] = await db()
+				.select()
+				.from(materials)
+				.where(eq(materials.id, storedOnly.materialId));
+			expect(processing.status).toBe('processing');
+			await db().delete(materials).where(eq(materials.id, storedOnly.materialId));
+			await rm(join(data, 'materials', storedOnly.materialId), { recursive: true, force: true });
 
 			// A page that cannot be downloaded leaves no source behind.
 			vi.mocked(fetchWebPage).mockRejectedValueOnce(

@@ -85,10 +85,11 @@ describe('Tutor prompts', () => {
 				id: '00000000-0000-4000-8000-000000000001',
 				name: 'Biology',
 				chunks: [
-					{ locator: 'page:1', text: 'Salt draws water.' },
-					{ locator: 'page:2', text: 'x'.repeat(10_000) },
-					{ locator: 'page:3', text: 'Not cited.' }
-				]
+					{ locator: 'page:1', text: 'Salt draws water.', kind: 'text' as const },
+					{ locator: 'page:2', text: 'x'.repeat(10_000), kind: 'text' as const },
+					{ locator: 'page:3', text: 'Not cited.', kind: 'text' as const }
+				],
+				figures: []
 			}
 		];
 		const citations = [...plan.segments.flatMap((s) => s.citations), plan.segments[0].citations[0]];

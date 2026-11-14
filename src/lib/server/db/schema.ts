@@ -23,6 +23,7 @@ import type {
 	Quiz,
 	Grade,
 	Repeat,
+	Snapshot,
 	StudyInfo,
 	StudyVerdict
 } from '../../domain';
@@ -264,13 +265,24 @@ export const materials = pgTable(
 		mimeType: text('mime_type').notNull(),
 		kind: text('kind').$type<'file' | 'recording'>().notNull(),
 		status: text('status')
-			.$type<'uploading' | 'processing' | 'ready' | 'partial' | 'failed' | 'recording' | 'paused'>()
+			.$type<
+				| 'uploading'
+				| 'stored'
+				| 'processing'
+				| 'ready'
+				| 'partial'
+				| 'failed'
+				| 'recording'
+				| 'paused'
+			>()
 			.notNull(),
 		size: bigint('size', { mode: 'number' }).notNull().default(0),
 		receivedBytes: bigint('received_bytes', { mode: 'number' }).notNull().default(0),
 		durationMs: bigint('duration_ms', { mode: 'number' }).notNull().default(0),
 		/** The address a web page source was downloaded from. */
 		sourceUrl: text('source_url'),
+		/** Whether the extracted text is Markdown (Claude's extraction) or plain text as it came. */
+		contentFormat: text('content_format').$type<'plain' | 'markdown'>().notNull().default('plain'),
 		notes: text('notes').notNull().default(''),
 		createdAt: time('created_at'),
 		updatedAt: time('updated_at')
@@ -303,6 +315,8 @@ export const sourceChunks = pgTable(
 			.references(() => materials.id, { onDelete: 'cascade' }),
 		ordinal: integer('ordinal').notNull(),
 		locator: text('locator').notNull(),
+		/** Exercises and their solutions are told apart from the text that teaches. */
+		kind: text('kind').$type<'text' | 'exercise' | 'solution'>().notNull().default('text'),
 		text: text('text').notNull()
 	},
 	(t) => [uniqueIndex('source_chunk_ordinal_idx').on(t.materialId, t.ordinal)]
@@ -401,9 +415,7 @@ export const outputs = pgTable(
 		study: jsonb('study').$type<StudyInfo>(),
 		citations: jsonb('citations').$type<Citation[]>().notNull().default([]),
 		materialIds: jsonb('material_ids').$type<string[]>().notNull(),
-		sourceSnapshot: jsonb('source_snapshot')
-			.$type<{ id: string; name: string; chunks: { locator: string; text: string }[] }[]>()
-			.notNull(),
+		sourceSnapshot: jsonb('source_snapshot').$type<Snapshot>().notNull(),
 		modelId: text('model_id').notNull(),
 		createdAt: time('created_at')
 	},

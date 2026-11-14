@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db';
 import * as t from '../db/schema';
-import { idSchema, modelInput, UPLOAD_CHUNK_SIZE } from '../../domain';
+import { idSchema, modelInput, processInput, UPLOAD_CHUNK_SIZE } from '../../domain';
 import { safeError } from '../config';
 import { validateModel } from '../claude';
 import { assemble, originalPath, putChunk, removeMaterialFiles } from '../storage';
@@ -95,24 +95,35 @@ export const materials: Handler = async ({ event, method, id: rawId, action, seq
 		return ok();
 	}
 	if (action === 'complete' && method === 'POST') {
-		const { modelId } = modelInput.parse(await readJson(event));
+		const { modelId, process } = processInput.parse(await readJson(event));
 		if (source.status !== 'uploading') return ok();
-		const job = await enqueueFileIngest(source, modelId, ['uploading'], true);
-		return accepted({ jobId: job?.id });
+		if (process) {
+			const job = await enqueueFileIngest(source, modelId, ['uploading'], true);
+			return accepted({ jobId: job?.id });
+		}
+		// Kept as it is: the file is whole and waits until processing is asked for.
+		if (source.receivedBytes !== source.size) error(409, 'Upload is incomplete.');
+		await assemble(id);
+		await db()
+			.update(t.materials)
+			.set({ status: 'stored', updatedAt: new Date() })
+			.where(and(eq(t.materials.id, id), eq(t.materials.status, 'uploading')));
+		return ok();
 	}
-	if (action === 'retry' && method === 'POST') {
+	if (action === 'process' && method === 'POST') {
 		const { modelId } = modelInput.parse(await readJson(event));
 		if (source.kind === 'file') {
+			// Also starts over on a source that is already extracted.
 			const job = await enqueueFileIngest(
 				source,
 				modelId,
-				['uploading', 'failed', 'partial'],
+				['uploading', 'stored', 'failed', 'partial', 'ready'],
 				source.status === 'uploading'
 			);
 			return accepted({ jobId: job?.id });
 		}
 		if (source.status !== 'failed' && source.status !== 'partial')
-			error(409, 'This source cannot be retried yet.');
+			error(409, 'This source cannot be processed yet.');
 		const job = await enqueueMaterialJob(source, ['failed', 'partial'], 'recover', {
 			modelId,
 			finalize: true

@@ -1,10 +1,10 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { asc, eq } from 'drizzle-orm';
 import { claudeRun } from './claude';
 import { db, closeDatabase } from './db';
-import { jobs, materials, projects, sourceChunks } from './db/schema';
+import { assets, jobs, materials, projects, sourceChunks } from './db/schema';
 import { prepareSource } from './extract';
 import { ingest } from './jobs';
 import { materialDir, originalPath } from './storage';
@@ -138,6 +138,101 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Source ingestion', () => {
 			expect(agentic.prompt).toContain('choose tools yourself');
 			expect(agentic.prompt).not.toContain('prepared.json');
 			expect((await stored(odd.material.id)).material.status).toBe('ready');
+		} finally {
+			await closeDatabase();
+			await environment.restore();
+		}
+	});
+	it('stores cropped figures, exercise kinds and Markdown, and replaces an earlier extraction', async () => {
+		const environment = await useTestDatabase('figures');
+		const { data } = environment;
+		const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(32)]);
+		/** Claude reviews one page and crops one figure from it. */
+		const reviews = async (source: Awaited<ReturnType<typeof queue>>, figure: string) => {
+			vi.mocked(prepareSource).mockResolvedValueOnce({
+				type: 'review',
+				kind: 'pdf',
+				units: [{ locator: 'page:1', text: 'Cycle', image: 'pages/page-001.jpg' }]
+			});
+			vi.mocked(claudeRun).mockImplementationOnce(async () => {
+				await mkdir(join(source.workspace, 'files', 'figures'), { recursive: true });
+				await writeFile(join(source.workspace, 'files', figure), png);
+				await writeFile(
+					join(source.workspace, 'files', 'review-0-result.json'),
+					JSON.stringify({
+						pages: [
+							{
+								locator: 'page:1',
+								outcome: 'readable',
+								chunks: [
+									{ locator: 'page:1', text: `The cycle:\n\n![Cycle](figure:${figure})` },
+									{ locator: 'page:1#1', kind: 'exercise', text: '1. Who takes part?' }
+								],
+								assets: [
+									{ path: figure, label: 'Cycle', mimeType: 'text/plain', locator: 'page:1' }
+								],
+								notes: ''
+							}
+						]
+					})
+				);
+				return { text: 'Done', stderr: '' };
+			});
+			await source.run();
+		};
+		try {
+			vi.mocked(claudeRun).mockReset();
+			const first = await queue(data, 'script.pdf', '%PDF-1.7');
+			await reviews(first, 'figures/aaaa1111.png');
+			const [asset] = await db()
+				.select()
+				.from(assets)
+				.where(eq(assets.materialId, first.material.id));
+			// The type comes from the file, and the text now names the stored asset.
+			expect(asset).toMatchObject({ label: 'Cycle', mimeType: 'image/png', locator: 'page:1' });
+			expect(await readFile(asset.path)).toEqual(png);
+			const rows = await db()
+				.select({ kind: sourceChunks.kind, text: sourceChunks.text })
+				.from(sourceChunks)
+				.where(eq(sourceChunks.materialId, first.material.id))
+				.orderBy(asc(sourceChunks.ordinal));
+			expect(rows).toEqual([
+				{ kind: 'text', text: `The cycle:\n\n![Cycle](asset:${asset.id})` },
+				{ kind: 'exercise', text: '1. Who takes part?' }
+			]);
+			expect((await stored(first.material.id)).material.contentFormat).toBe('markdown');
+
+			// Processing the source again replaces the figure and removes the old file.
+			const [again] = await db()
+				.insert(jobs)
+				.values({
+					projectId: first.material.projectId,
+					materialId: first.material.id,
+					kind: 'ingest',
+					queue: 'background',
+					status: 'running',
+					leaseOwner: 'test-worker',
+					payload: { modelId: 'default' }
+				})
+				.returning();
+			const workspace = join(data, 'jobs', again.id);
+			await mkdir(join(workspace, 'files'), { recursive: true });
+			await reviews(
+				{
+					...first,
+					job: again,
+					workspace,
+					run: () => ingest(again, workspace, AbortSignal.timeout(10_000), () => {})
+				},
+				'figures/bbbb2222.png'
+			);
+			const after = await db()
+				.select()
+				.from(assets)
+				.where(eq(assets.materialId, first.material.id));
+			expect(after).toHaveLength(1);
+			expect(after[0].id).not.toBe(asset.id);
+			expect(await readdir(join(materialDir(first.material.id), 'assets'))).toEqual([after[0].id]);
 		} finally {
 			await closeDatabase();
 			await environment.restore();

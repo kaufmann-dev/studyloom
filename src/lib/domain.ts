@@ -13,6 +13,8 @@ const nonBlank = (schema: z.ZodString, message: string) =>
 		.refine((value) => value.trim().length > 0, message);
 const modelId = z.string().min(1).max(160).default(DEFAULT_MODEL);
 export const modelInput = z.object({ modelId });
+/** Starting extraction is optional: a stored source can be processed later. */
+export const processInput = modelInput.extend({ process: z.boolean().default(true) });
 export const projectInput = z.object({
 	name: nonBlank(z.string().max(160), 'Project name is required.'),
 	lecturerIds: z
@@ -404,10 +406,22 @@ export const answersSchema = z.object({
 		.min(1)
 		.max(50)
 });
+/** What a piece of extracted text is: teaching text, a task for the learner, or its answer key. */
+export const CHUNK_KINDS = ['text', 'exercise', 'solution'] as const;
+export type ChunkKind = (typeof CHUNK_KINDS)[number];
 export const chunkResultSchema = z.object({
 	locator: nonBlank(z.string().max(300), 'A source locator is required.'),
+	kind: z.enum(CHUNK_KINDS).default('text'),
 	text: nonBlank(z.string().max(60000), 'Readable source text is required.')
 });
+/** The sources a job works from, frozen when it was queued: their text and their figures. */
+export type Snapshot = {
+	id: string;
+	name: string;
+	chunks: { locator: string; text: string; kind: ChunkKind }[];
+	/** Image assets of the source; `id` is what an `asset:` reference in the text names. */
+	figures: { id: string; label: string; locator: string; mimeType: string }[];
+}[];
 export const ingestionSchema = z
 	.object({
 		status: z.enum(['ready', 'partial', 'unreadable']),
@@ -528,12 +542,15 @@ export interface Material {
 	filename: string;
 	mimeType: string;
 	kind: 'file' | 'recording';
-	status: 'uploading' | 'processing' | 'ready' | 'partial' | 'failed' | 'recording' | 'paused';
+	status:
+		'uploading' | 'stored' | 'processing' | 'ready' | 'partial' | 'failed' | 'recording' | 'paused';
 	size: number;
 	receivedBytes: number;
 	durationMs: number;
 	/** Where a web page source was downloaded from; null for uploads and recordings. */
 	sourceUrl: string | null;
+	/** Markdown when Claude extracted the source, plain for text and transcripts stored as they came. */
+	contentFormat: 'plain' | 'markdown';
 	notes: string;
 	createdAt: string;
 	updatedAt: string;
@@ -542,6 +559,7 @@ export interface Material {
 export interface MaterialCounts {
 	chunks: number;
 	figures: number;
+	exercises: number;
 }
 /** A source as the project overview lists it. */
 export interface ProjectMaterial extends Material {
@@ -552,6 +570,7 @@ export interface SourceChunk {
 	materialId: string;
 	ordinal: number;
 	locator: string;
+	kind: ChunkKind;
 	text: string;
 }
 export interface TranscriptTurn {

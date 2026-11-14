@@ -6,27 +6,36 @@
 	import { MediaQuery } from 'svelte/reactivity';
 	import { toast } from 'svelte-sonner';
 	import { Copy, Download, ExternalLink, FileSearch, RefreshCw, Trash2 } from '@lucide/svelte';
-	import type { MaterialDetails } from '#lib/domain.js';
+	import type { ChunkKind, MaterialDetails } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import * as Resizable from '#lib/components/ui/resizable/index.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { createPoller } from '#lib/polling.js';
 	import { getProject } from '#lib/project.svelte.js';
-	import { STATUS_LABELS, canRetry, playingTime, sourceType } from '#lib/sources.js';
+	import { STATUS_LABELS, playingTime, processAction, sourceType } from '#lib/sources.js';
 	import { api, copyText, downloadText, errorText, fileSize, plural } from '#lib/ui.js';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import ErrorAlert from './ErrorAlert.svelte';
+	import Markdown from './Markdown.svelte';
 
 	/** One source: its original beside what was extracted from it. */
 	let { materialId, locator = '' }: { materialId: string; locator?: string } = $props();
 	const project = getProject();
 	const PENDING = ['uploading', 'processing', 'recording', 'paused'];
+	const KIND_FILTERS: { value: ChunkKind | 'all'; label: string }[] = [
+		{ value: 'all', label: 'All' },
+		{ value: 'text', label: 'Text' },
+		{ value: 'exercise', label: 'Exercises' },
+		{ value: 'solution', label: 'Solutions' }
+	];
 	const wide = new MediaQuery('min-width: 1024px');
 	let data = $state.raw<MaterialDetails | null>(null);
 	let error = $state('');
 	let busy = $state(false);
 	let confirmingDelete = $state(false);
 	let tab = $state('');
+	/** Which kind of extracted text is listed. */
+	let kind = $state<ChunkKind | 'all'>('all');
 	/** The PDF page the original shows; 0 leaves the viewer where it is. */
 	let pdfPage = $state(0);
 	let media: HTMLMediaElement | undefined;
@@ -34,6 +43,14 @@
 	let material = $derived(data?.material);
 	/** The same source as the project lists it, which knows how much was extracted. */
 	let listed = $derived(project.materials.find((item) => item.id === materialId));
+	let action = $derived(listed ? processAction(listed) : '');
+	let hasKinds = $derived(data?.chunks.some((chunk) => chunk.kind !== 'text') ?? false);
+	// A cited passage is always listed, whatever the filter says.
+	let shown = $derived(
+		data?.chunks.filter(
+			(chunk) => kind === 'all' || chunk.kind === kind || chunk.locator === locator
+		) ?? []
+	);
 	let originalReady = $derived(
 		material
 			? material.kind === 'file'
@@ -105,10 +122,10 @@
 			{ reset: false }
 		);
 	}
-	async function retry() {
+	async function process() {
 		busy = true;
 		try {
-			await api(`/api/materials/${materialId}/retry`, {
+			await api(`/api/materials/${materialId}/process`, {
 				body: { modelId: project.processingModel }
 			});
 			await Promise.all([project.refresh(), poller.run()]);
@@ -152,8 +169,20 @@
 
 {#snippet extracted(details: MaterialDetails)}
 	{#if details.chunks.length}
+		{#if hasKinds}
+			<div class="mb-5 flex flex-wrap gap-1" role="group" aria-label="Show">
+				{#each KIND_FILTERS as filter (filter.value)}
+					<Button
+						variant={kind === filter.value ? 'secondary' : 'ghost'}
+						size="sm"
+						aria-pressed={kind === filter.value}
+						onclick={() => (kind = filter.value)}>{filter.label}</Button
+					>
+				{/each}
+			</div>
+		{/if}
 		<div class="space-y-6">
-			{#each details.chunks as chunk (chunk.id)}
+			{#each shown as chunk (chunk.id)}
 				{@const page = preview === 'pdf' ? pageOf(chunk.locator) : 0}
 				<section
 					data-locator={chunk.locator}
@@ -161,7 +190,9 @@
 					class={['scroll-mt-5', locator === chunk.locator && 'border-l-2 border-primary pl-4']}
 				>
 					<div class="mb-2 flex items-center gap-2">
-						<h3 class="text-xs font-semibold text-muted-foreground">{chunk.locator}</h3>
+						<h3 class="text-xs font-semibold text-muted-foreground">
+							{chunk.locator}{chunk.kind === 'text' ? '' : ` · ${chunk.kind}`}
+						</h3>
 						{#if page}
 							<Button
 								variant="ghost"
@@ -175,7 +206,11 @@
 							</Button>
 						{/if}
 					</div>
-					<p class="text-sm leading-relaxed break-words whitespace-pre-wrap">{chunk.text}</p>
+					{#if details.material.contentFormat === 'markdown'}
+						<Markdown text={chunk.text} />
+					{:else}
+						<p class="text-sm leading-relaxed break-words whitespace-pre-wrap">{chunk.text}</p>
+					{/if}
 				</section>
 			{/each}
 		</div>
@@ -293,11 +328,9 @@
 					<Download />Text
 				</Button>
 			{/if}
-			{#if listed && canRetry(listed)}
-				<Button variant="ghost" size="sm" disabled={busy} onclick={retry}>
-					<RefreshCw />{material.status === 'uploading'
-						? 'Continue processing'
-						: 'Retry processing'}
+			{#if action}
+				<Button variant="ghost" size="sm" disabled={busy} onclick={process}>
+					<RefreshCw />{action}
 				</Button>
 			{/if}
 			<Button variant="ghost" size="sm" onclick={() => (confirmingDelete = true)}>

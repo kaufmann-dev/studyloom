@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { and, eq, inArray, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { db, type Transaction } from '../db';
 import * as t from '../db/schema';
 import { idSchema } from '../../domain';
@@ -68,6 +68,17 @@ export async function enqueueMaterialJob(
 	try {
 		return await db().transaction(async (tx) => {
 			await lockProject(tx, source.projectId);
+			// A job that reads this source's text or figures must finish before they are replaced.
+			if (
+				await hasActiveJob(
+					tx,
+					and(
+						eq(t.jobs.projectId, source.projectId),
+						sql`jsonb_exists(${t.jobs.payload} -> 'materialIds', ${source.id})`
+					)!
+				)
+			)
+				error(409, 'Wait until the jobs that use this source are finished.');
 			const [changed] = await tx
 				.update(t.materials)
 				.set({ status: 'processing', updatedAt: new Date() })
@@ -81,7 +92,11 @@ export async function enqueueMaterialJob(
 					materialId: source.id,
 					kind,
 					queue: 'background',
-					payload
+					// An extraction that exists stays valid until the new one is saved.
+					payload:
+						source.status === 'ready' || source.status === 'partial'
+							? { ...payload, previous: { status: source.status, notes: source.notes } }
+							: payload
 				})
 				.returning();
 			return job;

@@ -180,7 +180,12 @@ describe('source and tool boundaries', () => {
 	});
 	it('requires citations and quotes to resolve against selected source snapshots', () => {
 		const snapshot = [
-			{ id, name: 'Course', chunks: [{ locator: 'page:1', text: 'Evidence supports A.' }] }
+			{
+				id,
+				name: 'Course',
+				chunks: [{ locator: 'page:1', text: 'Evidence supports A.', kind: 'text' as const }],
+				figures: []
+			}
 		];
 		expect(() => validateCitations([citation], snapshot)).not.toThrow();
 		expect(() => validateCitations([{ ...citation, locator: 'page:2' }], snapshot)).toThrow(

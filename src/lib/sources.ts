@@ -2,6 +2,7 @@ import type { Material, ProjectMaterial } from './domain';
 
 export const STATUS_LABELS: Record<Material['status'], string> = {
 	uploading: 'Upload incomplete',
+	stored: 'Not processed',
 	processing: 'Processing',
 	ready: 'Ready',
 	partial: 'Partly readable',
@@ -26,13 +27,20 @@ export function sourceType(material: Material): string {
 	return 'File';
 }
 
-/** Whether processing can be started again: after a failure, a partial result or a stalled upload. */
-export function canRetry(material: ProjectMaterial) {
-	return (
-		material.status === 'failed' ||
-		(material.status === 'partial' && material.counts.chunks > 0) ||
-		(material.status === 'uploading' && material.receivedBytes === material.size)
-	);
+/**
+ * What processing can do for a file source now: start (a stored file or a finished upload), try
+ * again after a failure, or redo an extraction that exists. Recordings are saved, not processed.
+ */
+export function processAction(material: ProjectMaterial) {
+	if (material.kind !== 'file') {
+		// A recording whose final save failed can be saved again.
+		return material.status === 'failed' || material.status === 'partial' ? 'Retry saving' : '';
+	}
+	if (material.status === 'stored') return 'Process';
+	if (material.status === 'uploading')
+		return material.receivedBytes === material.size ? 'Continue processing' : '';
+	if (material.status === 'failed') return 'Retry processing';
+	return material.status === 'ready' || material.status === 'partial' ? 'Reprocess' : '';
 }
 
 /** A playing time such as "4:07" or "1:02:45". */

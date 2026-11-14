@@ -11,8 +11,15 @@
 	let {
 		projectId,
 		modelId,
+		process = true,
 		onSaved
-	}: { projectId: string; modelId: string; onSaved: () => void | Promise<void> } = $props();
+	}: {
+		projectId: string;
+		modelId: string;
+		/** Whether extraction starts right after the download or waits until it is asked for. */
+		process?: boolean;
+		onSaved: () => void | Promise<void>;
+	} = $props();
 	const editor = superForm(defaults({ url: '' }, zod4(webSourceInput)), {
 		validators: zod4Client(webSourceInput),
 		SPA: true,
@@ -29,7 +36,9 @@
 		error = '';
 		try {
 			// The server downloads the page first, so a bad address is reported here.
-			await api(`/api/projects/${projectId}/web-sources`, { body: { url: $form.url, modelId } });
+			await api(`/api/projects/${projectId}/web-sources`, {
+				body: { url: $form.url, modelId, process }
+			});
 			editor.reset();
 			await onSaved();
 		} catch (cause) {

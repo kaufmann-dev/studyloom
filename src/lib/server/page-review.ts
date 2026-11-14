@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ingestionSchema } from '../domain';
 import type { Ingestion, Unit } from './extract';
+import { figureReferences } from './figures';
 
 export const pageReviewSchema = z.object({
 	pages: z
@@ -15,6 +16,20 @@ export const pageReviewSchema = z.object({
 		)
 		.max(8)
 });
+
+/**
+ * What is wrong between a text's figure references and the declared assets, if anything: every
+ * reference needs its asset and every asset must be shown where it belongs.
+ */
+export function figureProblem(chunks: { text: string }[], assets: { path: string }[]) {
+	const referenced = chunks.flatMap((chunk) => figureReferences(chunk.text));
+	const declared = assets.map((asset) => asset.path);
+	if (new Set(declared).size !== declared.length) return 'A figure is listed in assets twice.';
+	const missing = referenced.find((path) => !declared.includes(path));
+	if (missing) return `The text refers to figure:${missing}, which is not listed in assets.`;
+	const unused = declared.find((path) => !referenced.includes(path));
+	if (unused) return `The asset ${unused} is not referenced as ![label](figure:${unused}).`;
+}
 
 export function validatePages(value: unknown, units: Unit[]) {
 	const result = pageReviewSchema.parse(value);
@@ -31,6 +46,8 @@ export function validatePages(value: unknown, units: Unit[]) {
 			throw new Error('Invalid page locator.');
 		if (new Set(page.chunks.map((c) => c.locator)).size !== page.chunks.length)
 			throw new Error('Duplicate chunk locator.');
+		const problem = figureProblem(page.chunks, page.assets);
+		if (problem) throw new Error(`${unit.locator}: ${problem}`);
 		if ((page.outcome === 'blank' || page.outcome === 'unreadable') && page.chunks.length)
 			throw new Error('Unreadable/blank page has chunks.');
 		if (page.outcome === 'readable' && !page.chunks.length)

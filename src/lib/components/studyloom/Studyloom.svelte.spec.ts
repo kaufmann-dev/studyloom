@@ -152,7 +152,11 @@ describe('WebSource', () => {
 			'/api/projects/project-1/web-sources',
 			expect.objectContaining({
 				method: 'POST',
-				body: JSON.stringify({ url: 'https://example.com/article', modelId: 'model-1' })
+				body: JSON.stringify({
+					url: 'https://example.com/article',
+					modelId: 'model-1',
+					process: true
+				})
 			})
 		);
 		await expect.element(page.getByLabelText('Web page')).toHaveValue('');

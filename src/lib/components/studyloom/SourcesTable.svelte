@@ -16,12 +16,13 @@
 	} from '@lucide/svelte';
 	import { isActiveJob, type ProjectMaterial } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
+	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import * as InputGroup from '#lib/components/ui/input-group/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
 	import { getProject } from '#lib/project.svelte.js';
-	import { STATUS_LABELS, canRetry, playingTime, sourceType } from '#lib/sources.js';
+	import { STATUS_LABELS, playingTime, processAction, sourceType } from '#lib/sources.js';
 	import { api, dateLabel, errorText, fileSize, plural } from '#lib/ui.js';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 
@@ -39,6 +40,10 @@
 	let filter = $state('');
 	let busy = $state('');
 	let deleting = $state.raw<ProjectMaterial | null>(null);
+	/** Rows ticked for processing in one go. */
+	let ticked = $state<string[]>([]);
+	let processable = $derived(project.materials.filter((material) => processAction(material)));
+	let chosen = $derived(processable.filter((material) => ticked.includes(material.id)));
 
 	const sortValue: Record<SortKey, (material: ProjectMaterial) => string | number> = {
 		name: (material) => material.name.toLowerCase(),
@@ -88,6 +93,27 @@
 			busy = '';
 		}
 	}
+	const process = (material: ProjectMaterial) =>
+		api(`/api/materials/${material.id}/process`, { body: { modelId: project.processingModel } });
+	function tick(id: string, checked: boolean) {
+		ticked = checked ? [...ticked, id] : ticked.filter((value) => value !== id);
+	}
+	/** Queues every ticked source; one that cannot start is reported and the rest go on. */
+	async function processChosen() {
+		busy = 'all';
+		const failures: string[] = [];
+		for (const material of chosen) {
+			try {
+				await process(material);
+			} catch (cause) {
+				failures.push(`${material.name}: ${errorText(cause)}`);
+			}
+		}
+		ticked = [];
+		busy = '';
+		if (failures.length) toast.error(failures.join('\n'));
+		await project.refresh();
+	}
 	async function remove() {
 		const material = deleting;
 		if (!material) return;
@@ -102,6 +128,11 @@
 		<h2 id="sources-heading" class="text-sm font-semibold">
 			Sources <span class="font-normal text-muted-foreground">({project.materials.length})</span>
 		</h2>
+		{#if chosen.length}
+			<Button size="sm" class="ml-auto" disabled={busy === 'all'} onclick={processChosen}>
+				<RefreshCw />Process {chosen.length} selected
+			</Button>
+		{/if}
 		{#if project.materials.length > 1}
 			<InputGroup.Root class="w-full sm:w-64">
 				<InputGroup.Addon><Search /></InputGroup.Addon>
@@ -127,6 +158,16 @@
 			<Table.Root>
 				<Table.Header>
 					<Table.Row>
+						<Table.Head class="w-8">
+							<Checkbox
+								aria-label="Select all sources that can be processed"
+								disabled={!processable.length}
+								checked={processable.length > 0 && chosen.length === processable.length}
+								indeterminate={chosen.length > 0 && chosen.length < processable.length}
+								onCheckedChange={(checked) =>
+									(ticked = checked ? processable.map((material) => material.id) : [])}
+							/>
+						</Table.Head>
 						{#each COLUMNS as column (column.key)}
 							<Table.Head
 								class={[column.numeric && 'text-right']}
@@ -157,7 +198,16 @@
 				<Table.Body>
 					{#each rows as material (material.id)}
 						{@const progress = material.status === 'processing' ? progressOf(material) : ''}
+						{@const action = processAction(material)}
 						<Table.Row>
+							<Table.Cell>
+								<Checkbox
+									aria-label={`Select ${material.name} for processing`}
+									disabled={!action}
+									checked={ticked.includes(material.id)}
+									onCheckedChange={(checked) => tick(material.id, checked)}
+								/>
+							</Table.Cell>
 							<Table.Cell class="max-w-[28rem] min-w-56 whitespace-normal">
 								<a
 									href={detail(material)}
@@ -199,9 +249,13 @@
 							</Table.Cell>
 							<Table.Cell class="whitespace-nowrap text-muted-foreground">
 								{#if material.counts.chunks}
-									{plural(material.counts.chunks, 'section')}{material.counts.figures
-										? ` · ${plural(material.counts.figures, 'figure')}`
-										: ''}
+									{[
+										plural(material.counts.chunks, 'section'),
+										...(material.counts.figures ? [plural(material.counts.figures, 'figure')] : []),
+										...(material.counts.exercises
+											? [plural(material.counts.exercises, 'exercise')]
+											: [])
+									].join(' · ')}
 								{:else}
 									–
 								{/if}
@@ -225,16 +279,14 @@
 										<DropdownMenu.Item onSelect={() => goto(detail(material))}>
 											<FileText />Open
 										</DropdownMenu.Item>
-										{#if canRetry(material)}
+										{#if action}
 											<DropdownMenu.Item
 												onSelect={() =>
-													act(material, `/api/materials/${material.id}/retry`, {
+													act(material, `/api/materials/${material.id}/process`, {
 														modelId: project.processingModel
 													})}
 											>
-												<RefreshCw />{material.status === 'uploading'
-													? 'Continue processing'
-													: 'Retry processing'}
+												<RefreshCw />{action}
 											</DropdownMenu.Item>
 										{/if}
 										{#if material.kind === 'recording' && material.status === 'paused'}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assemblePages, validatePages, pageBatches } from './page-review';
+import { assemblePages, figureProblem, validatePages, pageBatches } from './page-review';
 const unit = { locator: 'page:121', text: 'table', image: 'pages/page-121.jpg' };
 const page = {
 	locator: unit.locator,
@@ -8,6 +8,27 @@ const page = {
 	assets: [],
 	notes: ''
 };
+describe('figure references', () => {
+	const figure = { path: 'figures/ab12cd34.png', label: 'Cycle', mimeType: 'image/png' };
+	const text = 'The cycle:\n\n![Cycle](figure:figures/ab12cd34.png)\n\nMoney flows in a circle.';
+	it('accepts a figure that is declared and shown', () => {
+		expect(figureProblem([{ text }], [figure])).toBeUndefined();
+		const withFigure = {
+			...page,
+			chunks: [{ locator: unit.locator, text }],
+			assets: [{ ...figure, locator: unit.locator }]
+		};
+		expect(validatePages({ pages: [withFigure] }, [unit])[0].assets).toHaveLength(1);
+	});
+	it('rejects a reference without its asset and an asset nobody shows', () => {
+		expect(figureProblem([{ text }], [])).toContain('not listed in assets');
+		expect(figureProblem([{ text: 'No picture.' }], [figure])).toContain('not referenced');
+		expect(figureProblem([{ text }], [figure, figure])).toContain('twice');
+		expect(() =>
+			validatePages({ pages: [{ ...page, chunks: [{ locator: unit.locator, text }] }] }, [unit])
+		).toThrow('page:121');
+	});
+});
 describe('page review validation', () => {
 	it('retains page-owned tables', () =>
 		expect(assemblePages(validatePages({ pages: [page] }, [unit])).status).toBe('ready'));

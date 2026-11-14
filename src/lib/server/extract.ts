@@ -152,7 +152,7 @@ export function textSections(text: string) {
 		current = current ? `${current}\n\n${rest}` : rest;
 	}
 	push();
-	return parts.map((part, i) => ({ locator: `part:${i + 1}`, text: part }));
+	return parts.map((part, i) => ({ locator: `part:${i + 1}`, kind: 'text' as const, text: part }));
 }
 /** A transcript turn as a citable chunk, located by its time span in milliseconds. */
 export function transcriptChunk(turn: {
@@ -163,6 +163,7 @@ export function transcriptChunk(turn: {
 }) {
 	return {
 		locator: `time:${turn.startMs}-${turn.endMs}`,
+		kind: 'text' as const,
 		text: (turn.speaker ? `[${turn.speaker}] ` : '') + turn.text
 	};
 }

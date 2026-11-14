@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { ClientError, dataDir, safeError } from './config';
 import { runCommand } from './commands';
 import { transcribeFile } from './elevenlabs';
+import { cropImage } from './figures';
 import { scopedFile } from './storage';
 import { DEFAULT_MODEL, type ClaudeModel, type ClaudeStatus } from '../domain';
 
@@ -245,6 +246,28 @@ export function workspaceTools(jobDir: string, signal: AbortSignal, viewed?: Set
 						viewed?.add(file);
 						return {
 							content: [{ type: 'image', mimeType, data }]
+						};
+					})
+			),
+			tool(
+				'crop_image',
+				'Cut a figure out of a workspace image such as a page render. x, y, width and height are fractions (0 to 1) of the image, measured from its top-left corner. The crop is saved as a new PNG under figures/ and returned with its path, so you can check it: crop again with a corrected box when the figure is cut off or includes surrounding text.',
+				{
+					path: z.string(),
+					x: z.number().min(0).max(0.99),
+					y: z.number().min(0).max(0.99),
+					width: z.number().min(0.01).max(1),
+					height: z.number().min(0.01).max(1)
+				},
+				({ path, ...box }) =>
+					attempt(async () => {
+						// A crop is not a look at the whole page, so it does not count as viewing it.
+						const crop = await cropImage(jobDir, path, box, signal);
+						return {
+							content: [
+								{ type: 'text', text: `Saved ${crop.path}` },
+								{ type: 'image', mimeType: 'image/png', data: crop.data.toString('base64') }
+							]
 						};
 					})
 			),

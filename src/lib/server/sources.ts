@@ -33,7 +33,7 @@ async function storeReadySource(
 		filename: string;
 		mimeType: string;
 		original: string;
-		sections: { locator: string; text: string }[];
+		sections: ReturnType<typeof textSections>;
 		notes: string;
 	}
 ) {
@@ -87,13 +87,13 @@ export function addPastedText(projectId: string, input: z.infer<typeof pastedTex
 }
 
 /**
- * Downloads a web page, keeps the copy as the source's original and queues extraction, so it is
- * read exactly like an upload. The download happens first: a bad address fails before any
- * source exists.
+ * Downloads a web page, keeps the copy as the source's original and, unless processing is put
+ * off, queues extraction, so it is read exactly like an upload. The download happens first: a bad
+ * address fails before any source exists.
  */
 export async function addWebSource(
 	projectId: string,
-	input: z.infer<typeof webSourceInput> & { modelId: string }
+	input: z.infer<typeof webSourceInput> & { modelId: string; process: boolean }
 ) {
 	const project = await findProject(projectId);
 	await validateModel(input.modelId);
@@ -113,12 +113,13 @@ export async function addWebSource(
 					filename: page.filename,
 					mimeType: page.mimeType,
 					kind: 'file',
-					status: 'processing',
+					status: input.process ? 'processing' : 'stored',
 					size: page.body.length,
 					receivedBytes: page.body.length,
 					sourceUrl: page.url
 				})
 				.returning();
+			if (!input.process) return { material, job: undefined };
 			const [job] = await tx
 				.insert(t.jobs)
 				.values({

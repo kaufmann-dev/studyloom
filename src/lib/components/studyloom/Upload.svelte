@@ -7,8 +7,15 @@
 	let {
 		projectId,
 		modelId,
+		process = true,
 		onSaved
-	}: { projectId: string; modelId: string; onSaved: () => void | Promise<void> } = $props();
+	}: {
+		projectId: string;
+		modelId: string;
+		/** Whether extraction starts right after the upload or waits until it is asked for. */
+		process?: boolean;
+		onSaved: () => void | Promise<void>;
+	} = $props();
 	let input: HTMLInputElement | undefined;
 	let busy = $state(false);
 	let progress = $state('');
@@ -16,8 +23,13 @@
 	// The source in flight; it survives a failure so the upload can resume or be discarded.
 	let pending = $state.raw<PendingUpload | null>(null);
 
-	/** Sends what is left of the pending upload, then queues it for processing. */
-	async function finish(upload: PendingUpload, processingModel: string) {
+	const done = (processNow: boolean) =>
+		processNow
+			? 'Upload complete. Processing your materials…'
+			: 'Upload complete. Process the materials when you are ready.';
+
+	/** Sends what is left of the pending upload, then queues it for processing or just stores it. */
+	async function finish(upload: PendingUpload, processingModel: string, processNow: boolean) {
 		const sent = await sendChunks(
 			upload,
 			(sequence) => `/api/materials/${upload.id}/chunks/${sequence}`,
@@ -26,7 +38,9 @@
 				progress = `${next.file.name} · ${uploadPercent(next)}%`;
 			}
 		);
-		await api(`/api/materials/${sent.id}/complete`, { body: { modelId: processingModel } });
+		await api(`/api/materials/${sent.id}/complete`, {
+			body: { modelId: processingModel, process: processNow }
+		});
 		pending = null;
 		await onSaved();
 	}
@@ -44,8 +58,9 @@
 	}
 	function upload(files: FileList | null) {
 		if (!files?.length || busy) return;
-		// The model chosen when the upload starts applies to the whole selection.
+		// The choices made when the upload starts apply to the whole selection.
 		const processingModel = modelId;
+		const processNow = process;
 		return attempt(async () => {
 			for (const file of files) {
 				progress = `Preparing ${file.name}…`;
@@ -60,17 +75,17 @@
 					}
 				);
 				pending = { id: started.materialId, file, chunkSize: started.chunkSize, nextSequence: 0 };
-				await finish(pending, processingModel);
+				await finish(pending, processingModel, processNow);
 			}
-			progress = 'Upload complete. Processing your materials…';
+			progress = done(processNow);
 		});
 	}
 	function resumeUpload() {
 		const upload = pending;
 		if (!upload || busy) return;
 		return attempt(async () => {
-			await finish(upload, modelId);
-			progress = 'Upload complete. Processing your materials…';
+			await finish(upload, modelId, process);
+			progress = done(process);
 		});
 	}
 	function discardUpload() {
