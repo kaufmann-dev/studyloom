@@ -52,7 +52,7 @@ export async function hasActiveJob(tx: Transaction, scope: SQL) {
 	return Boolean(active);
 }
 
-function isUniqueViolation(value: unknown) {
+export function isUniqueViolation(value: unknown) {
 	return value && typeof value === 'object' && 'code' in value && value.code === '23505';
 }
 /**

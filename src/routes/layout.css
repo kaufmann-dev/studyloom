@@ -3,6 +3,7 @@
 @import 'shadcn-svelte/tailwind.css';
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/jetbrains-mono';
+@import 'katex/dist/katex.min.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -133,7 +134,7 @@
 	}
 }
 
-/* Model-written Markdown (chat answers and summaries). */
+/* Model-written Markdown (chat answers, summaries, extracted sources). */
 @layer components {
 	.markdown {
 		@apply text-sm leading-relaxed break-words;
@@ -188,5 +189,18 @@
 	}
 	.markdown hr {
 		@apply my-5;
+	}
+	.markdown img {
+		@apply my-3 max-h-[32rem] max-w-full border bg-white object-contain;
+	}
+	.markdown .katex-display {
+		@apply overflow-x-auto overflow-y-hidden py-1;
+	}
+	/* A diagram replaces its source once it is drawn. */
+	.markdown pre.mermaid.drawn {
+		@apply bg-transparent p-0 text-center;
+	}
+	.markdown pre.mermaid svg {
+		@apply inline-block h-auto max-w-full;
 	}
 }

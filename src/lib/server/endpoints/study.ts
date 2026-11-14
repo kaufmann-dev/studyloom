@@ -1,13 +1,13 @@
 import { error } from '@sveltejs/kit';
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
 import * as t from '../db/schema';
 import { answersSchema, idSchema, quizSchema, type StudyAnswer, type StudyRun } from '../../domain';
-import { gradeChoice, released } from '../jobs';
+import { gradeChoice, released, settleJobTarget } from '../jobs';
 import { gradingModel } from '../claude';
 import { audioFile } from '../audio';
 import { accepted, download, ok, readJson, type Handler } from './http';
-import { jobIsActive, lockProject, type Job } from './queries';
+import { isUniqueViolation, jobIsActive, lockProject, type Job } from './queries';
 
 // Job payloads and source snapshots stay on the server.
 export const publicJob = (job: Job) => ({
@@ -207,51 +207,33 @@ export const jobs: Handler = async ({ method, id, action }) => {
 				.set({ status: 'cancelled', progress: 'Cancelled', ...released() })
 				.where(and(eq(t.jobs.id, job.id), jobIsActive))
 				.returning({ id: t.jobs.id });
-			if (!cancelled) return;
-			if (job.materialId)
-				await tx
-					.update(t.materials)
-					.set({
-						status: job.kind === 'recover' ? 'paused' : 'failed',
-						notes: 'Processing was cancelled.',
-						updatedAt: new Date()
-					})
-					.where(eq(t.materials.id, job.materialId));
-			if (job.attemptId)
-				await tx
-					.update(t.attempts)
-					.set({ status: 'failed' })
-					.where(and(eq(t.attempts.id, job.attemptId), eq(t.attempts.status, 'grading')));
+			if (cancelled) await settleJobTarget(tx, job, 'cancelled', 'Processing was cancelled.');
 		});
 		return ok();
 	}
 	if (action === 'retry' && method === 'POST') {
 		if (job.status !== 'failed' && job.status !== 'cancelled')
 			error(409, 'Only failed or cancelled jobs can be retried.');
-		await db().transaction(async (tx) => {
-			const [retried] = await tx
-				.update(t.jobs)
-				.set({
-					status: 'queued',
-					error: null,
-					tries: 0,
-					progress: 'Waiting to retry',
-					...released()
-				})
-				.where(and(eq(t.jobs.id, job.id), inArray(t.jobs.status, ['failed', 'cancelled'])))
-				.returning({ id: t.jobs.id });
-			if (!retried) return;
-			if (job.materialId)
-				await tx
-					.update(t.materials)
-					.set({ status: 'processing', notes: '', updatedAt: new Date() })
-					.where(eq(t.materials.id, job.materialId));
-			if (job.attemptId)
-				await tx
-					.update(t.attempts)
-					.set({ status: 'grading' })
-					.where(and(eq(t.attempts.id, job.attemptId), ne(t.attempts.status, 'complete')));
-		});
+		try {
+			await db().transaction(async (tx) => {
+				const [retried] = await tx
+					.update(t.jobs)
+					.set({
+						status: 'queued',
+						error: null,
+						tries: 0,
+						progress: 'Waiting to retry',
+						...released()
+					})
+					.where(and(eq(t.jobs.id, job.id), inArray(t.jobs.status, ['failed', 'cancelled'])))
+					.returning({ id: t.jobs.id });
+				if (retried) await settleJobTarget(tx, job, 'retried');
+			});
+		} catch (cause) {
+			// Only one job per source may be active; a newer one is already working on it.
+			if (isUniqueViolation(cause)) error(409, 'This source is already being processed.');
+			throw cause;
+		}
 		return accepted({ jobId: job.id });
 	}
 };

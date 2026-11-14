@@ -500,6 +500,25 @@ describe('Markdown', () => {
 		expect(document.querySelector('.markdown a')?.getAttribute('rel')).toBe('noopener noreferrer');
 		expect((window as { hacked?: boolean }).hacked).toBeUndefined();
 	});
+	it('shows stored figures and formulas but no other image', async () => {
+		const asset = '11111111-1111-4111-8111-111111111111';
+		render(Markdown, {
+			text: `Rentability $r = \\frac{E}{K}$\n\n![Cycle](asset:${asset})\n\n![Job](/api/jobs/${asset})\n\n<img src="/api/jobs/${asset}/cancel">\n\n![Own](image:img01)`
+		});
+		await expect.poll(() => document.querySelector('.markdown img')).not.toBeNull();
+		const images = [...document.querySelectorAll('.markdown img')];
+		expect(images.map((image) => image.getAttribute('src'))).toEqual([`/api/assets/${asset}/file`]);
+		expect(images[0].getAttribute('alt')).toBe('Cycle');
+		expect(document.querySelector('.markdown .katex')).not.toBeNull();
+	});
+	it('resolves an output’s own images', async () => {
+		const outputId = '22222222-2222-4222-8222-222222222222';
+		render(Markdown, { text: 'Slide\n\n![Own](image:img01)', outputId });
+		await expect.poll(() => document.querySelector('.markdown img')).not.toBeNull();
+		expect(document.querySelector('.markdown img')?.getAttribute('src')).toBe(
+			`/api/outputs/${outputId}/images/img01`
+		);
+	});
 });
 
 describe('Library browser', () => {

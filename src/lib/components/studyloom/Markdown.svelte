@@ -1,30 +1,40 @@
-<script lang="ts" module>
+<script lang="ts">
 	import { browser } from '$app/env';
-	import DOMPurify from 'dompurify';
-	import { marked } from 'marked';
+	import { mode } from 'mode-watcher';
+	import type { Attachment } from 'svelte/attachments';
+	import { renderDiagrams, renderMarkdown } from '#lib/markdown.js';
 
-	// Links leave the app, and remote images are dropped so opening an answer never calls out.
-	if (browser)
-		DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-			if (node.tagName !== 'A') return;
-			node.setAttribute('target', '_blank');
-			node.setAttribute('rel', 'noopener noreferrer');
-		});
+	/**
+	 * Renders model-written Markdown: tables, formulas, diagrams and stored images. The HTML is
+	 * sanitised; without a DOM the text stays plain. `outputId` resolves an output's own images.
+	 */
+	let {
+		text,
+		class: className = '',
+		outputId
+	}: { text: string; class?: string; outputId?: string } = $props();
 
-	function render(text: string): string {
-		const html = marked.parse(text, { async: false, gfm: true, breaks: true });
-		return DOMPurify.sanitize(html, { USE_PROFILES: { html: true }, FORBID_TAGS: ['img'] });
+	let html = $derived(browser ? renderMarkdown(text, { outputId }) : '');
+
+	/** Draws the diagrams again whenever the text or the theme changes. */
+	function diagrams(rendered: string, dark: boolean): Attachment<HTMLElement> {
+		return (node) => {
+			const blocks = [...node.querySelectorAll<HTMLElement>('pre.mermaid')];
+			if (!rendered || !blocks.length) return;
+			let stale = false;
+			void renderDiagrams(blocks, dark, () => stale);
+			return () => {
+				stale = true;
+			};
+		};
 	}
 </script>
 
-<script lang="ts">
-	/** Renders model-written Markdown. The HTML is sanitised; without a DOM the text stays plain. */
-	let { text, class: className = '' }: { text: string; class?: string } = $props();
-</script>
-
 {#if browser}
-	<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised by DOMPurify in render() -->
-	<div class={['markdown', className]}>{@html render(text)}</div>
+	<div class={['markdown', className]} {@attach diagrams(html, mode.current === 'dark')}>
+		<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised by DOMPurify in renderMarkdown() -->
+		{@html html}
+	</div>
 {:else}
 	<p class={['whitespace-pre-wrap', className]}>{text}</p>
 {/if}

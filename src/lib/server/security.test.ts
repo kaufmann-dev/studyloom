@@ -189,6 +189,10 @@ describe('source and tool boundaries', () => {
 		expect(() => validateCitations([{ ...citation, quote: 'Invented' }], snapshot)).toThrow(
 			'citation'
 		);
+		// A quote may wrap differently than the chunk it was copied from.
+		expect(() =>
+			validateCitations([{ ...citation, quote: 'Evidence\n  supports A.' }], snapshot)
+		).not.toThrow();
 		const unknown = { ...citation, locator: 'page:9' };
 		expect(findInvalidCitation([citation, unknown], snapshot)).toEqual(unknown);
 		expect(findInvalidCitation([citation], snapshot)).toBeUndefined();
