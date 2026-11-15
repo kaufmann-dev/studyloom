@@ -11,6 +11,7 @@
 	} from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import { createPoller } from '#lib/polling.js';
+	import { quizMarkdown } from '#lib/quiz-export.js';
 	import { api, copyText, dateLabel, downloadText, errorText, plural } from '#lib/ui.js';
 	import Citations from './Citations.svelte';
 	import ErrorAlert from './ErrorAlert.svelte';
@@ -38,12 +39,7 @@
 	let exported = $derived.by(() => {
 		if (!data) return '';
 		const { title, quiz, content } = data.output;
-		if (!quiz) return content;
-		const questions = quiz.questions.map(
-			(q, index) =>
-				`## ${index + 1}. ${q.question}\n\n${q.options.map((option) => `- ${option}`).join('\n')}\n\nAnswer: ${q.correctAnswer}\n\n${q.explanation}`
-		);
-		return `# ${title}\n\n${questions.join('\n\n')}`;
+		return quiz ? quizMarkdown(title, quiz) : content;
 	});
 
 	const poller = createPoller(async (interaction) => {

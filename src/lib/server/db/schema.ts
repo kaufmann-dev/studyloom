@@ -11,7 +11,8 @@ import {
 	index,
 	uniqueIndex,
 	check,
-	primaryKey
+	primaryKey,
+	real
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
@@ -20,6 +21,7 @@ import type {
 	Citation,
 	FeedbackHeader,
 	JobKind,
+	QuestionAnswer,
 	Quiz,
 	Grade,
 	Repeat,
@@ -428,10 +430,11 @@ export const attempts = pgTable(
 		outputId: uuid('output_id')
 			.notNull()
 			.references(() => outputs.id, { onDelete: 'cascade' }),
-		answers: jsonb('answers').$type<{ questionId: string; value: string }[]>().notNull(),
+		answers: jsonb('answers').$type<QuestionAnswer[]>().notNull(),
 		grades: jsonb('grades').$type<Grade[]>().notNull().default([]),
-		score: integer('score'),
-		maxScore: integer('max_score').notNull(),
+		// Fields may carry half points.
+		score: real('score'),
+		maxScore: real('max_score').notNull(),
 		status: text('status').$type<'grading' | 'complete' | 'failed'>().notNull(),
 		createdAt: time('created_at')
 	},

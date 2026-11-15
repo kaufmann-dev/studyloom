@@ -323,42 +323,206 @@ export const citationSchema = z.object({
 	locator: z.string().max(300),
 	quote: z.string().max(2000).optional()
 });
+/** How much of the selected sources a generated study tool covers; its size follows from that. */
+export const COVERAGES = {
+	light: { label: 'Light', hint: 'The core ideas only' },
+	standard: { label: 'Standard', hint: 'Every major topic' },
+	comprehensive: { label: 'Comprehensive', hint: 'Every concept, formula and source exercise' }
+} as const;
+export type Coverage = keyof typeof COVERAGES;
+export const COVERAGE_NAMES = Object.keys(COVERAGES) as [Coverage, ...Coverage[]];
+/** What coverage means to the model that writes the study tool. */
+export const COVERAGE_BRIEFS: Record<Coverage, string> = {
+	light: 'Light coverage: only the core ideas a learner must not miss; leave details out.',
+	standard: 'Standard coverage: every major topic of the sources, without minor details.',
+	comprehensive:
+		'Comprehensive coverage: every concept, definition, formula and worked example of the sources, in the detail an exam demands.'
+};
+type Sized = 'audio' | 'session' | 'quiz' | 'lesson';
+/** Per kind and coverage: one unit per this many source characters, and the least and most units. */
+const SIZES: Record<Sized, Record<Coverage, [per: number, least: number, most: number]>> = {
+	// words
+	audio: { light: [400, 300, 900], standard: [150, 600, 2500], comprehensive: [60, 1000, 6000] },
+	// segments
+	session: { light: [15000, 3, 5], standard: [8000, 4, 9], comprehensive: [4000, 6, 16] },
+	// questions
+	quiz: { light: [6000, 5, 15], standard: [3000, 8, 40], comprehensive: [1500, 12, 120] },
+	// sections
+	lesson: { light: [8000, 3, 12], standard: [4000, 5, 40], comprehensive: [2000, 8, 120] }
+};
+export interface SourceStats {
+	/** Characters of extracted text in the selected sources. */
+	characters: number;
+	/** Exercises the sources themselves contain. */
+	exercises: number;
+}
+export function sourceStats(snapshot: Snapshot): SourceStats {
+	const chunks = snapshot.flatMap((source) => source.chunks);
+	return {
+		characters: chunks.reduce((sum, chunk) => sum + chunk.text.length, 0),
+		exercises: chunks.filter((chunk) => chunk.kind === 'exercise').length
+	};
+}
+/**
+ * The size a study tool should have: it grows with the sources and with the coverage. A
+ * comprehensive quiz is never smaller than the number of exercises the sources contain.
+ */
+export function coverageBudget(kind: Sized, coverage: Coverage, stats: SourceStats) {
+	const [per, least, most] = SIZES[kind][coverage];
+	const sized = Math.min(most, Math.max(least, Math.round(stats.characters / per)));
+	const target =
+		kind === 'quiz' && coverage === 'comprehensive' ? Math.max(sized, stats.exercises) : sized;
+	return { target, max: Math.ceil(target * 1.5) };
+}
+
+/** Field and option ids are written by the model and used as keys, so they stay simple. */
+const fieldId = z.string().regex(/^[a-z][a-z0-9_]{0,23}$/, 'Use a short lowercase id.');
+const points = z.number().min(0.5).max(10).default(1);
+const optionSchema = z.object({
+	id: fieldId,
+	text: z.string().min(1).max(2000),
+	/** Why this option is wrong, shown to a learner who chose it. */
+	why: z.string().max(600).optional()
+});
+/**
+ * One answer field of a question. A question holds any mix of them inside its text or the cells
+ * of a table, which is how matching, classification, yes/no matrices, true/false lists,
+ * calculation tables and cloze texts are all built. A new kind of field is one more branch here,
+ * one case in the grader and one input.
+ */
+export const fieldSchema = z.discriminatedUnion('type', [
+	/** One of several options. */
+	z.object({
+		id: fieldId,
+		type: z.literal('select'),
+		points,
+		display: z.enum(['dropdown', 'radio']),
+		options: z.array(optionSchema).min(2).max(12),
+		correct: fieldId
+	}),
+	/** Any number of several options, as checkboxes. */
+	z.object({
+		id: fieldId,
+		type: z.literal('multiselect'),
+		points,
+		options: z.array(optionSchema).min(2).max(30),
+		correct: z.array(fieldId).max(30)
+	}),
+	/** One cell that is marked or left empty. */
+	z.object({ id: fieldId, type: z.literal('toggle'), points, correct: z.boolean() }),
+	/** A word or short phrase; compared without case and outer spaces. */
+	z.object({
+		id: fieldId,
+		type: z.literal('text'),
+		points,
+		accepted: z.array(z.string().min(1).max(300)).min(1).max(10)
+	}),
+	z.object({
+		id: fieldId,
+		type: z.literal('number'),
+		points,
+		correct: z.number(),
+		tolerance: z.number().min(0).default(0),
+		unit: z.string().max(40).optional()
+	}),
+	/** Free text, graded by Claude against the model answer and rubric. */
+	z.object({
+		id: fieldId,
+		type: z.literal('essay'),
+		points,
+		modelAnswer: z.string().min(1).max(6000),
+		rubric: z.string().max(6000)
+	})
+]);
+export type QuestionField = z.infer<typeof fieldSchema>;
+/** `{{id}}` marks where a field sits in a question's text. */
+export const FIELD_PLACEHOLDER = /\{\{([a-z][a-z0-9_]{0,23})\}\}/g;
 export const questionSchema = z
 	.object({
 		id: z.string().min(1).max(80),
-		type: z.enum(['multiple_choice', 'written']),
-		question: z.string().min(1).max(6000),
-		options: z.array(z.string().min(1).max(2000)).max(8).default([]),
-		correctAnswer: z.string().min(1).max(6000),
-		rubric: z.string().min(1).max(6000),
+		/** Markdown holding every field's placeholder exactly once. */
+		body: z.string().min(1).max(12000),
+		fields: z.array(fieldSchema).min(1).max(60),
+		/** Markdown shown after answering. */
 		explanation: z.string().max(6000),
+		/** What the tutor says after the answer: why it is right, or what would have been right. */
+		feedback: z.object({ correct: z.string().max(600), incorrect: z.string().max(600) }),
+		/** The source exercise this question asks, if it was taken from the sources. */
+		sourceExercise: z.object({ materialId: idSchema, locator: z.string().max(300) }).optional(),
 		citations: z.array(citationSchema).min(1).max(20)
 	})
 	.superRefine((q, ctx) => {
-		if (
-			q.type === 'multiple_choice' &&
-			(q.options.length < 2 || !q.options.includes(q.correctAnswer))
-		)
-			ctx.addIssue({
-				code: 'custom',
-				message: 'Multiple-choice answers must exactly match an option.'
-			});
-		if (new Set(q.options).size !== q.options.length)
-			ctx.addIssue({ code: 'custom', message: 'Answer options must be distinct.' });
-		if (q.type === 'written' && q.options.length)
-			ctx.addIssue({ code: 'custom', message: 'Written questions cannot contain options.' });
+		const issue = (message: string) => ctx.addIssue({ code: 'custom', message });
+		const ids = q.fields.map((field) => field.id);
+		if (new Set(ids).size !== ids.length) issue('Field ids must be unique within a question.');
+		const placed = [...q.body.matchAll(FIELD_PLACEHOLDER)].map((match) => match[1]);
+		for (const id of ids)
+			if (placed.filter((value) => value === id).length !== 1)
+				issue(`The body must contain {{${id}}} exactly once.`);
+		const unknown = placed.find((id) => !ids.includes(id));
+		if (unknown) issue(`The body contains {{${unknown}}}, which is not a field.`);
+		for (const field of q.fields) {
+			if (field.type !== 'select' && field.type !== 'multiselect') continue;
+			const options = field.options.map((option) => option.id);
+			if (new Set(options).size !== options.length)
+				issue(`Option ids of ${field.id} must be unique.`);
+			const correct = field.type === 'select' ? [field.correct] : field.correct;
+			if (correct.some((id) => !options.includes(id)) || new Set(correct).size !== correct.length)
+				issue(`The correct answer of ${field.id} must name its options.`);
+		}
 	});
+/** How a question is answered, as offered when creating a quiz or lesson. */
+export const QUESTION_STYLES = {
+	choice: 'Multiple choice',
+	embedded: 'Embedded answers (dropdowns, tables, blanks)',
+	written: 'Written answer'
+} as const;
+export type QuestionStyle = keyof typeof QUESTION_STYLES;
+export const QUESTION_STYLE_NAMES = Object.keys(QUESTION_STYLES) as [
+	QuestionStyle,
+	...QuestionStyle[]
+];
+export function questionStyle(question: { fields: QuestionField[] }): QuestionStyle {
+	const { fields } = question;
+	if (fields.every((field) => field.type === 'essay')) return 'written';
+	const [only] = fields;
+	return fields.length === 1 && (only.type === 'select' || only.type === 'multiselect')
+		? 'choice'
+		: 'embedded';
+}
+/** An image an output shows: copied from a source figure or generated for it. */
+export const outputImageSchema = z.object({
+	id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+	origin: z.enum(['source', 'generated']),
+	label: z.string().max(200),
+	mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+	materialId: idSchema.optional(),
+	locator: z.string().max(300).optional()
+});
+export type OutputImage = z.infer<typeof outputImageSchema>;
 export const quizSchema = z
-	.object({ title: z.string().min(1).max(200), questions: z.array(questionSchema).min(1).max(50) })
+	.object({
+		title: z.string().min(1).max(200),
+		parts: z
+			.array(
+				z.object({
+					id: z.string().min(1).max(40),
+					title: z.string().min(1).max(200),
+					questions: z.array(questionSchema).min(1).max(200)
+				})
+			)
+			.min(1)
+			.max(60),
+		images: z.array(outputImageSchema).max(500).default([])
+	})
 	.superRefine((v, ctx) => {
-		if (new Set(v.questions.map((q) => q.id)).size !== v.questions.length)
+		const ids = v.parts.flatMap((part) => part.questions.map((question) => question.id));
+		if (new Set(ids).size !== ids.length)
 			ctx.addIssue({ code: 'custom', message: 'Question IDs must be unique.' });
 	});
-export const AUDIO_LENGTHS = {
-	short: { words: 450, parts: 2, label: 'Short (~3 min)' },
-	standard: { words: 1000, parts: 3, label: 'Standard (~7 min)' },
-	long: { words: 1700, parts: 4, label: 'Long (~12 min)' }
-} as const;
+/** All questions of a quiz, in order. */
+export const quizQuestions = (quiz: z.infer<typeof quizSchema>) =>
+	quiz.parts.flatMap((part) => part.questions);
 /** How an audio summary is spoken: one narrator, or a tutor explaining to a learner. */
 export const AUDIO_STYLES = {
 	narration: { label: 'Narration', speakers: ['narrator'] },
@@ -367,27 +531,24 @@ export const AUDIO_STYLES = {
 export type AudioStyle = keyof typeof AUDIO_STYLES;
 /** How a dialogue's speakers are named in its transcript; a narrator stays unnamed. */
 export const SPEAKER_LABELS: Record<string, string> = { tutor: 'Tutor', learner: 'Learner' };
-/** Spoken study sessions: how many parts. */
-export const SESSION_LENGTHS = {
-	short: { segments: 4, label: 'Short (~10 min)' },
-	standard: { segments: 6, label: 'Standard (~15 min)' },
-	long: { segments: 9, label: 'Long (~25 min)' }
-} as const;
 const elevenLabsId = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/, 'Choose a voice and model.');
 export const generationInput = z.object({
 	kind: z.enum(['summary', 'quiz', 'audio', 'session']),
 	materialIds: sourceSelection,
 	modelId,
-	questionCount: z.number().int().min(1).max(50).default(10),
-	questionMix: z.enum(['mixed', 'multiple_choice', 'written']).default('mixed'),
-	/** ElevenLabs voices and speech model; audio summaries only. */
+	/** Audio summaries, study sessions and quizzes. */
+	coverage: z.enum(COVERAGE_NAMES).default('standard'),
+	/** Quizzes only. */
+	questionStyles: z
+		.array(z.enum(QUESTION_STYLE_NAMES))
+		.min(1, 'Choose at least one kind of question.')
+		.max(QUESTION_STYLE_NAMES.length)
+		.default(QUESTION_STYLE_NAMES),
+	/** ElevenLabs voices and speech model; audio summaries and study sessions only. */
 	voiceId: elevenLabsId.or(z.literal('')).default(''),
 	learnerVoiceId: elevenLabsId.or(z.literal('')).default(''),
 	speechModelId: elevenLabsId.or(z.literal('')).default(''),
-	audioLength: z.enum(['short', 'standard', 'long']).default('short'),
-	audioStyle: z.enum(['narration', 'dialogue']).default('narration'),
-	/** Study sessions only. */
-	sessionLength: z.enum(['short', 'standard', 'long']).default('standard')
+	audioStyle: z.enum(['narration', 'dialogue']).default('narration')
 });
 export const chatInput = z.object({
 	conversationId: idSchema.optional(),
@@ -395,17 +556,19 @@ export const chatInput = z.object({
 	materialIds: sourceSelection,
 	modelId
 });
-export const answersSchema = z.object({
-	answers: z
-		.array(
-			z.object({
-				questionId: z.string().min(1),
-				value: nonBlank(z.string().max(12000), 'Answer is required.')
-			})
-		)
-		.min(1)
-		.max(50)
+/** What a learner entered: per field its option id, option ids, mark or text. */
+const fieldValue = z.union([
+	z.string().max(12000),
+	z.array(z.string().max(40)).max(30),
+	z.boolean()
+]);
+export type FieldValue = z.infer<typeof fieldValue>;
+export const questionAnswerSchema = z.object({
+	questionId: z.string().min(1).max(80),
+	values: z.record(z.string().max(24), fieldValue)
 });
+export type QuestionAnswer = z.infer<typeof questionAnswerSchema>;
+export const answersSchema = z.object({ answers: z.array(questionAnswerSchema).max(5000) });
 /** What a piece of extracted text is: teaching text, a task for the learner, or its answer key. */
 export const CHUNK_KINDS = ['text', 'exercise', 'solution'] as const;
 export type ChunkKind = (typeof CHUNK_KINDS)[number];
@@ -485,7 +648,7 @@ export const studySegmentSchema = z.object({
 export const studyPlanSchema = z.object({
 	title: z.string().min(1).max(200),
 	intro: z.string().trim().min(1).max(800),
-	segments: z.array(studySegmentSchema).min(2).max(12)
+	segments: z.array(studySegmentSchema).min(2).max(24)
 });
 export type StudyPlan = z.infer<typeof studyPlanSchema>;
 export const STUDY_VERDICTS = ['correct', 'partial', 'incorrect', 'none'] as const;
@@ -686,18 +849,28 @@ export interface StudyOutput {
 	modelId: string;
 	createdAt: string;
 }
+/** How one field of an answer was graded; `pending` waits for Claude to grade free text. */
+export interface FieldGrade {
+	fieldId: string;
+	state: 'correct' | 'partial' | 'incorrect' | 'pending';
+	score: number;
+	max: number;
+	/** The right answer in words, for display. */
+	expected: string;
+	/** Claude's comment on a written answer. */
+	feedback?: string;
+}
 export interface Grade {
 	questionId: string;
 	score: number;
 	maxScore: number;
-	feedback: string;
-	correctAnswer: string;
-	citations: Citation[];
+	state: FieldGrade['state'];
+	fields: FieldGrade[];
 }
 export interface QuizAttempt {
 	id: string;
 	outputId: string;
-	answers: { questionId: string; value: string }[];
+	answers: QuestionAnswer[];
 	grades: Grade[];
 	score: number | null;
 	maxScore: number;

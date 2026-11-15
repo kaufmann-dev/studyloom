@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { safeReturnTo, sessionAlive, hashToken } from './auth';
 import { claudeEnvironment } from './claude';
 import { scopedFile, wavHeader } from './storage';
-import { findInvalidCitation, validateCitations, gradeChoice, readArtifact } from './jobs';
+import { findInvalidCitation, validateCitations, readArtifact } from './jobs';
+import { gradeQuestion } from './grading';
 import { safeError } from './config';
 import {
 	answersSchema,
@@ -20,12 +21,21 @@ const id = '9c9aaee7-3c97-4ca8-8daa-da26beeeaa32';
 const citation = { materialId: id, locator: 'page:1', quote: 'Evidence' };
 const question = {
 	id: 'q1',
-	type: 'multiple_choice' as const,
-	question: 'Which?',
-	options: ['A', 'B'],
-	correctAnswer: 'A',
-	rubric: 'Correct choice',
+	body: 'Which?\n\n{{answer}}',
+	fields: [
+		{
+			id: 'answer',
+			type: 'select' as const,
+			display: 'radio' as const,
+			options: [
+				{ id: 'a', text: 'A' },
+				{ id: 'b', text: 'B' }
+			],
+			correct: 'a'
+		}
+	],
 	explanation: 'Evidence supports A.',
+	feedback: { correct: 'A is right.', incorrect: 'A would have been right.' },
 	citations: [citation]
 };
 describe('authentication boundaries', () => {
@@ -203,11 +213,20 @@ describe('source and tool boundaries', () => {
 		expect(findInvalidCitation([citation], snapshot)).toBeUndefined();
 	});
 	it('rejects ambiguous quiz options and scores choices on the server', () => {
-		const quiz = quizSchema.parse({ title: 'Quiz', questions: [question] });
-		expect(gradeChoice(quiz, [{ questionId: 'q1', value: 'A' }])[0].score).toBe(1);
-		expect(gradeChoice(quiz, [{ questionId: 'q1', value: 'B' }])[0].score).toBe(0);
+		const part = (questions: unknown[]) => ({ id: 'p01', title: 'Part', questions });
+		const quiz = quizSchema.parse({ title: 'Quiz', parts: [part([question])] });
+		const [parsed] = quiz.parts[0].questions;
+		expect(gradeQuestion(parsed, { answer: 'a' }).score).toBe(1);
+		expect(gradeQuestion(parsed, { answer: 'b' }).score).toBe(0);
+		const doubled = [...question.fields[0].options, { id: 'a', text: 'Again' }];
 		expect(() =>
-			quizSchema.parse({ title: 'Quiz', questions: [{ ...question, options: ['A', 'A'] }] })
+			quizSchema.parse({
+				title: 'Quiz',
+				parts: [part([{ ...question, fields: [{ ...question.fields[0], options: doubled }] }])]
+			})
 		).toThrow();
+		expect(() => quizSchema.parse({ title: 'Quiz', parts: [part([question, question])] })).toThrow(
+			'unique'
+		);
 	});
 });

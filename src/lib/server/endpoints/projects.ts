@@ -19,6 +19,7 @@ import { ClientError, maxUploadBytes, safeError } from '../config';
 import { removeAudioFiles } from '../audio';
 import { speechCatalog } from '../elevenlabs';
 import { sourceSnapshot } from '../jobs';
+import { removeOutputFiles } from '../outline';
 import { validateModel } from '../claude';
 import { addPastedText, addWebSource } from '../sources';
 import { removeMaterialFiles } from '../storage';
@@ -229,16 +230,17 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 				.select({ id: t.materials.id })
 				.from(t.materials)
 				.where(eq(t.materials.projectId, id));
-			const audio = await tx
+			// Generation jobs keep files under their own id: speech, plans, images.
+			const generated = await tx
 				.select({ id: t.jobs.id })
 				.from(t.jobs)
-				.where(and(eq(t.jobs.projectId, id), inArray(t.jobs.kind, ['audio', 'session'])));
+				.where(and(eq(t.jobs.projectId, id), inArray(t.jobs.kind, ['audio', 'session', 'quiz'])));
 			await tx.delete(t.projects).where(eq(t.projects.id, id));
-			return { sources, audio };
+			return { sources, generated };
 		});
 		for (const result of await Promise.allSettled([
 			...files.sources.map((source) => removeMaterialFiles(source.id)),
-			...files.audio.map((job) => removeAudioFiles(job.id))
+			...files.generated.flatMap((job) => [removeAudioFiles(job.id), removeOutputFiles(job.id)])
 		]))
 			if (result.status === 'rejected')
 				console.error('Project file cleanup failed:', safeError(result.reason));

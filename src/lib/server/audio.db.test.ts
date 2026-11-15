@@ -3,11 +3,20 @@ import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { db, closeDatabase } from './db';
-import { jobs, materials, outputs, projects, sourceChunks, studyAnswers } from './db/schema';
+import {
+	attempts,
+	jobs,
+	materials,
+	outputs,
+	projects,
+	sourceChunks,
+	studyAnswers
+} from './db/schema';
 import { silenceMp3 } from './audio';
 import { speak, speechCatalog } from './elevenlabs';
 import { startWorkers } from './jobs';
 import { claudeRun } from './claude';
+import { outputDir } from './outline';
 import { callApi, useTestDatabase } from './testing';
 
 vi.mock('./claude', async (importOriginal) => ({
@@ -113,7 +122,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 				voiceId: 'voice1',
 				learnerVoiceId: 'voice2',
 				speechModelId: 'eleven_v4',
-				audioLength: 'short',
+				coverage: 'light',
 				audioStyle: 'dialogue'
 			};
 			const same = await call(`/api/projects/${project.id}/generate`, {
@@ -263,7 +272,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Study sessions', () => {
 				modelId: 'test-model',
 				voiceId: 'voice1',
 				speechModelId: 'flash',
-				sessionLength: 'short'
+				coverage: 'light'
 			});
 			const { jobId } = await response.json();
 			const done = await waitFor(jobId, 'succeeded');
@@ -321,6 +330,140 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Study sessions', () => {
 				})
 			]);
 			expect(JSON.stringify(details)).not.toContain(data);
+		} finally {
+			await stop();
+			await db().delete(projects).where(eq(projects.id, project.id));
+			await closeDatabase();
+			await environment.restore();
+		}
+	});
+});
+
+describe.skipIf(!process.env.TEST_DATABASE_URL)('Quizzes', () => {
+	it('asks every source exercise at comprehensive coverage and grades fields on the server', async () => {
+		const environment = await useTestDatabase('quiz');
+		const [project] = await db().insert(projects).values({ name: 'Economics' }).returning();
+		const call = callApi;
+		const stop = startWorkers();
+		try {
+			const [material] = await db()
+				.insert(materials)
+				.values({
+					projectId: project.id,
+					name: 'Script',
+					filename: 'script.pdf',
+					mimeType: 'application/pdf',
+					kind: 'file',
+					status: 'ready',
+					contentFormat: 'markdown'
+				})
+				.returning();
+			await db()
+				.insert(sourceChunks)
+				.values([
+					{
+						materialId: material.id,
+						ordinal: 0,
+						locator: 'page:1',
+						text: 'Rentability relates profit to the capital employed.'
+					},
+					{
+						materialId: material.id,
+						ordinal: 1,
+						locator: 'page:2#1',
+						kind: 'exercise',
+						text: '4. How high is the rentability with a profit of 1.000 and equity of 4.000?'
+					},
+					{
+						materialId: material.id,
+						ordinal: 2,
+						locator: 'page:9',
+						kind: 'solution',
+						text: '4. - [x] 25 %'
+					}
+				]);
+			const citation = { materialId: material.id, locator: 'page:1' };
+			const feedback = { correct: 'Profit over capital.', incorrect: 'Divide profit by capital.' };
+			const own = {
+				id: 'a',
+				body: 'What does rentability relate?\n\n{{pick}}',
+				fields: [
+					{
+						id: 'pick',
+						type: 'select',
+						display: 'radio',
+						options: [
+							{ id: 'a', text: 'Profit and capital' },
+							{ id: 'b', text: 'Revenue and cost', why: 'That is economic efficiency.' }
+						],
+						correct: 'a'
+					}
+				],
+				explanation: 'See the definition.',
+				feedback,
+				citations: [citation]
+			};
+			const exercise = {
+				id: 'b',
+				body: 'Profit 1.000, equity 4.000. Rentability: {{value}}',
+				fields: [{ id: 'value', type: 'number', correct: 25, unit: '%' }],
+				explanation: '1000 * 100 / 4000',
+				feedback,
+				sourceExercise: { materialId: material.id, locator: 'page:2#1' },
+				citations: [citation]
+			};
+			const answers = (questions: unknown[]) => ({
+				text: 'done',
+				stderr: '',
+				structured: { title: 'Rentability', questions }
+			});
+			vi.mocked(claudeRun)
+				.mockReset()
+				// The first result leaves the source exercise out and is sent back.
+				.mockResolvedValueOnce(answers([own]))
+				.mockResolvedValueOnce(answers([own, exercise]));
+
+			const response = await call(`/api/projects/${project.id}/generate`, {
+				body: {
+					kind: 'quiz',
+					materialIds: [material.id],
+					modelId: 'test-model',
+					coverage: 'comprehensive',
+					questionStyles: ['choice']
+				}
+			});
+			const { jobId } = await response.json();
+			await waitFor(jobId, 'succeeded');
+			expect(claudeRun).toHaveBeenCalledTimes(2);
+			expect(vi.mocked(claudeRun).mock.calls[1][0].prompt).toContain('page:2#1');
+			// The plan is gone once the quiz is saved.
+			await expect(access(join(outputDir(jobId), 'plan.json'))).rejects.toThrow();
+
+			const details = await (await call(`/api/outputs/${jobId}`)).json();
+			const [part] = details.output.quiz.parts;
+			expect(part.questions.map((question: { id: string }) => question.id)).toEqual([
+				'p01q01',
+				'p01q02'
+			]);
+			// The exercise keeps its own format although only multiple choice was asked for.
+			expect(part.questions[1].sourceExercise.locator).toBe('page:2#1');
+
+			// A German decimal comma is read; the question left open scores nothing.
+			const attempt = await call(`/api/outputs/${jobId}/attempts`, {
+				body: { answers: [{ questionId: 'p01q02', values: { value: '25,0 %' } }] }
+			});
+			const { attemptId, jobId: gradeJob } = await attempt.json();
+			expect(gradeJob).toBeUndefined();
+			const [graded] = await db().select().from(attempts).where(eq(attempts.id, attemptId));
+			expect(graded).toMatchObject({ status: 'complete', score: 1, maxScore: 2 });
+			expect(graded.grades).toMatchObject([
+				{ questionId: 'p01q01', state: 'incorrect' },
+				{ questionId: 'p01q02', state: 'correct' }
+			]);
+			const unknown = await call(`/api/outputs/${jobId}/attempts`, {
+				body: { answers: [{ questionId: 'nope', values: {} }] }
+			}).catch((cause) => cause);
+			expect(unknown).toMatchObject({ status: 400 });
 		} finally {
 			await stop();
 			await db().delete(projects).where(eq(projects.id, project.id));

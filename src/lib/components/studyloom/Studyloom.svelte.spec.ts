@@ -20,6 +20,7 @@ import Chat from './Chat.svelte';
 import LibraryBrowser from './library/LibraryBrowser.svelte';
 import MoveDialog from './library/MoveDialog.svelte';
 import Markdown from './Markdown.svelte';
+import QuestionCard from './QuestionCard.svelte';
 import GenerateForm from './GenerateForm.svelte';
 import StudyPlayer from './StudyPlayer.svelte';
 import type { TutorSession } from '#lib/study/tutor.svelte.js';
@@ -520,6 +521,73 @@ describe('Markdown', () => {
 		expect(document.querySelector('.markdown img')?.getAttribute('src')).toBe(
 			`/api/outputs/${outputId}/images/img01`
 		);
+	});
+});
+
+describe('Question card', () => {
+	const question = {
+		id: 'q1',
+		body: 'Which partner meets the company where? Rentability is {{rate}}.\n\n| Market | Partner |\n|---|---|\n| Absatzmarkt | {{sales}} |\n| Arbeitsmarkt | {{work}} |',
+		fields: [
+			{ id: 'rate', type: 'number' as const, points: 1, correct: 25, tolerance: 0, unit: '%' },
+			...(['sales', 'work'] as const).map((id) => ({
+				id,
+				type: 'select' as const,
+				display: 'dropdown' as const,
+				points: 1,
+				options: [
+					{ id: 'k', text: 'Kunden' },
+					{ id: 'm', text: 'Mitarbeitende' }
+				],
+				correct: id === 'sales' ? 'k' : 'm'
+			}))
+		],
+		explanation: 'Customers are met on the sales market.',
+		feedback: { correct: '', incorrect: '' },
+		citations: []
+	};
+	const props = {
+		question,
+		heading: 'Question 1',
+		outputId: '22222222-2222-4222-8222-222222222222',
+		projectId: 'project-1'
+	};
+	it('puts an input where each field stands, named by its table row', async () => {
+		const onChange = vi.fn();
+		render(QuestionCard, { ...props, values: {}, onChange });
+		const sales = page.getByLabelText('Absatzmarkt, Partner');
+		await expect.element(sales).toBeInTheDocument();
+		await expect.element(page.getByLabelText('Arbeitsmarkt, Partner')).toBeInTheDocument();
+		expect(document.body.textContent).not.toContain('{{');
+		await sales.selectOptions('Kunden');
+		await page.getByLabelText('Answer 1').fill('25');
+		expect(onChange).toHaveBeenCalledTimes(2);
+		await expect.element(sales).toHaveValue('k');
+	});
+	it('marks each field once the answer is graded', async () => {
+		render(QuestionCard, {
+			...props,
+			values: { rate: '20', sales: 'k', work: 'k' },
+			locked: true,
+			grade: {
+				questionId: 'q1',
+				score: 1,
+				maxScore: 3,
+				state: 'partial',
+				fields: [
+					{ fieldId: 'rate', state: 'incorrect', score: 0, max: 1, expected: '25 %' },
+					{ fieldId: 'sales', state: 'correct', score: 1, max: 1, expected: 'Kunden' },
+					{ fieldId: 'work', state: 'incorrect', score: 0, max: 1, expected: 'Mitarbeitende' }
+				]
+			}
+		});
+		await expect.element(page.getByText('1 / 3 points')).toBeInTheDocument();
+		const expected = [...document.querySelectorAll('[data-expected]')].map((node) =>
+			node.textContent?.replace(/\s+/g, ' ').trim()
+		);
+		expect(expected).toEqual(['Expected:25 %', 'Expected:Mitarbeitende']);
+		await expect.element(page.getByLabelText('Absatzmarkt, Partner')).toBeDisabled();
+		expect(document.querySelectorAll('[aria-label="Not correct"]')).toHaveLength(2);
 	});
 });
 

@@ -2,8 +2,17 @@ import { error } from '@sveltejs/kit';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
 import * as t from '../db/schema';
-import { answersSchema, idSchema, quizSchema, type StudyAnswer, type StudyRun } from '../../domain';
-import { gradeChoice, released, settleJobTarget } from '../jobs';
+import {
+	answersSchema,
+	idSchema,
+	quizQuestions,
+	quizSchema,
+	type StudyAnswer,
+	type StudyRun
+} from '../../domain';
+import { released, settleJobTarget } from '../jobs';
+import { gradeQuestion } from '../grading';
+import { outputImagePath } from '../outline';
 import { gradingModel } from '../claude';
 import { audioFile } from '../audio';
 import { accepted, download, ok, readJson, type Handler } from './http';
@@ -123,7 +132,7 @@ export const conversations: Handler = async ({ method, id, action }) => {
 	return Response.json(await conversationDetails(id));
 };
 
-export const outputs: Handler = async ({ event, method, id, action }) => {
+export const outputs: Handler = async ({ event, method, id, action, seq }) => {
 	if (!action && method === 'GET') return Response.json(await outputDetails(id));
 	const output = await findOutput(id);
 	if (action === 'audio' && method === 'GET') {
@@ -149,19 +158,25 @@ export const outputs: Handler = async ({ event, method, id, action }) => {
 		});
 		return Response.json({ runId: run.id });
 	}
+	if (action === 'images' && method === 'GET') {
+		// The id is looked up in the output's own list and never becomes part of a path unchecked.
+		const image = output.quiz?.images.find((item) => item.id === seq);
+		if (!image) error(404, 'Image not found.');
+		return download(event, outputImagePath(output.id, image.id), image.mimeType, image.label);
+	}
 	if (action === 'attempts' && method === 'POST') {
 		const { answers } = answersSchema.parse(await readJson(event));
 		const quiz = quizSchema.parse(output.quiz);
-		const questionIds = new Set(quiz.questions.map((question) => question.id));
+		const questions = quizQuestions(quiz);
+		const given = new Map(answers.map((answer) => [answer.questionId, answer.values]));
 		if (
-			answers.length !== questionIds.size ||
-			new Set(answers.map((answer) => answer.questionId)).size !== questionIds.size ||
-			answers.some((answer) => !questionIds.has(answer.questionId))
+			given.size !== answers.length ||
+			answers.some((a) => !questions.some((q) => q.id === a.questionId))
 		)
-			error(400, 'Answer each question exactly once.');
-		const grades = gradeChoice(quiz, answers);
-		// Multiple-choice answers are graded here; written answers need a Claude grading job.
-		const written = quiz.questions.some((question) => question.type === 'written');
+			error(400, 'Answer each question at most once.');
+		// Everything but free text is graded here; a question left open scores nothing.
+		const grades = questions.map((question) => gradeQuestion(question, given.get(question.id)));
+		const written = grades.some((grade) => grade.state === 'pending');
 		const modelId = written ? await gradingModel(output.modelId) : output.modelId;
 		const { attempt, job } = await db().transaction(async (tx) => {
 			await lockProject(tx, output.projectId);
@@ -171,7 +186,7 @@ export const outputs: Handler = async ({ event, method, id, action }) => {
 					outputId: output.id,
 					answers,
 					grades,
-					maxScore: quiz.questions.length,
+					maxScore: grades.reduce((sum, grade) => sum + grade.maxScore, 0),
 					status: written ? 'grading' : 'complete',
 					score: written ? null : grades.reduce((sum, grade) => sum + grade.score, 0)
 				})

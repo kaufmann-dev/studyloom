@@ -5,19 +5,21 @@
 	import { zod4, zod4Client } from 'sveltekit-superforms/adapters';
 	import { Sparkles } from '@lucide/svelte';
 	import {
-		AUDIO_LENGTHS,
 		AUDIO_STYLES,
-		SESSION_LENGTHS,
+		COVERAGES,
+		QUESTION_STYLES,
+		QUESTION_STYLE_NAMES,
 		generationInput,
 		DEFAULT_MODEL,
+		type QuestionStyle,
 		type StudyOutput,
 		type ClaudeModel,
 		type SpeechModel,
 		type Voice
 	} from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
+	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import * as Form from '#lib/components/ui/form/index.js';
-	import Input from '#lib/components/ui/input/input.svelte';
 	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
 	import { STUDY_TOOLS } from '#lib/study-tools.js';
 	import { api, errorText } from '#lib/ui.js';
@@ -41,27 +43,23 @@
 	} = $props();
 	const schema = generationInput.pick({
 		modelId: true,
-		questionCount: true,
-		questionMix: true,
+		coverage: true,
+		questionStyles: true,
 		voiceId: true,
 		learnerVoiceId: true,
 		speechModelId: true,
-		audioLength: true,
-		audioStyle: true,
-		sessionLength: true
+		audioStyle: true
 	});
 	const editor = superForm(
 		defaults(
 			{
 				modelId: DEFAULT_MODEL,
-				questionCount: 10,
-				questionMix: 'mixed',
+				coverage: 'standard',
+				questionStyles: [...QUESTION_STYLE_NAMES],
 				voiceId: '',
 				learnerVoiceId: '',
 				speechModelId: '',
-				audioLength: 'short',
-				audioStyle: 'narration',
-				sessionLength: 'standard'
+				audioStyle: 'narration'
 			},
 			zod4(schema)
 		),
@@ -158,43 +156,48 @@
 		{/if}
 		<Form.FieldErrors />
 	</Form.Field>
+	{#if kind !== 'summary'}
+		<Form.Field form={editor} name="coverage">
+			<Form.Control>
+				{#snippet children({ props })}
+					<Form.Label>Coverage</Form.Label>
+					<NativeSelect.Root {...props} class="w-full" bind:value={$form.coverage} disabled={busy}>
+						{#each Object.entries(COVERAGES) as [value, coverage] (value)}
+							<NativeSelect.Option {value}>{coverage.label} · {coverage.hint}</NativeSelect.Option>
+						{/each}
+					</NativeSelect.Root>
+				{/snippet}
+			</Form.Control>
+			<Form.Description>The size follows from how much your sources contain.</Form.Description>
+			<Form.FieldErrors />
+		</Form.Field>
+	{/if}
 	{#if kind === 'quiz'}
-		<div class="grid gap-4 sm:grid-cols-2">
-			<Form.Field form={editor} name="questionCount">
+		<Form.Fieldset form={editor} name="questionStyles" class="space-y-2">
+			<Form.Legend>Question types</Form.Legend>
+			{#each Object.entries(QUESTION_STYLES) as [value, label] (value)}
+				{@const style = value as QuestionStyle}
 				<Form.Control>
 					{#snippet children({ props })}
-						<Form.Label>Questions</Form.Label>
-						<Input
-							{...props}
-							type="number"
-							min="1"
-							max="50"
-							bind:value={$form.questionCount}
-							disabled={busy}
-						/>
+						<div class="flex items-center gap-2">
+							<Checkbox
+								{...props}
+								value={style}
+								disabled={busy}
+								checked={$form.questionStyles.includes(style)}
+								onCheckedChange={(checked) =>
+									($form.questionStyles = checked
+										? [...$form.questionStyles, style]
+										: $form.questionStyles.filter((item) => item !== style))}
+							/>
+							<Form.Label class="font-normal">{label}</Form.Label>
+						</div>
 					{/snippet}
 				</Form.Control>
-				<Form.FieldErrors />
-			</Form.Field>
-			<Form.Field form={editor} name="questionMix">
-				<Form.Control>
-					{#snippet children({ props })}
-						<Form.Label>Question types</Form.Label>
-						<NativeSelect.Root
-							{...props}
-							class="w-full"
-							bind:value={$form.questionMix}
-							disabled={busy}
-						>
-							<NativeSelect.Option value="mixed">Multiple choice and written</NativeSelect.Option>
-							<NativeSelect.Option value="multiple_choice">Multiple choice</NativeSelect.Option>
-							<NativeSelect.Option value="written">Written answers</NativeSelect.Option>
-						</NativeSelect.Root>
-					{/snippet}
-				</Form.Control>
-				<Form.FieldErrors />
-			</Form.Field>
-		</div>
+			{/each}
+			<Form.Description>Exercises found in your sources keep their own format.</Form.Description>
+			<Form.FieldErrors />
+		</Form.Fieldset>
 	{/if}
 	{#if spoken}
 		<ErrorAlert message={catalogError} onRetry={loadCatalog} />
@@ -297,45 +300,6 @@
 				{/if}
 				<Form.FieldErrors />
 			</Form.Field>
-			{#if kind === 'audio'}
-				<Form.Field form={editor} name="audioLength">
-					<Form.Control>
-						{#snippet children({ props })}
-							<Form.Label>Length</Form.Label>
-							<NativeSelect.Root
-								{...props}
-								class="w-full"
-								bind:value={$form.audioLength}
-								disabled={busy}
-							>
-								{#each Object.entries(AUDIO_LENGTHS) as [value, length] (value)}
-									<NativeSelect.Option {value}>{length.label}</NativeSelect.Option>
-								{/each}
-							</NativeSelect.Root>
-						{/snippet}
-					</Form.Control>
-					<Form.FieldErrors />
-				</Form.Field>
-			{:else}
-				<Form.Field form={editor} name="sessionLength">
-					<Form.Control>
-						{#snippet children({ props })}
-							<Form.Label>Length</Form.Label>
-							<NativeSelect.Root
-								{...props}
-								class="w-full"
-								bind:value={$form.sessionLength}
-								disabled={busy}
-							>
-								{#each Object.entries(SESSION_LENGTHS) as [value, length] (value)}
-									<NativeSelect.Option {value}>{length.label}</NativeSelect.Option>
-								{/each}
-							</NativeSelect.Root>
-						{/snippet}
-					</Form.Control>
-					<Form.FieldErrors />
-				</Form.Field>
-			{/if}
 		</div>
 	{/if}
 	{#if !models.length}
