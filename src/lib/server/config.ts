@@ -33,6 +33,7 @@ export function safeError(error: unknown): string {
 	for (const name of [
 		'CLAUDE_CODE_OAUTH_TOKEN',
 		'ELEVENLABS_API_KEY',
+		'GEMINI_API_KEY',
 		'OIDC_CLIENT_SECRET',
 		'DATABASE_URL'
 	]) {

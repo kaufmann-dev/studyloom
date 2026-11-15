@@ -506,7 +506,7 @@ export const jobs = pgTable(
 			.references(() => projects.id, { onDelete: 'cascade' }),
 		materialId: uuid('material_id').references(() => materials.id, { onDelete: 'cascade' }),
 		kind: text('kind').$type<JobKind>().notNull(),
-		queue: text('queue').$type<'interactive' | 'background'>().notNull(),
+		queue: text('queue').$type<'interactive' | 'background' | 'speech'>().notNull(),
 		status: text('status')
 			.$type<'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'>()
 			.notNull()

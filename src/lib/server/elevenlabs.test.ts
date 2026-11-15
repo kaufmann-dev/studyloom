@@ -100,7 +100,7 @@ describe('ElevenLabs speech', () => {
 		await expect(speechCatalog()).rejects.toMatchObject({
 			status: 503,
 			message:
-				'Set ELEVENLABS_API_KEY to transcribe audio and to create audio summaries and study sessions.'
+				'Set ELEVENLABS_API_KEY to transcribe audio and to voice audio summaries, study sessions and lessons.'
 		});
 		expect(fetchMock).not.toHaveBeenCalled();
 	});

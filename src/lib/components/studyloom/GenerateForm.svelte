@@ -21,6 +21,7 @@
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import * as Form from '#lib/components/ui/form/index.js';
 	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
+	import { Switch } from '#lib/components/ui/switch/index.js';
 	import { STUDY_TOOLS } from '#lib/study-tools.js';
 	import { api, errorText } from '#lib/ui.js';
 	import ErrorAlert from './ErrorAlert.svelte';
@@ -48,7 +49,9 @@
 		voiceId: true,
 		learnerVoiceId: true,
 		speechModelId: true,
-		audioStyle: true
+		audioStyle: true,
+		voiceMode: true,
+		illustrations: true
 	});
 	const editor = superForm(
 		defaults(
@@ -59,7 +62,9 @@
 				voiceId: '',
 				learnerVoiceId: '',
 				speechModelId: '',
-				audioStyle: 'narration'
+				audioStyle: 'narration',
+				voiceMode: 'off',
+				illustrations: false
 			},
 			zod4(schema)
 		),
@@ -84,7 +89,11 @@
 	let voiceId = $derived(
 		offered(catalog?.voices.map((voice) => voice.voiceId) ?? [], $form.voiceId)
 	);
-	let spoken = $derived(kind === 'audio' || kind === 'session');
+	let spoken = $derived(
+		kind === 'audio' || kind === 'session' || (kind === 'lesson' && $form.voiceMode !== 'off')
+	);
+	/** Whether illustrations can be generated: the server has a Gemini key. */
+	let canIllustrate = $state(false);
 	let dialogue = $derived(kind === 'audio' && $form.audioStyle === 'dialogue');
 	/** The learner needs a voice of their own, so the tutor's voice is not offered. */
 	let learnerVoices = $derived(catalog?.voices.filter((voice) => voice.voiceId !== voiceId) ?? []);
@@ -110,6 +119,10 @@
 	}
 	onMount(() => {
 		if (kind === 'audio' || kind === 'session') void loadCatalog();
+		if (kind === 'lesson')
+			void api<{ available: boolean }>('/api/illustrations')
+				.then((result) => (canIllustrate = result.available))
+				.catch(() => {});
 	});
 
 	async function generate(event: SubmitEvent) {
@@ -199,6 +212,58 @@
 			<Form.FieldErrors />
 		</Form.Fieldset>
 	{/if}
+	{#if kind === 'lesson'}
+		<Form.Field form={editor} name="voiceMode">
+			<Form.Control>
+				{#snippet children({ props })}
+					<Form.Label>Voice</Form.Label>
+					<NativeSelect.Root
+						{...props}
+						class="w-full"
+						bind:value={$form.voiceMode}
+						disabled={busy}
+						onchange={() => {
+							if ($form.voiceMode !== 'off' && !catalog) void loadCatalog();
+						}}
+					>
+						<NativeSelect.Option value="off"
+							>Off · read the explanations as text</NativeSelect.Option
+						>
+						<NativeSelect.Option value="onDemand"
+							>On demand · voice each explanation when you first play it</NativeSelect.Option
+						>
+						<NativeSelect.Option value="all"
+							>Everything now · voice all explanations in advance</NativeSelect.Option
+						>
+					</NativeSelect.Root>
+				{/snippet}
+			</Form.Control>
+			<Form.Description
+				>You can add, change or remove the voice later in the lesson.</Form.Description
+			>
+			<Form.FieldErrors />
+		</Form.Field>
+		<Form.Field form={editor} name="illustrations">
+			<Form.Control>
+				{#snippet children({ props })}
+					<div class="flex items-center justify-between gap-3">
+						<Form.Label>Generate illustrations</Form.Label>
+						<Switch
+							{...props}
+							bind:checked={$form.illustrations}
+							disabled={busy || !canIllustrate}
+						/>
+					</div>
+				{/snippet}
+			</Form.Control>
+			<Form.Description>
+				{canIllustrate
+					? 'Figures from your sources come first; a picture is generated only where none fits.'
+					: 'Slides use the figures of your sources. Set GEMINI_API_KEY to generate more.'}
+			</Form.Description>
+			<Form.FieldErrors />
+		</Form.Field>
+	{/if}
 	{#if spoken}
 		<ErrorAlert message={catalogError} onRetry={loadCatalog} />
 		<div class="grid gap-4 sm:grid-cols-2">
@@ -237,7 +302,7 @@
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label
-							>{kind === 'session'
+							>{kind === 'session' || kind === 'lesson'
 								? 'Voice'
 								: dialogue
 									? 'Tutor voice'

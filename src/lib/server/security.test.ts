@@ -73,6 +73,7 @@ describe('authentication boundaries', () => {
 			Object.assign(process.env, {
 				CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-token',
 				ELEVENLABS_API_KEY: 'eleven',
+				GEMINI_API_KEY: 'gemini',
 				OIDC_CLIENT_SECRET: 'oidc',
 				DATABASE_URL: 'postgres://secret',
 				ANTHROPIC_API_KEY: 'api-key',

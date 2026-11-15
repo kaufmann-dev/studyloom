@@ -7,16 +7,20 @@ import {
 	idSchema,
 	lessonQuestions,
 	lessonSchema,
+	lessonVoiceInput,
 	questionAnswerSchema,
 	quizQuestions,
 	quizSchema,
 	type LessonAnswer,
+	type LessonVoice,
 	type StudyAnswer,
 	type StudyRun
 } from '../../domain';
 import { released, settleJobTarget } from '../jobs';
 import { gradeQuestion } from '../grading';
 import { outputImagePath } from '../outline';
+import { speechCatalog } from '../elevenlabs';
+import { ensureClip, existingClip, removeClips } from '../lesson-voice';
 import { gradingModel } from '../claude';
 import { audioFile } from '../audio';
 import { accepted, download, ok, readJson, type Handler } from './http';
@@ -192,6 +196,69 @@ export const outputs: Handler = async ({ event, method, id, action, seq }) => {
 		const image = images.find((item) => item.id === seq);
 		if (!image) error(404, 'Image not found.');
 		return download(event, outputImagePath(output.id, image.id), image.mimeType, image.label);
+	}
+	if (action === 'clips' && seq) {
+		// Voicing costs credits, so only a POST does it; a GET just serves what exists.
+		if (method === 'POST') {
+			await ensureClip(output, seq);
+			return ok();
+		}
+		if (method === 'GET') {
+			const clip = await existingClip(output.id, seq);
+			if (!clip) error(404, 'This clip has not been voiced yet.');
+			return download(event, clip, 'audio/mpeg', `${seq}.mp3`);
+		}
+	}
+	if (action === 'voice' && (method === 'PUT' || method === 'DELETE')) {
+		const info = output.lesson;
+		if (!info) error(404, 'This output is not a lesson.');
+		let voice: LessonVoice | null = null;
+		if (method === 'PUT') {
+			const input = lessonVoiceInput.parse(await readJson(event));
+			const { voices, models } = await speechCatalog();
+			const chosen = voices.find((item) => item.voiceId === input.voiceId);
+			const model = models.find((item) => item.modelId === input.speechModelId);
+			if (!chosen || !model)
+				error(409, 'This voice or speech model is no longer available. Reload the page.');
+			voice = {
+				voiceId: chosen.voiceId,
+				voiceName: chosen.name,
+				speechModelId: model.modelId,
+				speechModelName: model.name
+			};
+		}
+		const same =
+			voice?.voiceId === info.voice?.voiceId && voice?.speechModelId === info.voice?.speechModelId;
+		await db()
+			.update(t.outputs)
+			.set({ lesson: { ...info, voice } })
+			.where(eq(t.outputs.id, output.id));
+		// Clips in another voice are of no use any more.
+		if (!same) await removeClips(output.id);
+		return Response.json({ voice });
+	}
+	if (action === 'voice-all' && method === 'POST') {
+		if (!output.lesson?.voice) error(409, 'This lesson has no voice. Choose one first.');
+		const job = await db().transaction(async (tx) => {
+			await lockProject(tx, output.projectId);
+			const [active] = await tx
+				.select()
+				.from(t.jobs)
+				.where(and(eq(t.jobs.outputId, output.id), eq(t.jobs.kind, 'voice'), jobIsActive))
+				.limit(1);
+			if (active) return active;
+			const [queued] = await tx
+				.insert(t.jobs)
+				.values({
+					projectId: output.projectId,
+					kind: 'voice',
+					queue: 'speech',
+					outputId: output.id
+				})
+				.returning();
+			return queued;
+		});
+		return accepted({ jobId: job.id });
 	}
 	if (action === 'answers' && method === 'DELETE') {
 		if (output.kind !== 'lesson') error(404, 'This output is not a lesson.');

@@ -38,7 +38,9 @@ import {
 } from '../domain';
 import { findInvalidCitation, validateCitations } from './citations';
 import { summarise } from './grading';
+import { generateImage } from './gemini';
 import { finishLesson, writeLesson } from './lesson';
+import { beatKeys, ensureClip } from './lesson-voice';
 import {
 	checked,
 	checkQuestions,
@@ -649,7 +651,9 @@ async function saveOutput(
 	output: Pick<
 		typeof t.outputs.$inferInsert,
 		'kind' | 'title' | 'content' | 'quiz' | 'citations' | 'audio' | 'study' | 'lesson'
-	>
+	>,
+	/** Further writes that must commit together with the output. */
+	also?: (tx: Transaction) => Promise<void>
 ) {
 	const { job, snapshot, modelId } = run;
 	run.signal.throwIfAborted();
@@ -667,6 +671,7 @@ async function saveOutput(
 					modelId
 				})
 				.onConflictDoNothing();
+			await also?.(tx);
 		},
 		job.id
 	);
@@ -759,10 +764,36 @@ ${questionRules(styles, hasFigures)}`;
 	});
 	await removePlan(job.id);
 }
-/** Claude writes the lesson chapter by chapter; its text, questions and figures need no voice. */
+/** Voices every explanation of a lesson ahead of time; feedback clips are made when first needed. */
+async function voiceLesson(job: Job, signal: AbortSignal, progress: Progress) {
+	const [output] = await db().select().from(t.outputs).where(eq(t.outputs.id, job.outputId!));
+	if (!output?.lesson) throw new Error('The lesson was deleted.');
+	const keys = beatKeys(output.lesson);
+	for (const [i, key] of keys.entries()) {
+		signal.throwIfAborted();
+		progress(`Voicing explanation ${i + 1} of ${keys.length}`);
+		await ensureClip(output, key, signal);
+	}
+	await completeJob(job, async () => {});
+}
+/**
+ * Claude writes the lesson chapter by chapter. The voice is optional: with it, clips are made
+ * when the learner first plays them, or all in advance by a voice job queued with the lesson.
+ */
 async function createLesson(run: GenerationRun) {
 	const { job, snapshot } = run;
 	const coverage = coverageOf(job);
+	const illustrations = job.payload.illustrations === true;
+	const [narrator] = (job.payload.voices as AudioVoice[] | undefined) ?? [];
+	const voice =
+		job.payload.voiceMode !== 'off' && narrator
+			? {
+					voiceId: narrator.voiceId,
+					voiceName: narrator.voiceName,
+					speechModelId: String(job.payload.speechModelId),
+					speechModelName: String(job.payload.speechModelName || job.payload.speechModelId)
+				}
+			: null;
 	const { lesson, content, citations } = await writeLesson({
 		jobId: job.id,
 		workspace: run.workspace,
@@ -773,15 +804,29 @@ async function createLesson(run: GenerationRun) {
 		signal: run.signal,
 		progress: run.progress,
 		ask: (task, schema) => claudeResult(run, task, schema),
-		writeData: (name, value) => writeData(run.workspace, name, value)
+		writeData: (name, value) => writeData(run.workspace, name, value),
+		...(illustrations && { illustrate: generateImage })
 	});
-	await saveOutput(run, {
-		kind: 'lesson',
-		title: lesson.title,
-		content,
-		citations,
-		lesson: { lesson }
-	});
+	await saveOutput(
+		run,
+		{
+			kind: 'lesson',
+			title: lesson.title,
+			content,
+			citations,
+			lesson: { lesson, voice, illustrations }
+		},
+		async (tx) => {
+			// "Everything now": the explanations are voiced right after the lesson is saved.
+			if (voice && job.payload.voiceMode === 'all')
+				await tx.insert(t.jobs).values({
+					projectId: job.projectId,
+					kind: 'voice',
+					queue: 'speech',
+					outputId: job.id
+				});
+		}
+	);
 	await finishLesson(job.id);
 }
 async function createSummary(run: GenerationRun) {
@@ -1320,6 +1365,7 @@ async function runJob(job: Job, stop: AbortSignal) {
 		// Each job commits its final result and succeeded status together.
 		if (job.kind === 'ingest') await ingest(job, workspace, signal, progress);
 		else if (job.kind === 'recover') await recover(job, workspace, signal);
+		else if (job.kind === 'voice') await voiceLesson(job, signal, progress);
 		else await generate(job, workspace, signal, progress);
 	} catch (cause) {
 		if (stop.aborted)
@@ -1355,7 +1401,8 @@ export function startWorkers() {
 			}
 		}
 	}
-	const loops = [loop('interactive'), loop('background')];
+	// Voicing runs beside ingestion and generation, so neither waits for the other.
+	const loops = [loop('interactive'), loop('background'), loop('speech')];
 	return async () => {
 		stop.abort();
 		await Promise.allSettled(loops);

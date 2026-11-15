@@ -18,7 +18,7 @@ function apiKey() {
 	if (!key)
 		throw new ClientError(
 			503,
-			'Set ELEVENLABS_API_KEY to transcribe audio and to create audio summaries and study sessions.'
+			'Set ELEVENLABS_API_KEY to transcribe audio and to voice audio summaries, study sessions and lessons.'
 		);
 	return key;
 }

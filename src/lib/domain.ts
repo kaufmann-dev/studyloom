@@ -604,8 +604,14 @@ export const generationInput = z.object({
 	voiceId: elevenLabsId.or(z.literal('')).default(''),
 	learnerVoiceId: elevenLabsId.or(z.literal('')).default(''),
 	speechModelId: elevenLabsId.or(z.literal('')).default(''),
-	audioStyle: z.enum(['narration', 'dialogue']).default('narration')
+	audioStyle: z.enum(['narration', 'dialogue']).default('narration'),
+	/** Lessons only: whether and when the tutor's voice is made. */
+	voiceMode: z.enum(['off', 'onDemand', 'all']).default('off'),
+	/** Lessons only: generate an illustration where no figure of the sources fits. */
+	illustrations: z.boolean().default(false)
 });
+/** The voice a lesson is read in. */
+export const lessonVoiceInput = z.object({ voiceId: elevenLabsId, speechModelId: elevenLabsId });
 export const chatInput = z.object({
 	conversationId: idSchema.optional(),
 	message: nonBlank(z.string().max(30000), 'Message is required.'),
@@ -736,7 +742,16 @@ export type Quiz = z.infer<typeof quizSchema>;
 export type Question = z.infer<typeof questionSchema>;
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export type JobKind =
-	'ingest' | 'chat' | 'summary' | 'quiz' | 'audio' | 'session' | 'lesson' | 'grade' | 'recover';
+	| 'ingest'
+	| 'chat'
+	| 'summary'
+	| 'quiz'
+	| 'audio'
+	| 'session'
+	| 'lesson'
+	| 'voice'
+	| 'grade'
+	| 'recover';
 export const isActiveJob = (job: { status: JobStatus }) =>
 	job.status === 'queued' || job.status === 'running';
 /** A Library contact marked as lecturer, as assigned to a project. */
@@ -907,8 +922,18 @@ export interface StudyOutput {
 	createdAt: string;
 }
 /** A lesson as it is stored: what it teaches and how it was set up. */
+export interface LessonVoice {
+	voiceId: string;
+	voiceName: string;
+	speechModelId: string;
+	speechModelName: string;
+}
 export interface LessonInfo {
 	lesson: Lesson;
+	/** Null while the lesson is read as text only; a voice can be chosen at any time. */
+	voice: LessonVoice | null;
+	/** Whether slides without a fitting source figure were illustrated. */
+	illustrations: boolean;
 }
 /** One answer to a lesson question, graded at once except for free text. */
 export interface LessonAnswer {

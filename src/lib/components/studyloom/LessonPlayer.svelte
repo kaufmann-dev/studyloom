@@ -1,13 +1,28 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import { ArrowLeft, ArrowRight, Check, CircleHelp, List, RotateCcw } from '@lucide/svelte';
+	import {
+		ArrowLeft,
+		ArrowRight,
+		Captions,
+		Check,
+		CircleHelp,
+		List,
+		Pause,
+		Play,
+		RotateCcw
+	} from '@lucide/svelte';
 	import type { LessonAnswer, Material, StudyOutput } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
+	import * as NativeSelect from '#lib/components/ui/native-select/index.js';
 	import { Progress } from '#lib/components/ui/progress/index.js';
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
-	import { LessonSession } from '#lib/study/lesson.svelte.js';
+	import { Spinner } from '#lib/components/ui/spinner/index.js';
+	import { Switch } from '#lib/components/ui/switch/index.js';
+	import { getProject } from '#lib/project.svelte.js';
+	import { LessonSession, PLAYBACK_RATES } from '#lib/study/lesson.svelte.js';
 	import { plural } from '#lib/ui.js';
 	import ConfirmDialog from './ConfirmDialog.svelte';
+	import LessonVoiceDialog from './LessonVoiceDialog.svelte';
 	import Markdown from './Markdown.svelte';
 	import QuestionCard from './QuestionCard.svelte';
 
@@ -21,7 +36,10 @@
 		materials
 	}: { output: StudyOutput; answers: LessonAnswer[]; materials: Material[] } = $props();
 	// The viewer keys this component by output, so the lesson never changes during its life.
-	const session = untrack(() => new LessonSession(output.id, output.lesson!.lesson, answers));
+	const session = untrack(
+		() => new LessonSession(output.id, output.lesson!.lesson, answers, output.lesson!.voice ?? null)
+	);
+	const project = getProject();
 	const { lesson } = session;
 	let contentsOpen = $state(false);
 	let confirmingReset = $state(false);
@@ -54,6 +72,11 @@
 		if (event.altKey || event.ctrlKey || event.metaKey) return;
 		if (event.key === 'ArrowRight') session.next();
 		else if (event.key === 'ArrowLeft') session.previous();
+		else if (event.code === 'Space' && session.voice && !target?.closest('button, a, summary')) {
+			// Space plays and pauses, unless it would press the control that has the focus.
+			event.preventDefault();
+			session.toggle();
+		}
 	}
 	onDestroy(() => session.destroy());
 </script>
@@ -104,10 +127,73 @@
 				</details>
 			{/each}
 		</nav>
-		<Button variant="ghost" size="sm" onclick={() => (confirmingReset = true)}>
-			<RotateCcw />Start over
-		</Button>
+		<div class="flex flex-col items-start gap-1">
+			<LessonVoiceDialog
+				outputId={output.id}
+				voice={session.voice}
+				onVoice={(voice) => session.setVoice(voice)}
+				onQueued={project.refresh}
+			/>
+			<Button variant="ghost" size="sm" onclick={() => (confirmingReset = true)}>
+				<RotateCcw />Start over
+			</Button>
+		</div>
 	</div>
+{/snippet}
+
+{#snippet audio()}
+	{#if session.voice}
+		<div class="flex flex-wrap items-center gap-2">
+			<Button
+				variant="outline"
+				size="sm"
+				disabled={session.preparing || !session.clipKey}
+				onclick={() => session.toggle()}
+			>
+				{#if session.preparing}
+					<Spinner class="size-4" role="presentation" />Preparing…
+				{:else if session.playing}
+					<Pause />Pause
+				{:else}
+					<Play />Play
+				{/if}
+			</Button>
+			<Button
+				variant="ghost"
+				size="sm"
+				disabled={session.preparing || !session.clipKey}
+				onclick={() => session.play()}
+			>
+				<RotateCcw />Replay
+			</Button>
+			<NativeSelect.Root
+				size="sm"
+				aria-label="Playback speed"
+				bind:value={() => String(session.rate), (next) => session.setRate(Number(next))}
+			>
+				{#each PLAYBACK_RATES as rate (rate)}
+					<NativeSelect.Option value={String(rate)}>{rate}×</NativeSelect.Option>
+				{/each}
+			</NativeSelect.Root>
+			{#if step.kind === 'beat'}
+				<label class="flex items-center gap-2 text-sm">
+					<Switch bind:checked={() => session.autoplay, (next) => session.setAutoplay(next)} />
+					Autoplay
+				</label>
+				<Button
+					variant="ghost"
+					size="sm"
+					aria-pressed={session.showText}
+					onclick={() => session.setShowText(!session.showText)}
+				>
+					<Captions />{session.showText ? 'Hide text' : 'Show text'}
+				</Button>
+			{/if}
+		</div>
+		{#if session.audioError}
+			<p role="alert" class="text-sm text-destructive">{session.audioError}</p>
+		{/if}
+	{/if}
 {/snippet}
 
 <div class="grid items-start gap-8 lg:grid-cols-[280px_minmax(0,1fr)]">
@@ -225,7 +311,10 @@
 								<Markdown text={beat.slide.markdown} outputId={output.id} class="text-base" />
 							</div>
 						{/if}
-						<p class="max-w-3xl text-base leading-relaxed">{beat.narration}</p>
+						{@render audio()}
+						{#if !session.voice || session.showText}
+							<p class="max-w-3xl text-base leading-relaxed">{beat.narration}</p>
+						{/if}
 					</div>
 				{/key}
 			{:else if question}
@@ -248,6 +337,7 @@
 						<p class="text-xs font-semibold text-muted-foreground">Feedback</p>
 						<p class="mt-1 max-w-3xl text-base leading-relaxed">{feedback}</p>
 					</div>
+					{@render audio()}
 				{/if}
 				{#if session.error}<p role="alert" class="text-sm text-destructive">{session.error}</p>{/if}
 			{/if}

@@ -18,6 +18,7 @@ import {
 import { ClientError, maxUploadBytes, safeError } from '../config';
 import { removeAudioFiles } from '../audio';
 import { speechCatalog } from '../elevenlabs';
+import { requireIllustrations } from '../gemini';
 import { sourceSnapshot } from '../jobs';
 import { removeOutputFiles } from '../outline';
 import { validateModel } from '../claude';
@@ -289,12 +290,15 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 	if (action === 'generate' && method === 'POST') {
 		const input = generationInput.parse(await readJson(event));
 		await validateModel(input.modelId);
-		const speech =
-			input.kind === 'audio' || input.kind === 'session'
-				? await audioChoice(
-						input.kind === 'session' ? { ...input, audioStyle: 'narration' } : input
-					)
-				: {};
+		// A lesson is spoken only if a voice was asked for; its speech is always one narrator.
+		const spoken =
+			input.kind === 'audio' ||
+			input.kind === 'session' ||
+			(input.kind === 'lesson' && input.voiceMode !== 'off');
+		const speech = spoken
+			? await audioChoice(input.kind === 'audio' ? input : { ...input, audioStyle: 'narration' })
+			: {};
+		if (input.kind === 'lesson' && input.illustrations) requireIllustrations();
 		const snapshot = await sourceSnapshot(id, input.materialIds);
 		const job = await db().transaction(async (tx) => {
 			if (!(await lockProject(tx, id))) error(404, 'Project not found.');

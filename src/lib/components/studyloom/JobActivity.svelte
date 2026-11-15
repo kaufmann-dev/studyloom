@@ -21,6 +21,7 @@
 		audio: 'Audio summary',
 		session: 'Study session',
 		lesson: 'Lesson',
+		voice: 'Lesson voice',
 		grade: 'Grading'
 	};
 	let busy = $state('');

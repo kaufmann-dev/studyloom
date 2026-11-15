@@ -2,6 +2,7 @@ import { error, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { ClientError } from './config';
 import { claudeStatus } from './claude';
+import { illustrationsAvailable } from './gemini';
 import { calendar } from './endpoints/calendar';
 import { events } from './endpoints/events';
 import type { Handler } from './endpoints/http';
@@ -17,6 +18,11 @@ const claude: Handler = async ({ method, id }) => {
 	if (method === 'GET' && !id) return Response.json(await claudeStatus());
 };
 
+/** Whether lesson illustrations can be generated: the Gemini key is set. */
+const illustrations: Handler = async ({ method, id }) => {
+	if (method === 'GET' && !id) return Response.json({ available: illustrationsAvailable() });
+};
+
 const resources = new Map<string, Handler>(
 	Object.entries({
 		library,
@@ -26,6 +32,7 @@ const resources = new Map<string, Handler>(
 		calendar,
 		claude,
 		speech,
+		illustrations,
 		projects,
 		materials,
 		recordings,

@@ -673,19 +673,76 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Lessons', () => {
 					})
 				])
 			);
-			expect(await db().select().from(lessonAnswers)).toHaveLength(3);
+			const given = () =>
+				db().select().from(lessonAnswers).where(eq(lessonAnswers.outputId, jobId));
+			expect(await given()).toHaveLength(3);
 
 			const unknown = await call(`/api/outputs/${jobId}/answers`, {
 				body: { questionId: 'nope', values: {} }
 			}).catch((cause) => cause);
 			expect(unknown).toMatchObject({ status: 404 });
+
+			// Without a voice nothing can be voiced; with one, each clip is voiced exactly once.
+			const clip = `/api/outputs/${jobId}/clips/c02s01b1`;
+			expect(await call(clip, { body: {} }).catch((cause) => cause)).toMatchObject({ status: 409 });
+			vi.mocked(speechCatalog).mockResolvedValue({
+				voices: [{ voiceId: 'voice1', name: 'Rachel', description: '' }],
+				models: [
+					{ modelId: 'eleven_v4', name: 'Eleven v4', costMultiplier: 1, maxCharacters: 10000 }
+				]
+			});
+			const chosen = await (
+				await call(`/api/outputs/${jobId}/voice`, {
+					method: 'PUT',
+					body: { voiceId: 'voice1', speechModelId: 'eleven_v4' }
+				})
+			).json();
+			expect(chosen.voice).toMatchObject({ voiceName: 'Rachel', speechModelName: 'Eleven v4' });
+			vi.mocked(speak)
+				.mockReset()
+				.mockResolvedValue({ audio: part('clip'), requestId: 'r' });
+			// Reading a clip never voices it.
+			expect(await call(clip).catch((cause) => cause)).toMatchObject({ status: 404 });
+			expect(speak).not.toHaveBeenCalled();
+			await Promise.all([call(clip, { body: {} }), call(clip, { body: {} })]);
+			await call(clip, { body: {} });
+			expect(speak).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(speak).mock.calls[0][0]).toMatchObject({
+				text: 'Liquidity means bills can be paid.',
+				voiceId: 'voice1',
+				modelId: 'eleven_v4'
+			});
+			expect(Buffer.from(await (await call(clip)).arrayBuffer())).toEqual(part('clip'));
+			for (const bad of ['nope', '..%2F..%2Fplan', `${exercise.id}-maybe`])
+				expect(
+					await call(`/api/outputs/${jobId}/clips/${bad}`, { body: {} }).catch((cause) => cause)
+				).toMatchObject({ status: 404 });
+			// Prepared feedback and Claude's feedback on a written answer are clips too.
+			await call(`/api/outputs/${jobId}/clips/${exercise.id}-incorrect`, { body: {} });
+			const writtenAnswer = after.answers.find(
+				(item: { questionId: string }) => item.questionId === written.id
+			);
+			await call(`/api/outputs/${jobId}/clips/answer-${writtenAnswer.id}`, { body: {} });
+			expect(vi.mocked(speak).mock.calls.map(([request]) => request.text)).toEqual([
+				'Liquidity means bills can be paid.',
+				'Divide profit by capital.',
+				'Name solvency.'
+			]);
+
+			// "Voice everything now" voices the explanations that are still missing.
+			const all = await (await call(`/api/outputs/${jobId}/voice-all`, { body: {} })).json();
+			await waitFor(all.jobId, 'succeeded');
+			expect(speak).toHaveBeenCalledTimes(5);
+			// Turning the voice off discards the clips.
+			await call(`/api/outputs/${jobId}/voice`, { method: 'DELETE' });
+			await expect(access(join(outputDir(jobId), 'clips'))).rejects.toThrow();
 			await call(`/api/outputs/${jobId}/answers`, { method: 'DELETE' });
-			expect(await db().select().from(lessonAnswers)).toHaveLength(0);
+			expect(await given()).toHaveLength(0);
 		} finally {
 			await stop();
 			await db().delete(projects).where(eq(projects.id, project.id));
 			await closeDatabase();
 			await environment.restore();
 		}
-	});
+	}, 30_000);
 });
