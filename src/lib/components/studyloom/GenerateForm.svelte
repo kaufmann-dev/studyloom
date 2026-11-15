@@ -172,7 +172,7 @@
 			<Form.FieldErrors />
 		</Form.Field>
 	{/if}
-	{#if kind === 'quiz'}
+	{#if kind === 'quiz' || kind === 'lesson'}
 		<Form.Fieldset form={editor} name="questionStyles" class="space-y-2">
 			<Form.Legend>Question types</Form.Legend>
 			{#each Object.entries(QUESTION_STYLES) as [value, label] (value)}

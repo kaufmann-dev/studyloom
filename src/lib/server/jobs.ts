@@ -26,6 +26,8 @@ import {
 	ingestionSchema,
 	quizSchema,
 	QUESTION_STYLE_NAMES,
+	lessonQuestions,
+	lessonSchema,
 	quizQuestions,
 	type ChunkKind,
 	type FieldGrade,
@@ -36,6 +38,7 @@ import {
 } from '../domain';
 import { findInvalidCitation, validateCitations } from './citations';
 import { summarise } from './grading';
+import { finishLesson, writeLesson } from './lesson';
 import {
 	checked,
 	checkQuestions,
@@ -576,6 +579,42 @@ async function gradeAttempt(run: GenerationRun) {
 			.where(eq(t.attempts.id, attempt.id));
 	});
 }
+/** Grades the written fields of one lesson answer; the feedback is what the tutor then says. */
+async function gradeLessonAnswer(run: GenerationRun) {
+	const { job } = run;
+	const [answer] = await db()
+		.select()
+		.from(t.lessonAnswers)
+		.where(eq(t.lessonAnswers.id, job.lessonAnswerId!));
+	if (!answer) throw new Error('The answer was deleted.');
+	if (answer.status === 'graded') {
+		await completeJob(job, async () => {});
+		return;
+	}
+	const [output] = await db().select().from(t.outputs).where(eq(t.outputs.id, answer.outputId));
+	const question = lessonQuestions(lessonSchema.parse(output.lesson?.lesson)).find(
+		(item) => item.id === answer.questionId
+	);
+	if (!question) throw new Error('The question no longer exists.');
+	const [result] = await gradeEssays(
+		run,
+		[question],
+		[{ questionId: question.id, values: answer.values }],
+		[answer.result],
+		'The feedback is spoken to the learner: at most 70 words of plain text without Markdown or symbols, saying what was right and what a full answer adds.'
+	);
+	const feedback = result.fields
+		.map((field) => field.feedback ?? '')
+		.filter(Boolean)
+		.join(' ');
+	run.signal.throwIfAborted();
+	await completeJob(job, async (tx) => {
+		await tx
+			.update(t.lessonAnswers)
+			.set({ result, score: result.score, status: 'graded', feedback })
+			.where(eq(t.lessonAnswers.id, answer.id));
+	});
+}
 async function answerChat(run: GenerationRun) {
 	const { job, snapshot, modelId } = run;
 	const history = await db()
@@ -609,7 +648,7 @@ async function saveOutput(
 	run: GenerationRun,
 	output: Pick<
 		typeof t.outputs.$inferInsert,
-		'kind' | 'title' | 'content' | 'quiz' | 'citations' | 'audio' | 'study'
+		'kind' | 'title' | 'content' | 'quiz' | 'citations' | 'audio' | 'study' | 'lesson'
 	>
 ) {
 	const { job, snapshot, modelId } = run;
@@ -719,6 +758,31 @@ ${questionRules(styles, hasFigures)}`;
 		citations: quizQuestions(quiz).flatMap((question) => question.citations)
 	});
 	await removePlan(job.id);
+}
+/** Claude writes the lesson chapter by chapter; its text, questions and figures need no voice. */
+async function createLesson(run: GenerationRun) {
+	const { job, snapshot } = run;
+	const coverage = coverageOf(job);
+	const { lesson, content, citations } = await writeLesson({
+		jobId: job.id,
+		workspace: run.workspace,
+		snapshot,
+		coverage,
+		styles: questionStylesOf(job),
+		sections: coverageBudget('lesson', coverage, sourceStats(snapshot)),
+		signal: run.signal,
+		progress: run.progress,
+		ask: (task, schema) => claudeResult(run, task, schema),
+		writeData: (name, value) => writeData(run.workspace, name, value)
+	});
+	await saveOutput(run, {
+		kind: 'lesson',
+		title: lesson.title,
+		content,
+		citations,
+		lesson: { lesson }
+	});
+	await finishLesson(job.id);
 }
 async function createSummary(run: GenerationRun) {
 	const result = await claudeResult(
@@ -963,7 +1027,8 @@ async function alreadyPublished(job: Job) {
 		job.kind === 'summary' ||
 		job.kind === 'quiz' ||
 		job.kind === 'audio' ||
-		job.kind === 'session'
+		job.kind === 'session' ||
+		job.kind === 'lesson'
 	) {
 		const [output] = await db()
 			.select({ id: t.outputs.id })
@@ -990,7 +1055,7 @@ async function generate(job: Job, workspace: string, signal: AbortSignal, progre
 	if (await alreadyPublished(job)) return;
 	const snapshot = job.payload.snapshot as Snapshot;
 	await writeData(workspace, 'sources.json', snapshot);
-	if (job.kind === 'quiz') await copyFigures(workspace, snapshot);
+	if (job.kind === 'quiz' || job.kind === 'lesson') await copyFigures(workspace, snapshot);
 	const run: GenerationRun = {
 		job,
 		workspace,
@@ -1001,7 +1066,7 @@ async function generate(job: Job, workspace: string, signal: AbortSignal, progre
 	};
 	switch (job.kind) {
 		case 'grade':
-			return gradeAttempt(run);
+			return job.lessonAnswerId ? gradeLessonAnswer(run) : gradeAttempt(run);
 		case 'chat':
 			return answerChat(run);
 		case 'quiz':
@@ -1010,6 +1075,8 @@ async function generate(job: Job, workspace: string, signal: AbortSignal, progre
 			return createAudio(run);
 		case 'session':
 			return createStudySession(run);
+		case 'lesson':
+			return createLesson(run);
 		case 'summary':
 			return createSummary(run);
 		default:
@@ -1185,6 +1252,18 @@ export async function settleJobTarget(
 			)
 			.where(eq(t.materials.id, job.materialId));
 	}
+	if (job.lessonAnswerId)
+		await tx
+			.update(t.lessonAnswers)
+			.set({ status: outcome === 'retried' ? 'grading' : 'failed' })
+			.where(
+				and(
+					eq(t.lessonAnswers.id, job.lessonAnswerId),
+					outcome === 'retried'
+						? ne(t.lessonAnswers.status, 'graded')
+						: eq(t.lessonAnswers.status, 'grading')
+				)
+			);
 	if (job.attemptId)
 		await tx
 			.update(t.attempts)

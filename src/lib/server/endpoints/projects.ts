@@ -234,7 +234,12 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 			const generated = await tx
 				.select({ id: t.jobs.id })
 				.from(t.jobs)
-				.where(and(eq(t.jobs.projectId, id), inArray(t.jobs.kind, ['audio', 'session', 'quiz'])));
+				.where(
+					and(
+						eq(t.jobs.projectId, id),
+						inArray(t.jobs.kind, ['audio', 'session', 'quiz', 'lesson'])
+					)
+				);
 			await tx.delete(t.projects).where(eq(t.projects.id, id));
 			return { sources, generated };
 		});

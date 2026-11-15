@@ -21,6 +21,7 @@ import type {
 	Citation,
 	FeedbackHeader,
 	JobKind,
+	LessonInfo,
 	QuestionAnswer,
 	Quiz,
 	Grade,
@@ -409,12 +410,13 @@ export const outputs = pgTable(
 		projectId: uuid('project_id')
 			.notNull()
 			.references(() => projects.id, { onDelete: 'cascade' }),
-		kind: text('kind').$type<'summary' | 'quiz' | 'audio' | 'session'>().notNull(),
+		kind: text('kind').$type<'summary' | 'quiz' | 'audio' | 'session' | 'lesson'>().notNull(),
 		title: text('title').notNull(),
 		content: text('content').notNull(),
 		quiz: jsonb('quiz').$type<Quiz>(),
 		audio: jsonb('audio').$type<AudioInfo>(),
 		study: jsonb('study').$type<StudyInfo>(),
+		lesson: jsonb('lesson').$type<LessonInfo>(),
 		citations: jsonb('citations').$type<Citation[]>().notNull().default([]),
 		materialIds: jsonb('material_ids').$type<string[]>().notNull(),
 		sourceSnapshot: jsonb('source_snapshot').$type<Snapshot>().notNull(),
@@ -439,6 +441,25 @@ export const attempts = pgTable(
 		createdAt: time('created_at')
 	},
 	(t) => [index('attempts_output_idx').on(t.outputId)]
+);
+/** Every answer a learner gave in a lesson; the newest one per question is the current one. */
+export const lessonAnswers = pgTable(
+	'lesson_answers',
+	{
+		id: pk(),
+		outputId: uuid('output_id')
+			.notNull()
+			.references(() => outputs.id, { onDelete: 'cascade' }),
+		questionId: text('question_id').notNull(),
+		values: jsonb('values').$type<QuestionAnswer['values']>().notNull(),
+		result: jsonb('result').$type<Grade>().notNull(),
+		score: real('score').notNull(),
+		maxScore: real('max_score').notNull(),
+		status: text('status').$type<'graded' | 'grading' | 'failed'>().notNull(),
+		feedback: text('feedback').notNull().default(''),
+		createdAt: time('created_at')
+	},
+	(t) => [index('lesson_answers_question_idx').on(t.outputId, t.questionId, t.createdAt)]
 );
 /** One spoken pass through a study session; its position survives disconnects. */
 export const studyRuns = pgTable(
@@ -496,6 +517,7 @@ export const jobs = pgTable(
 		outputId: uuid('output_id'),
 		conversationId: uuid('conversation_id'),
 		attemptId: uuid('attempt_id'),
+		lessonAnswerId: uuid('lesson_answer_id'),
 		leaseOwner: text('lease_owner'),
 		leaseUntil: timestamp('lease_until', { withTimezone: true }),
 		tries: integer('tries').notNull().default(0),

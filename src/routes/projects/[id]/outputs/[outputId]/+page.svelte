@@ -18,6 +18,4 @@
 >
 	<ArrowLeft />All study tools
 </Button>
-<div class="max-w-5xl">
-	{#key outputId}<OutputViewer {outputId} materials={project.materials} />{/key}
-</div>
+{#key outputId}<OutputViewer {outputId} materials={project.materials} />{/key}

@@ -5,8 +5,12 @@ import * as t from '../db/schema';
 import {
 	answersSchema,
 	idSchema,
+	lessonQuestions,
+	lessonSchema,
+	questionAnswerSchema,
 	quizQuestions,
 	quizSchema,
+	type LessonAnswer,
 	type StudyAnswer,
 	type StudyRun
 } from '../../domain';
@@ -30,6 +34,7 @@ export const publicJob = (job: Job) => ({
 	outputId: job.outputId,
 	conversationId: job.conversationId,
 	attemptId: job.attemptId,
+	lessonAnswerId: job.lessonAnswerId,
 	createdAt: job.createdAt,
 	updatedAt: job.updatedAt
 });
@@ -42,6 +47,7 @@ export const publicOutput = (output: typeof t.outputs.$inferSelect) => ({
 	quiz: output.quiz,
 	audio: output.audio,
 	study: output.study,
+	lesson: output.lesson,
 	citations: output.citations,
 	materialIds: output.materialIds,
 	modelId: output.modelId,
@@ -69,7 +75,7 @@ async function findOutput(id: string | undefined) {
 		.select()
 		.from(t.outputs)
 		.where(eq(t.outputs.id, idSchema.parse(id)));
-	if (!output) error(404, 'Overview, quiz, audio summary or study session not found.');
+	if (!output) error(404, 'This study tool was not found.');
 	return output;
 }
 export const publicAnswer = (row: typeof t.studyAnswers.$inferSelect): StudyAnswer => ({
@@ -113,11 +119,33 @@ export async function studyRuns(outputId: string): Promise<StudyRun[]> {
 		answers: answers.filter((answer) => answer.runId === run.id).map(publicAnswer)
 	}));
 }
-/** An overview, quiz, audio summary or study session with its attempts or runs, newest first. */
+export const publicLessonAnswer = (row: typeof t.lessonAnswers.$inferSelect): LessonAnswer => ({
+	id: row.id,
+	questionId: row.questionId,
+	values: row.values,
+	result: row.result,
+	status: row.status,
+	feedback: row.feedback,
+	createdAt: row.createdAt.toISOString()
+});
+/** The newest answer to each question of a lesson: where the learner stands. */
+async function lessonAnswers(outputId: string) {
+	const rows = await db()
+		.select()
+		.from(t.lessonAnswers)
+		.where(eq(t.lessonAnswers.outputId, outputId))
+		.orderBy(desc(t.lessonAnswers.createdAt));
+	const newest = new Map<string, LessonAnswer>();
+	for (const row of rows)
+		if (!newest.has(row.questionId)) newest.set(row.questionId, publicLessonAnswer(row));
+	return [...newest.values()];
+}
+/** An output with what was done with it: quiz attempts, study runs or lesson answers. */
 export async function outputDetails(id: string | undefined) {
 	const output = await findOutput(id);
 	return {
 		output: publicOutput(output),
+		answers: output.kind === 'lesson' ? await lessonAnswers(output.id) : [],
 		attempts: await db()
 			.select()
 			.from(t.attempts)
@@ -160,9 +188,56 @@ export const outputs: Handler = async ({ event, method, id, action, seq }) => {
 	}
 	if (action === 'images' && method === 'GET') {
 		// The id is looked up in the output's own list and never becomes part of a path unchecked.
-		const image = output.quiz?.images.find((item) => item.id === seq);
+		const images = output.quiz?.images ?? output.lesson?.lesson.images ?? [];
+		const image = images.find((item) => item.id === seq);
 		if (!image) error(404, 'Image not found.');
 		return download(event, outputImagePath(output.id, image.id), image.mimeType, image.label);
+	}
+	if (action === 'answers' && method === 'DELETE') {
+		if (output.kind !== 'lesson') error(404, 'This output is not a lesson.');
+		// Starting over forgets every answer; grading that is still running has nothing to save to.
+		await db().delete(t.lessonAnswers).where(eq(t.lessonAnswers.outputId, output.id));
+		return ok();
+	}
+	if (action === 'answers' && method === 'POST') {
+		if (!output.lesson) error(404, 'This output is not a lesson.');
+		const answer = questionAnswerSchema.parse(await readJson(event));
+		const question = lessonQuestions(lessonSchema.parse(output.lesson.lesson)).find(
+			(item) => item.id === answer.questionId
+		);
+		if (!question) error(404, 'Question not found.');
+		// Everything but free text is graded here and now, without Claude.
+		const result = gradeQuestion(question, answer.values);
+		const written = result.state === 'pending';
+		const modelId = written ? await gradingModel(output.modelId) : output.modelId;
+		const saved = await db().transaction(async (tx) => {
+			await lockProject(tx, output.projectId);
+			const [row] = await tx
+				.insert(t.lessonAnswers)
+				.values({
+					outputId: output.id,
+					questionId: question.id,
+					values: answer.values,
+					result,
+					score: result.score,
+					maxScore: result.maxScore,
+					status: written ? 'grading' : 'graded'
+				})
+				.returning();
+			if (!written) return { row, job: undefined };
+			const [job] = await tx
+				.insert(t.jobs)
+				.values({
+					projectId: output.projectId,
+					kind: 'grade',
+					queue: 'interactive',
+					lessonAnswerId: row.id,
+					payload: { snapshot: output.sourceSnapshot, modelId }
+				})
+				.returning();
+			return { row, job };
+		});
+		return accepted({ answer: publicLessonAnswer(saved.row), jobId: saved.job?.id });
 	}
 	if (action === 'attempts' && method === 'POST') {
 		const { answers } = answersSchema.parse(await readJson(event));

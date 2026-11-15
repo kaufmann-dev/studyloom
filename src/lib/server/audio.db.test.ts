@@ -6,6 +6,7 @@ import { db, closeDatabase } from './db';
 import {
 	attempts,
 	jobs,
+	lessonAnswers,
 	materials,
 	outputs,
 	projects,
@@ -22,6 +23,7 @@ import { callApi, useTestDatabase } from './testing';
 vi.mock('./claude', async (importOriginal) => ({
 	...(await importOriginal<typeof import('./claude')>()),
 	validateModel: vi.fn(async () => {}),
+	gradingModel: vi.fn(async (modelId: string) => modelId),
 	claudeRun: vi.fn()
 }));
 vi.mock('./elevenlabs', () => ({
@@ -464,6 +466,221 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Quizzes', () => {
 				body: { answers: [{ questionId: 'nope', values: {} }] }
 			}).catch((cause) => cause);
 			expect(unknown).toMatchObject({ status: 400 });
+		} finally {
+			await stop();
+			await db().delete(projects).where(eq(projects.id, project.id));
+			await closeDatabase();
+			await environment.restore();
+		}
+	});
+});
+
+describe.skipIf(!process.env.TEST_DATABASE_URL)('Lessons', () => {
+	it('writes chapter by chapter, resumes at the missing chapter and grades answers', async () => {
+		const environment = await useTestDatabase('lesson');
+		const [project] = await db().insert(projects).values({ name: 'Economics' }).returning();
+		const call = callApi;
+		const stop = startWorkers();
+		try {
+			const [material] = await db()
+				.insert(materials)
+				.values({
+					projectId: project.id,
+					name: 'Script',
+					filename: 'script.pdf',
+					mimeType: 'application/pdf',
+					kind: 'file',
+					status: 'ready',
+					contentFormat: 'markdown'
+				})
+				.returning();
+			await db()
+				.insert(sourceChunks)
+				.values([
+					{
+						materialId: material.id,
+						ordinal: 0,
+						locator: 'page:1',
+						text: 'Rentability relates profit to capital.'
+					},
+					{
+						materialId: material.id,
+						ordinal: 1,
+						locator: 'page:2#1',
+						kind: 'exercise',
+						text: '4. Rentability with a profit of 1.000 and equity of 4.000?'
+					},
+					{
+						materialId: material.id,
+						ordinal: 2,
+						locator: 'page:3',
+						text: 'Liquidity keeps a company able to pay.'
+					}
+				]);
+			const ref = (locator: string) => ({ materialId: material.id, locator });
+			const feedback = { correct: 'Profit over capital.', incorrect: 'Divide profit by capital.' };
+			const beat = (text: string) => ({
+				narration: text,
+				slide: { kind: 'content', markdown: `- ${text}` }
+			});
+			const outline = {
+				title: 'Key figures',
+				parts: [
+					{
+						title: 'Rentability',
+						sections: [
+							{
+								title: 'Profit and capital',
+								locators: [ref('page:1')],
+								exercises: [ref('page:2#1')]
+							}
+						]
+					},
+					{
+						title: 'Liquidity',
+						sections: [{ title: 'Able to pay', locators: [ref('page:3')], exercises: [] }]
+					}
+				]
+			};
+			const first = {
+				sections: [
+					{
+						title: 'Profit and capital',
+						beats: [beat('Rentability compares profit with capital.')],
+						questions: [
+							{
+								id: 'x',
+								body: 'Rentability: {{value}}',
+								fields: [{ id: 'value', type: 'number', correct: 25, unit: '%' }],
+								explanation: '1000 * 100 / 4000',
+								feedback,
+								sourceExercise: ref('page:2#1'),
+								citations: [ref('page:1')]
+							}
+						],
+						citations: [ref('page:1')]
+					}
+				]
+			};
+			const second = {
+				sections: [
+					{
+						title: 'Able to pay',
+						beats: [
+							beat('Liquidity means bills can be paid.'),
+							beat('Without it a company fails.')
+						],
+						questions: [
+							{
+								id: 'y',
+								body: 'Why does liquidity matter?\n\n{{why}}',
+								fields: [
+									{
+										id: 'why',
+										type: 'essay',
+										modelAnswer: 'It keeps the company solvent.',
+										rubric: 'Solvency'
+									}
+								],
+								explanation: 'See page 3.',
+								feedback,
+								citations: [ref('page:3')]
+							}
+						],
+						citations: [ref('page:3')]
+					}
+				]
+			};
+			const result = (structured: unknown) => ({ text: 'done', stderr: '', structured });
+			vi.mocked(claudeRun)
+				.mockReset()
+				.mockResolvedValueOnce(result(outline))
+				.mockResolvedValueOnce(result(first))
+				.mockRejectedValueOnce(new Error('Your Claude usage limit is reached.'));
+
+			const response = await call(`/api/projects/${project.id}/generate`, {
+				body: {
+					kind: 'lesson',
+					materialIds: [material.id],
+					modelId: 'test-model',
+					coverage: 'comprehensive'
+				}
+			});
+			const { jobId } = await response.json();
+			expect((await waitFor(jobId, 'failed')).error).toBe('Your Claude usage limit is reached.');
+
+			// The retry writes only the chapter that is missing.
+			vi.mocked(claudeRun).mockResolvedValueOnce(result(second));
+			await call(`/api/jobs/${jobId}/retry`, { body: {} });
+			await waitFor(jobId, 'succeeded');
+			expect(claudeRun).toHaveBeenCalledTimes(4);
+			await expect(access(join(outputDir(jobId), 'plan.json'))).rejects.toThrow();
+
+			const details = await (await call(`/api/outputs/${jobId}`)).json();
+			const { lesson } = details.output.lesson;
+			expect(lesson.chapters.map((chapter: { id: string }) => chapter.id)).toEqual(['c01', 'c02']);
+			const [exercise] = lesson.chapters[0].sections[0].questions;
+			const [written] = lesson.chapters[1].sections[0].questions;
+			expect(exercise.id).toBe('c01s01q1');
+			expect(lesson.chapters[1].sections[0].beats.map((item: { id: string }) => item.id)).toEqual([
+				'c02s01b1',
+				'c02s01b2'
+			]);
+			expect(details.output.content).toContain('## 2. Liquidity');
+			expect(details.answers).toEqual([]);
+
+			// A closed question is graded at once, without Claude.
+			const closed = await (
+				await call(`/api/outputs/${jobId}/answers`, {
+					body: { questionId: exercise.id, values: { value: '20' } }
+				})
+			).json();
+			expect(closed.jobId).toBeUndefined();
+			expect(closed.answer).toMatchObject({ status: 'graded', result: { state: 'incorrect' } });
+			await call(`/api/outputs/${jobId}/answers`, {
+				body: { questionId: exercise.id, values: { value: '25 %' } }
+			});
+
+			// Free text waits for Claude, whose feedback is what the tutor says.
+			vi.mocked(claudeRun).mockResolvedValueOnce(
+				result({
+					grades: [
+						{ questionId: written.id, fieldId: 'why', score: 0.5, feedback: 'Name solvency.' }
+					]
+				})
+			);
+			const open = await (
+				await call(`/api/outputs/${jobId}/answers`, {
+					body: { questionId: written.id, values: { why: 'Money matters.' } }
+				})
+			).json();
+			expect(open.answer.status).toBe('grading');
+			await waitFor(open.jobId, 'succeeded');
+			const after = await (await call(`/api/outputs/${jobId}`)).json();
+			// The newest answer per question is the current one.
+			expect(after.answers).toHaveLength(2);
+			expect(after.answers).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						questionId: exercise.id,
+						result: expect.objectContaining({ state: 'correct' })
+					}),
+					expect.objectContaining({
+						questionId: written.id,
+						status: 'graded',
+						feedback: 'Name solvency.',
+						result: expect.objectContaining({ state: 'partial', score: 0.5 })
+					})
+				])
+			);
+			expect(await db().select().from(lessonAnswers)).toHaveLength(3);
+
+			const unknown = await call(`/api/outputs/${jobId}/answers`, {
+				body: { questionId: 'nope', values: {} }
+			}).catch((cause) => cause);
+			expect(unknown).toMatchObject({ status: 404 });
+			await call(`/api/outputs/${jobId}/answers`, { method: 'DELETE' });
+			expect(await db().select().from(lessonAnswers)).toHaveLength(0);
 		} finally {
 			await stop();
 			await db().delete(projects).where(eq(projects.id, project.id));

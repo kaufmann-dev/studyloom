@@ -20,6 +20,7 @@
 		quiz: 'Quiz',
 		audio: 'Audio summary',
 		session: 'Study session',
+		lesson: 'Lesson',
 		grade: 'Grading'
 	};
 	let busy = $state('');

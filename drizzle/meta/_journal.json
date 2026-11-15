@@ -127,6 +127,13 @@
       "when": 1794687533387,
       "tag": "0017_question_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794704846638,
+      "tag": "0018_lessons",
+      "breakpoints": true
     }
   ]
 }

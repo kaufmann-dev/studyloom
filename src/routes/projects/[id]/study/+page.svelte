@@ -1,5 +1,12 @@
 <script lang="ts">
-	import { GraduationCap, Headphones, ListChecks, NotebookText, Sparkles } from '@lucide/svelte';
+	import {
+		GraduationCap,
+		Headphones,
+		ListChecks,
+		NotebookText,
+		Presentation,
+		Sparkles
+	} from '@lucide/svelte';
 	import type { StudyOutput } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
@@ -11,6 +18,7 @@
 
 	const project = getProject();
 	const TOOLS = [
+		{ kind: 'lesson', icon: Presentation },
 		{ kind: 'summary', icon: NotebookText },
 		{ kind: 'quiz', icon: ListChecks },
 		{ kind: 'audio', icon: Headphones },

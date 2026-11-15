@@ -520,6 +520,62 @@ export const quizSchema = z
 		if (new Set(ids).size !== ids.length)
 			ctx.addIssue({ code: 'custom', message: 'Question IDs must be unique.' });
 	});
+/** What the learner looks at during one step of an explanation. */
+export const slideSchema = z.discriminatedUnion('kind', [
+	/** One of the lesson's images, with a line saying what it shows. */
+	z.object({
+		kind: z.literal('image'),
+		image: outputImageSchema.shape.id,
+		caption: z.string().max(400)
+	}),
+	/** Markdown: a few key points, a table, a formula or a Mermaid diagram. */
+	z.object({ kind: z.literal('content'), markdown: z.string().min(1).max(6000) })
+]);
+export type Slide = z.infer<typeof slideSchema>;
+/** One step of an explanation: a slide and what the tutor says about it. */
+export const beatSchema = z.object({
+	id: z.string().min(1).max(40),
+	/** Spoken text; it is also the text of the beat's voice clip. */
+	narration: z.string().trim().min(1).max(900),
+	slide: slideSchema
+});
+export const lessonSectionSchema = z.object({
+	id: z.string().min(1).max(40),
+	title: z.string().min(1).max(200),
+	beats: z.array(beatSchema).min(1).max(5),
+	/** Asked after the explanation, each followed by feedback. */
+	questions: z.array(questionSchema).max(12),
+	citations: z.array(citationSchema).min(1).max(20)
+});
+export const lessonSchema = z
+	.object({
+		title: z.string().min(1).max(200),
+		chapters: z
+			.array(
+				z.object({
+					id: z.string().min(1).max(40),
+					title: z.string().min(1).max(200),
+					sections: z.array(lessonSectionSchema).min(1).max(30)
+				})
+			)
+			.min(1)
+			.max(60),
+		images: z.array(outputImageSchema).max(1000).default([])
+	})
+	.superRefine((lesson, ctx) => {
+		const sections = lesson.chapters.flatMap((chapter) => chapter.sections);
+		const ids = [
+			...sections.flatMap((section) => section.questions.map((question) => question.id)),
+			...sections.flatMap((section) => section.beats.map((beat) => beat.id))
+		];
+		if (new Set(ids).size !== ids.length)
+			ctx.addIssue({ code: 'custom', message: 'Beat and question ids must be unique.' });
+	});
+export type Lesson = z.infer<typeof lessonSchema>;
+export type LessonSection = z.infer<typeof lessonSectionSchema>;
+/** All questions of a lesson, in order. */
+export const lessonQuestions = (lesson: Lesson) =>
+	lesson.chapters.flatMap((chapter) => chapter.sections.flatMap((section) => section.questions));
 /** All questions of a quiz, in order. */
 export const quizQuestions = (quiz: z.infer<typeof quizSchema>) =>
 	quiz.parts.flatMap((part) => part.questions);
@@ -533,12 +589,12 @@ export type AudioStyle = keyof typeof AUDIO_STYLES;
 export const SPEAKER_LABELS: Record<string, string> = { tutor: 'Tutor', learner: 'Learner' };
 const elevenLabsId = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/, 'Choose a voice and model.');
 export const generationInput = z.object({
-	kind: z.enum(['summary', 'quiz', 'audio', 'session']),
+	kind: z.enum(['summary', 'quiz', 'audio', 'session', 'lesson']),
 	materialIds: sourceSelection,
 	modelId,
-	/** Audio summaries, study sessions and quizzes. */
+	/** Audio summaries, study sessions, quizzes and lessons. */
 	coverage: z.enum(COVERAGE_NAMES).default('standard'),
-	/** Quizzes only. */
+	/** Quizzes and lessons. */
 	questionStyles: z
 		.array(z.enum(QUESTION_STYLE_NAMES))
 		.min(1, 'Choose at least one kind of question.')
@@ -680,7 +736,7 @@ export type Quiz = z.infer<typeof quizSchema>;
 export type Question = z.infer<typeof questionSchema>;
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export type JobKind =
-	'ingest' | 'chat' | 'summary' | 'quiz' | 'audio' | 'session' | 'grade' | 'recover';
+	'ingest' | 'chat' | 'summary' | 'quiz' | 'audio' | 'session' | 'lesson' | 'grade' | 'recover';
 export const isActiveJob = (job: { status: JobStatus }) =>
 	job.status === 'queued' || job.status === 'running';
 /** A Library contact marked as lecturer, as assigned to a project. */
@@ -838,15 +894,31 @@ export interface StudyRun {
 export interface StudyOutput {
 	id: string;
 	projectId: string;
-	kind: 'summary' | 'quiz' | 'audio' | 'session';
+	kind: 'summary' | 'quiz' | 'audio' | 'session' | 'lesson';
 	title: string;
 	content: string;
 	quiz: Quiz | null;
 	audio: AudioInfo | null;
 	study: StudyInfo | null;
+	lesson: LessonInfo | null;
 	citations: Citation[];
 	materialIds: string[];
 	modelId: string;
+	createdAt: string;
+}
+/** A lesson as it is stored: what it teaches and how it was set up. */
+export interface LessonInfo {
+	lesson: Lesson;
+}
+/** One answer to a lesson question, graded at once except for free text. */
+export interface LessonAnswer {
+	id: string;
+	questionId: string;
+	values: Record<string, FieldValue>;
+	result: Grade;
+	status: 'graded' | 'grading' | 'failed';
+	/** What the tutor says about a written answer once Claude has graded it. */
+	feedback: string;
 	createdAt: string;
 }
 /** How one field of an answer was graded; `pending` waits for Claude to grade free text. */
@@ -888,6 +960,7 @@ export interface Job {
 	outputId: string | null;
 	conversationId: string | null;
 	attemptId: string | null;
+	lessonAnswerId: string | null;
 	createdAt: string;
 	updatedAt: string;
 }

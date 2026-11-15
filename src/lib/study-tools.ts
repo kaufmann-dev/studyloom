@@ -5,6 +5,14 @@ export const STUDY_TOOLS: Record<
 	StudyOutput['kind'],
 	{ one: string; many: string; heading: string; title: string; intro: string }
 > = {
+	lesson: {
+		one: 'lesson',
+		many: 'lessons',
+		heading: 'Lessons',
+		title: 'Learn it step by step',
+		intro:
+			'Each chapter is explained with slides and figures from your sources, then checked with questions you answer by typing and clicking.'
+	},
 	summary: {
 		one: 'summary',
 		many: 'summaries',

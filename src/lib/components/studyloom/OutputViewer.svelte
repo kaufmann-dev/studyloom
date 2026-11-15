@@ -4,6 +4,7 @@
 	import {
 		SPEAKER_LABELS,
 		type AudioInfo,
+		type LessonAnswer,
 		type Material,
 		type QuizAttempt,
 		type StudyOutput,
@@ -14,13 +15,19 @@
 	import { quizMarkdown } from '#lib/quiz-export.js';
 	import { api, copyText, dateLabel, downloadText, errorText, plural } from '#lib/ui.js';
 	import Citations from './Citations.svelte';
+	import LessonPlayer from './LessonPlayer.svelte';
 	import ErrorAlert from './ErrorAlert.svelte';
 	import Markdown from './Markdown.svelte';
 	import Attempt from './QuizAttempt.svelte';
 	import StudySession from './StudySession.svelte';
 
 	let { outputId, materials }: { outputId: string; materials: Material[] } = $props();
-	type OutputData = { output: StudyOutput; attempts: QuizAttempt[]; runs: StudyRun[] };
+	type OutputData = {
+		output: StudyOutput;
+		attempts: QuizAttempt[];
+		runs: StudyRun[];
+		answers: LessonAnswer[];
+	};
 	let data = $state.raw<OutputData | null>(null);
 	let error = $state('');
 	function voiceLabel(audio: AudioInfo) {
@@ -65,7 +72,7 @@
 	{@const { output } = data}
 	{@const quiz = output.kind === 'quiz'}
 	{@const audioUrl = `/api/outputs/${output.id}/audio`}
-	<article class="space-y-6">
+	<article class={['space-y-6', output.kind !== 'lesson' && 'max-w-5xl']}>
 		<div>
 			<h2 class="text-xl leading-snug font-semibold">{output.title}</h2>
 			<p class="mt-2 text-xs break-words text-muted-foreground">
@@ -107,10 +114,14 @@
 						? 'Download transcript'
 						: output.study
 							? 'Download plan'
-							: 'Download Markdown'}
+							: output.lesson
+								? 'Download contents'
+								: 'Download Markdown'}
 			</Button>
 		</div>
-		{#if output.kind === 'session'}
+		{#if output.kind === 'lesson'}
+			{#key output.id}<LessonPlayer {output} answers={data.answers} {materials} />{/key}
+		{:else if output.kind === 'session'}
 			<StudySession {output} runs={data.runs} {materials} onRefresh={() => poller.run()} />
 		{:else if quiz}
 			<Attempt {output} attempts={data.attempts} {materials} onRefresh={() => poller.run()} />
