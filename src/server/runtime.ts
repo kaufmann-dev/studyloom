@@ -8,6 +8,7 @@ import { origin, safeError } from '../lib/server/config';
 import { readSession } from '../lib/server/auth';
 import { putChunk } from '../lib/server/storage';
 import { finishRecording, startWorkers } from '../lib/server/jobs';
+import { repairAudioSummaries } from '../lib/server/audio';
 import { startMoodleSync } from '../lib/server/moodle';
 import {
 	openRealtimeAsr,
@@ -38,6 +39,10 @@ export async function attachRuntime(server: Server) {
 			notes: 'Recording interrupted. Resume or save from the browser that recorded it.'
 		})
 		.where(eq(t.materials.status, 'recording'));
+	// Summaries joined before header frames were stripped show only their first part on iOS.
+	void repairAudioSummaries().catch((cause) =>
+		console.error('Repairing audio summaries failed:', safeError(cause))
+	);
 	const stopWorkers = startWorkers();
 	const stopMoodleSync = startMoodleSync();
 	const wss = new WebSocketServer({ noServer: true, maxPayload: 96004 });

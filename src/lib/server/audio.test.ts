@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { concatMp3, firstFrameHeader, mp3DurationMs, silenceMp3, stripId3 } from './audio';
+import {
+	concatMp3,
+	firstFrameHeader,
+	mp3DurationMs,
+	silenceMp3,
+	stripHeaderFrames,
+	stripId3
+} from './audio';
 
 function id3(body: Buffer, footer = false) {
 	const header = Buffer.from([0x49, 0x44, 0x33, 4, 0, footer ? 0x10 : 0, 0, 0, 0, 0]);
@@ -63,5 +70,40 @@ describe('MP3 silence', () => {
 		expect(new Set(frames)).toEqual(new Set([417, 418]));
 		expect(Math.abs(mp3DurationMs(silence.length) - 4000)).toBeLessThan(15);
 		expect(silenceMp3(0, header)).toHaveLength(0);
+	});
+});
+
+describe('MP3 header frames', () => {
+	// MPEG-1 Layer III, no CRC, 128 kbps, 44.1 kHz: mono and joint stereo.
+	const mono = Buffer.from([0xff, 0xfb, 0x90, 0xc4]);
+	const stereo = Buffer.from([0xff, 0xfb, 0x90, 0x44]);
+	/** A 417-byte encoder header frame carrying `tag` where its channel mode puts it. */
+	function headerFrame(header: Buffer, tag: string) {
+		const frame = Buffer.alloc(417);
+		header.copy(frame);
+		frame.write(tag, tag === 'VBRI' ? 36 : header[3] >> 6 === 3 ? 21 : 36, 'latin1');
+		return frame;
+	}
+
+	it('drops the Info frame of every joined part', () => {
+		const audio = silenceMp3(500, mono);
+		const joined = concatMp3([
+			Buffer.concat([headerFrame(mono, 'Info'), audio]),
+			silenceMp3(250, mono),
+			Buffer.concat([headerFrame(mono, 'Info'), audio])
+		]);
+		expect(joined).toEqual(Buffer.concat([audio, silenceMp3(250, mono), audio]));
+	});
+	it('recognises Xing and VBRI headers in either channel mode', () => {
+		const audio = silenceMp3(100, stereo);
+		for (const tag of ['Xing', 'Info', 'VBRI'])
+			expect(stripHeaderFrames(Buffer.concat([headerFrame(stereo, tag), audio]))).toEqual(audio);
+		expect(stripHeaderFrames(Buffer.concat([headerFrame(mono, 'Xing'), audio]))).toEqual(audio);
+	});
+	it('returns audio without header frames as it is, and keeps bytes after non-frames', () => {
+		const audio = silenceMp3(300, mono);
+		expect(stripHeaderFrames(audio)).toBe(audio);
+		const tail = Buffer.concat([Buffer.from('TAG'), headerFrame(mono, 'Info')]);
+		expect(stripHeaderFrames(Buffer.concat([audio, tail]))).toEqual(Buffer.concat([audio, tail]));
 	});
 });
