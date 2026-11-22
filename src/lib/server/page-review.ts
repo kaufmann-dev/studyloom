@@ -38,7 +38,8 @@ export function figureProblem(chunks: { text: string }[], assets: { path: string
 
 export function validatePages(value: unknown, units: Unit[]) {
 	const result = pageReviewSchema.parse(value);
-	if (result.pages.length !== units.length) throw new Error(
+	if (result.pages.length !== units.length)
+		throw new Error(
 			`The file has ${result.pages.length} records; write exactly one per assigned unit (${units.length}).`
 		);
 	for (const [i, unit] of units.entries()) {

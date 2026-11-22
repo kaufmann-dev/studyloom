@@ -78,16 +78,32 @@ export function renderMarkdown(text: string, options: MarkdownOptions = {}): str
 }
 
 let diagrams = 0;
+let theme: string | undefined;
+// Mermaid cannot render two diagrams at once, so every text waits for the ones before it.
+let queue: Promise<void> = Promise.resolve();
+
 /** Draws the Mermaid blocks of a rendered text. A block that cannot be drawn keeps its source. */
-export async function renderDiagrams(blocks: HTMLElement[], dark: boolean, stale: () => boolean) {
+export function renderDiagrams(blocks: HTMLElement[], dark: boolean, stale: () => boolean) {
+	const run = queue.then(() => drawDiagrams(blocks, dark, stale));
+	queue = run.catch(() => {});
+	return run;
+}
+
+async function drawDiagrams(blocks: HTMLElement[], dark: boolean, stale: () => boolean) {
+	if (stale()) return;
 	const { default: mermaid } = await import('mermaid');
-	mermaid.initialize({
-		startOnLoad: false,
-		securityLevel: 'strict',
-		suppressErrorRendering: true,
-		theme: dark ? 'dark' : 'neutral'
-	});
+	const next = dark ? 'dark' : 'neutral';
+	if (theme !== next) {
+		theme = next;
+		mermaid.initialize({
+			startOnLoad: false,
+			securityLevel: 'strict',
+			suppressErrorRendering: true,
+			theme: next
+		});
+	}
 	for (const block of blocks) {
+		if (stale()) return;
 		const source = (block.dataset.source ??= block.textContent ?? '');
 		try {
 			const { svg } = await mermaid.render(`diagram-${++diagrams}`, source);

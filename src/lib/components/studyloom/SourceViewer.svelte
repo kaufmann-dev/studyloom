@@ -6,8 +6,9 @@
 	import { MediaQuery } from 'svelte/reactivity';
 	import { toast } from 'svelte-sonner';
 	import { Copy, Download, ExternalLink, FileSearch, RefreshCw, Trash2 } from '@lucide/svelte';
-	import type { ChunkKind, MaterialDetails } from '#lib/domain.js';
+	import type { ChunkKind, MaterialDetails, SourceChunk } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
+	import * as Pagination from '#lib/components/ui/pagination/index.js';
 	import * as Resizable from '#lib/components/ui/resizable/index.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { createPoller } from '#lib/polling.js';
@@ -38,11 +39,16 @@
 		{ value: 'exercise', label: 'Exercises' },
 		{ value: 'solution', label: 'Solutions' }
 	];
+	/** Sections a view fills up to with whole source units (pages, slides, …). */
+	const VIEW_SECTIONS = 25;
+	const unitOf = (chunkLocator: string) => chunkLocator.split('#')[0];
 	const wide = new MediaQuery('min-width: 1024px');
 	let data = $state.raw<MaterialDetails | null>(null);
 	let error = $state('');
 	let busy = $state(false);
 	let confirmingDelete = $state(false);
+	let notesOpen = $state(false);
+	let listTop: HTMLElement | undefined;
 	let tab = $state('');
 	/** Which kind of extracted text is listed. */
 	let kind = $state<ChunkKind | 'all'>('all');
@@ -62,6 +68,41 @@
 			(chunk) => kind === 'all' || chunk.kind === kind || chunk.locator === locator
 		) ?? []
 	);
+	/**
+	 * The listed chunks in views of about VIEW_SECTIONS sections. A source unit is never split:
+	 * `page:2#1` and `page:2#2` both belong to `page:2`.
+	 */
+	let views = $derived.by(() => {
+		const list: SourceChunk[][] = [];
+		let current: SourceChunk[] = [];
+		let unit = '';
+		for (const chunk of shown) {
+			const next = unitOf(chunk.locator);
+			if (next !== unit && current.length >= VIEW_SECTIONS) {
+				list.push(current);
+				current = [];
+			}
+			unit = next;
+			current.push(chunk);
+		}
+		if (current.length) list.push(current);
+		return list;
+	});
+	/** The view holding the cited passage; polling a processing source leaves it unchanged. */
+	let locatorView = $derived(
+		Math.max(
+			0,
+			views.findIndex((list) => list.some((chunk) => chunk.locator === locator))
+		) + 1
+	);
+	let view = $derived(locatorView);
+	let currentView = $derived(Math.min(view, Math.max(1, views.length)));
+	let visible = $derived(views[currentView - 1] ?? []);
+	let firstShown = $derived(
+		views.slice(0, currentView - 1).reduce((count, list) => count + list.length, 0)
+	);
+	let firstUnit = $derived(visible.length ? unitOf(visible[0].locator) : '');
+	let lastUnit = $derived(visible.length ? unitOf(visible[visible.length - 1].locator) : '');
 	let originalReady = $derived(
 		material
 			? material.kind === 'file'
@@ -119,6 +160,12 @@
 		media = element;
 		return () => {
 			media = undefined;
+		};
+	}
+	function trackListTop(element: HTMLElement) {
+		listTop = element;
+		return () => {
+			listTop = undefined;
 		};
 	}
 	function focusLocator(element: HTMLElement) {
@@ -186,13 +233,16 @@
 						variant={kind === filter.value ? 'secondary' : 'ghost'}
 						size="sm"
 						aria-pressed={kind === filter.value}
-						onclick={() => (kind = filter.value)}>{filter.label}</Button
+						onclick={() => {
+							kind = filter.value;
+							view = locatorView;
+						}}>{filter.label}</Button
 					>
 				{/each}
 			</div>
 		{/if}
-		<div class="space-y-6">
-			{#each shown as chunk (chunk.id)}
+		<div class="scroll-mt-5 space-y-6" {@attach trackListTop}>
+			{#each visible as chunk (chunk.id)}
 				{@const page = preview === 'pdf' ? pageOf(chunk.locator) : 0}
 				<section
 					data-locator={chunk.locator}
@@ -224,6 +274,36 @@
 				</section>
 			{/each}
 		</div>
+		{#if views.length > 1}
+			<div class="mt-8 space-y-3">
+				<p class="text-center text-xs text-muted-foreground">
+					{firstUnit}{lastUnit !== firstUnit ? ` – ${lastUnit}` : ''} · sections
+					{firstShown + 1}–{firstShown + visible.length} of {shown.length}
+				</p>
+				<Pagination.Root
+					count={views.length}
+					perPage={1}
+					bind:page={() => currentView, (next) => (view = next)}
+					onPageChange={() => listTop?.scrollIntoView({ block: 'start' })}
+				>
+					{#snippet children({ pages, currentPage })}
+						<Pagination.Content>
+							<Pagination.Item><Pagination.Previous /></Pagination.Item>
+							{#each pages as item (item.key)}
+								<Pagination.Item>
+									{#if item.type === 'ellipsis'}
+										<Pagination.Ellipsis />
+									{:else}
+										<Pagination.Link page={item} isActive={currentPage === item.value} />
+									{/if}
+								</Pagination.Item>
+							{/each}
+							<Pagination.Item><Pagination.Next /></Pagination.Item>
+						</Pagination.Content>
+					{/snippet}
+				</Pagination.Root>
+			</div>
+		{/if}
 	{:else}
 		<p class="text-sm text-muted-foreground">
 			{job?.status === 'paused'
@@ -312,7 +392,25 @@
 			</p>
 		</div>
 		{#if material.notes}
-			<p class="border-l-2 border-primary pl-3 text-sm text-muted-foreground">{material.notes}</p>
+			{@const long = material.notes.length > 300}
+			<div class="border-l-2 border-primary pl-3">
+				<p
+					id="source-notes"
+					class={['text-sm text-muted-foreground', long && !notesOpen && 'line-clamp-3']}
+				>
+					{material.notes}
+				</p>
+				{#if long}
+					<Button
+						variant="link"
+						size="xs"
+						class="px-0"
+						aria-expanded={notesOpen}
+						aria-controls="source-notes"
+						onclick={() => (notesOpen = !notesOpen)}>{notesOpen ? 'Show less' : 'Show more'}</Button
+					>
+				{/if}
+			</div>
 		{/if}
 		<div class="flex flex-wrap gap-2">
 			{#if material.sourceUrl}

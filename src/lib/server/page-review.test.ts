@@ -26,9 +26,9 @@ describe('figure references', () => {
 		expect(figureProblem([{ text }], [])).toContain('not listed in assets');
 		expect(figureProblem([{ text: 'No picture.' }], [figure])).toContain('not referenced');
 		expect(figureProblem([{ text }], [figure, figure])).toContain('twice');
-		expect(() =>
-			validatePages({ pages: [{ ...page, chunks: [{ text }] }] }, [unit])
-		).toThrow('page:121');
+		expect(() => validatePages({ pages: [{ ...page, chunks: [{ text }] }] }, [unit])).toThrow(
+			'page:121'
+		);
 	});
 });
 describe('page review validation', () => {
