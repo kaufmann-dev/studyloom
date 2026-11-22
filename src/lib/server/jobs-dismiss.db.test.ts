@@ -57,6 +57,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Interrupted jobs', () => {
 			// A retry with a model Claude Code no longer offers runs on the default instead.
 			const retired = await job('failed', 'retired-model');
 			const kept = await job('failed', 'opus');
+			expect((await (await callApi(`/api/jobs/${retired.id}`)).json()).job).not.toHaveProperty(
+				'canResumeCreation'
+			);
 			for (const { id } of [retired, kept])
 				expect((await callApi(`/api/jobs/${id}/retry`, { body: {} })).status).toBe(202);
 			const [retried] = await db().select().from(jobs).where(eq(jobs.id, retired.id));

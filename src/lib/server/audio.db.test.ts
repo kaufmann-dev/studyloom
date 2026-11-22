@@ -137,6 +137,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Audio summaries', () => {
 			const { jobId } = await response.json();
 			const failed = await waitFor(jobId, 'failed');
 			expect(failed.error).toBe('ElevenLabs credits are used up.');
+			expect(await (await call(`/api/jobs/${jobId}`)).json()).toMatchObject({
+				job: { canResumeCreation: true }
+			});
 			const voices = [
 				{ speaker: 'tutor', voiceId: 'voice1', voiceName: 'Rachel' },
 				{ speaker: 'learner', voiceId: 'voice2', voiceName: 'Adam' }
@@ -608,6 +611,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Lessons', () => {
 			});
 			const { jobId } = await response.json();
 			expect((await waitFor(jobId, 'failed')).error).toBe('Your Claude usage limit is reached.');
+
+			const workspace = await (await call(`/api/projects/${project.id}`)).json();
+			expect(workspace.jobs).toContainEqual(
+				expect.objectContaining({ id: jobId, canResumeCreation: true })
+			);
 
 			// The retry writes only the chapter that is missing.
 			vi.mocked(claudeRun).mockResolvedValueOnce(result(second));

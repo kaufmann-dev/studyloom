@@ -178,7 +178,7 @@ export async function projectWorkspace(rawId: string | undefined) {
 		})),
 		conversations,
 		outputs,
-		jobs: jobs.map(publicJob)
+		jobs: await Promise.all(jobs.map(publicJob))
 	};
 }
 

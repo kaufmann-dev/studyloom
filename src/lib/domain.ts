@@ -1009,6 +1009,7 @@ export interface Job {
 	kind: JobKind;
 	status: JobStatus;
 	review?: ReviewProgress;
+	canResumeCreation?: boolean;
 	resetsAt?: string | null;
 	progress: string;
 	error: string | null;

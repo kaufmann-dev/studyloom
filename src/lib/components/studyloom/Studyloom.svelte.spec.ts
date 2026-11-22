@@ -760,3 +760,47 @@ describe('Resumable source processing', () => {
 		);
 	});
 });
+
+describe('Interrupted study tool creation', () => {
+	it('labels the saved job Resume creation and retries its existing ID', async () => {
+		const lesson: Job = {
+			id: 'lesson-1',
+			projectId: 'project-1',
+			materialId: null,
+			kind: 'lesson',
+			status: 'failed',
+			canResumeCreation: true,
+			progress: '',
+			error: 'Interrupted',
+			outputId: null,
+			conversationId: null,
+			attemptId: null,
+			lessonAnswerId: null,
+			createdAt: '2026-11-22T08:00:00Z',
+			updatedAt: '2026-11-22T09:00:00Z'
+		};
+		const quiz: Job = { ...lesson, id: 'quiz-2', kind: 'quiz', canResumeCreation: false };
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => response({}));
+		const onChanged = vi.fn();
+		render(JobActivity, { jobs: [lesson, quiz], materials: [], onChanged });
+		await page.getByText('Interrupted jobs (2)').click();
+		await expect
+			.element(
+				page
+					.getByRole('listitem')
+					.filter({ hasText: 'Quiz' })
+					.getByRole('button', { name: 'Retry' })
+			)
+			.toBeVisible();
+		await page
+			.getByRole('listitem')
+			.filter({ hasText: 'Lesson' })
+			.getByRole('button', { name: 'Resume creation' })
+			.click();
+		await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/jobs/lesson-1/retry',
+			expect.objectContaining({ method: 'POST' })
+		);
+	});
+});

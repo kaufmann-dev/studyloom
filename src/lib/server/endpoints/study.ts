@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises';
+import { rm, stat } from 'node:fs/promises';
 import { reviewDirectory } from '../review-checkpoints';
 import { error } from '@sveltejs/kit';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
@@ -20,11 +20,12 @@ import {
 } from '../../domain';
 import { released, settleJobTarget } from '../jobs';
 import { gradeQuestion } from '../grading';
-import { outputImagePath, removeOutputFiles } from '../outline';
+import { outputImagePath, planPath, removeOutputFiles } from '../outline';
 import { speechCatalog } from '../elevenlabs';
 import { ensureClip, existingClip, removeClips } from '../lesson-voice';
 import { offeredModel } from '../claude';
-import { audioFile, removeAudioFiles } from '../audio';
+import { manifestPath } from '../voicing';
+import { audioDir, audioFile, removeAudioFiles } from '../audio';
 import { accepted, download, ok, readJson, type Handler } from './http';
 import {
 	JOBS_WITH_FILES,
@@ -37,8 +38,28 @@ import {
 	type Job
 } from './queries';
 
+// Workers atomically publish these files after validating the outline, script or session plan.
+async function hasCreationCheckpoint(job: Job) {
+	if (job.status !== 'failed' && job.status !== 'cancelled') return false;
+	let path: string;
+	switch (job.kind) {
+		case 'lesson':
+		case 'quiz':
+			path = planPath(job.id);
+			break;
+		case 'audio':
+		case 'session':
+			path = manifestPath(audioDir(job.id));
+			break;
+		default:
+			return false;
+	}
+	return (await stat(path, { throwIfNoEntry: false }))?.isFile() ?? false;
+}
+
 // Job payloads and source snapshots stay on the server.
-export const publicJob = (job: Job) => ({
+export const publicJob = async (job: Job) => ({
+	...((await hasCreationCheckpoint(job)) && { canResumeCreation: true }),
 	id: job.id,
 	projectId: job.projectId,
 	materialId: job.materialId,
@@ -368,7 +389,7 @@ export const jobs: Handler = async ({ method, id, action }) => {
 		.from(t.jobs)
 		.where(eq(t.jobs.id, idSchema.parse(id)));
 	if (!job) error(404);
-	if (!action && method === 'GET') return Response.json({ job: publicJob(job) });
+	if (!action && method === 'GET') return Response.json({ job: await publicJob(job) });
 	if (action === 'cancel' && method === 'POST') {
 		await db().transaction(async (tx) => {
 			const [cancelled] = await tx

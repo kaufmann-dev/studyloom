@@ -177,7 +177,7 @@ export function planOutline(
 	);
 }
 
-const planPath = (id: string) => join(outputDir(id), 'plan.json');
+export const planPath = (id: string) => join(outputDir(id), 'plan.json');
 /** The stages of a job that are already paid for. `parts` holds finished parts in order. */
 export interface Plan<T> {
 	outline?: Outline;

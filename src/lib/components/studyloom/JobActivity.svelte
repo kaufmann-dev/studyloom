@@ -154,7 +154,8 @@
 								variant="ghost"
 								size="sm"
 								disabled={busy === job.id}
-								onclick={() => act(job, 'retry')}>Retry</Button
+								onclick={() => act(job, 'retry')}
+								>{job.canResumeCreation ? 'Resume creation' : 'Retry'}</Button
 							>
 							<Button
 								variant="ghost"
