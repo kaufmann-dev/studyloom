@@ -12,7 +12,7 @@ import { connectMoodle, disconnectMoodle, moodleStatus, syncMoodle } from '../mo
 import { selectEvents } from './events';
 import { ok, readJson, type Handler } from './http';
 import { findProject } from './queries';
-import { feedbackFields, selectTasks } from './tasks';
+import { moodleWindowFields, selectTasks } from './tasks';
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const BATCH = 500;
@@ -50,7 +50,7 @@ export async function feedResponse(token: string) {
 	return calendarResponse(
 		buildFeed({
 			events,
-			tasks: tasks.map((row) => ({ ...row, ...feedbackFields(row) })),
+			tasks: tasks.map((row) => ({ ...row, ...moodleWindowFields(row) })),
 			timeZone: feed.timeZone,
 			now: new Date()
 		}),

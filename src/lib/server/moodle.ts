@@ -6,7 +6,7 @@ import { db, type Transaction } from './db';
 import * as t from './db/schema';
 import { parseIcs, type ParsedEvent } from './ics-import';
 import { visibleTask } from './endpoints/queries';
-import { feedbackPairs } from './moodle-feedback';
+import { availabilityPairs } from './moodle-windows';
 import { fetchWebPage } from './web-page';
 
 const ROW_ID = 1;
@@ -80,6 +80,7 @@ async function store(tx: Transaction, parsed: ParsedEvent[], today: string) {
 					dueDate: task.startDate,
 					dueTime: task.startTime,
 					moodleFeedbackCourse: task.moodleFeedbackCourse ?? null,
+					moodleQuizKey: task.moodleQuizKey ?? null,
 					source: 'moodle' as const
 				}))
 			)
@@ -91,6 +92,7 @@ async function store(tx: Transaction, parsed: ParsedEvent[], today: string) {
 					dueDate: excluded(k.dueDate),
 					dueTime: excluded(k.dueTime),
 					moodleFeedbackCourse: excluded(k.moodleFeedbackCourse),
+					moodleQuizKey: excluded(k.moodleQuizKey),
 					source: excluded(k.source),
 					updatedAt: new Date()
 				}
@@ -119,11 +121,11 @@ async function store(tx: Transaction, parsed: ParsedEvent[], today: string) {
 				: undefined
 		)
 	);
-	await linkFeedbackWindows(tx);
+	await linkAvailabilityWindows(tx);
 }
 
 /** Keep the original Moodle UIDs so future updates and a narrowing feed window are lossless. */
-async function linkFeedbackWindows(tx: Transaction) {
+async function linkAvailabilityWindows(tx: Transaction) {
 	const k = t.tasks;
 	const rows = await tx
 		.select({
@@ -133,6 +135,7 @@ async function linkFeedbackWindows(tx: Transaction) {
 			dueDate: k.dueDate,
 			dueTime: k.dueTime,
 			moodleFeedbackCourse: k.moodleFeedbackCourse,
+			moodleQuizKey: k.moodleQuizKey,
 			moodleOpeningId: k.moodleOpeningId,
 			completedAt: k.completedAt
 		})
@@ -140,11 +143,15 @@ async function linkFeedbackWindows(tx: Transaction) {
 		.where(
 			and(
 				eq(k.source, 'moodle'),
-				or(isNotNull(k.moodleFeedbackCourse), isNotNull(k.moodleOpeningId))
+				or(
+					isNotNull(k.moodleFeedbackCourse),
+					isNotNull(k.moodleQuizKey),
+					isNotNull(k.moodleOpeningId)
+				)
 			)
 		)
 		.for('update');
-	const pairs = feedbackPairs(rows);
+	const pairs = availabilityPairs(rows);
 	const stale = rows.filter(
 		(row) => row.moodleOpeningId && pairs.get(row.id) !== row.moodleOpeningId
 	);
@@ -191,7 +198,7 @@ async function runSync() {
 		const body = page.body.toString('utf8');
 		if (!/^\uFEFF?\s*BEGIN:VCALENDAR/i.test(body))
 			throw new ClientError(400, 'Moodle did not return a calendar. Check the address.');
-		const parsed = parseIcs(body, row.timeZone);
+		const parsed = parseIcs(body, row.timeZone, new URL(page.url).origin);
 		const today = toWallClock(new Date(), row.timeZone).date;
 		await db().transaction((tx) => store(tx, parsed.events, today));
 		await db()

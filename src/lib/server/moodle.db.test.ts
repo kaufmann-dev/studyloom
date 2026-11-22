@@ -100,6 +100,61 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Moodle calendar sync', () => {
 			await environment.restore();
 		}
 	});
+	it('pairs quiz markers only when their course and single quiz link agree', async () => {
+		const environment = await useTestDatabase('moodle-quiz-windows');
+		const today = toWallClock(new Date(), 'UTC').date;
+		const opening = addDays(today, -1);
+		const closing = addDays(today, 5);
+		const quizLink = (id: number) => `https://moodle.test/mod/quiz/view.php?id=${id}`;
+		const quiz = (uid: string, phase: 'beginnt' | 'endet', urls: string[], course = 'Course-A') =>
+			entry(
+				uid,
+				`Multiple-Choice-Test ${phase}`,
+				phase === 'beginnt' ? opening : closing,
+				'1200'
+			).replace(
+				'DESCRIPTION:',
+				`CATEGORIES:${course}\r\nDESCRIPTION:Quiz [1]\\n${urls.join('\\n')}`
+			);
+		const open = quiz('quiz-open', 'beginnt', [quizLink(12)]);
+		const close = quiz('quiz-close', 'endet', [quizLink(12)]);
+		const list = async (status = 'open'): Promise<Task[]> =>
+			(await (await callApi(`/api/tasks?status=${status}`)).json()).tasks;
+
+		try {
+			serve(
+				calendar(
+					open,
+					close,
+					quiz('different-id', 'endet', [quizLink(15)]),
+					quiz('different-course', 'endet', [quizLink(12)], 'Course-B'),
+					quiz('foreign', 'endet', [quizLink(12).replace('moodle.test', 'foreign.test')]),
+					quiz('ambiguous', 'endet', [quizLink(12), quizLink(15)]),
+					quiz('missing', 'endet', [])
+				)
+			);
+			const connected = await callApi('/api/calendar/moodle', {
+				method: 'PUT',
+				body: { url: ADDRESS, timeZone: 'UTC' }
+			});
+			expect(await connected.json()).toMatchObject({ tasks: 6, lastError: null });
+			const tasks = await list();
+			const paired = tasks.find((task) => task.title === 'Multiple-Choice-Test')!;
+			expect(paired).toMatchObject({ opensDate: opening, opensTime: '12:00', dueDate: closing });
+			expect(tasks.filter((task) => task.opensDate)).toHaveLength(1);
+			await callApi(`/api/tasks/${paired.id}`, { method: 'PATCH', body: { done: true } });
+			serve(calendar(close));
+			const synced = await callApi('/api/calendar/moodle/sync', { body: {} });
+			expect(await synced.json()).toMatchObject({ tasks: 1, lastError: null });
+			expect(await list('done')).toContainEqual(
+				expect.objectContaining({ id: paired.id, opensDate: opening, dueDate: closing })
+			);
+		} finally {
+			await callApi('/api/calendar/moodle', { method: 'DELETE' });
+			await closeDatabase();
+			await environment.restore();
+		}
+	});
 	it('syncs sessions as events and due dates as tasks, read-only except ticking off', async () => {
 		const environment = await useTestDatabase('moodle');
 		vi.stubEnv('ORIGIN', 'https://studyloom.test');

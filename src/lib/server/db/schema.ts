@@ -159,6 +159,7 @@ export const tasks = pgTable(
 		dueDate: date('due_date', { mode: 'string' }).notNull(),
 		dueTime: text('due_time'),
 		moodleFeedbackCourse: text('moodle_feedback_course'),
+		moodleQuizKey: text('moodle_quiz_key'),
 		moodleOpeningId: uuid('moodle_opening_id').references((): AnyPgColumn => tasks.id, {
 			onDelete: 'set null'
 		}),

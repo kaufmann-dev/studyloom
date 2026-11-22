@@ -1,0 +1,1 @@
+ALTER TABLE "tasks" ADD COLUMN "moodle_quiz_key" text;

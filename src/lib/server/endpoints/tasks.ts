@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { randomUUID } from 'node:crypto';
 import { alias } from 'drizzle-orm/pg-core';
-import { feedbackMarker } from '../moodle-feedback';
+import { availabilityMarker, feedbackMarker } from '../moodle-windows';
 import { and, asc, desc, eq, getTableColumns, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '../db';
@@ -12,7 +12,7 @@ import { created, ok, readJson, type Handler } from './http';
 import { findProject, visibleTask } from './queries';
 
 const DONE_LIMIT = 200;
-const opening = alias(t.tasks, 'feedback_opening');
+const opening = alias(t.tasks, 'moodle_opening');
 const columns = {
 	...getTableColumns(t.tasks),
 	projectName: t.projects.name,
@@ -30,8 +30,10 @@ export const selectTasks = (where?: SQL) =>
 		.where(and(visibleTask, where));
 type TaskRow = Awaited<ReturnType<typeof selectTasks>>[number];
 
-export function feedbackFields(row: TaskRow) {
-	const marker = row.source === 'moodle' && feedbackMarker(row.title);
+export function moodleWindowFields(row: TaskRow) {
+	const marker =
+		row.source === 'moodle' &&
+		(row.moodleQuizKey ? availabilityMarker(row.title) : feedbackMarker(row.title));
 	return {
 		title: marker && row.opensDate ? marker.title : row.title,
 		opensDate: row.opensDate,
@@ -44,7 +46,7 @@ function publicTask(row: TaskRow) {
 		id: row.id,
 		projectId: row.projectId,
 		projectName: row.projectName,
-		...feedbackFields(row),
+		...moodleWindowFields(row),
 		notes: row.notes,
 		dueDate: row.dueDate,
 		dueTime: row.dueTime,

@@ -1,4 +1,4 @@
-import { feedbackMarker } from './moodle-feedback';
+import { availabilityMarker, feedbackMarker } from './moodle-windows';
 import { randomUUID } from 'node:crypto';
 import { parseDate, parseDateTime } from '@internationalized/date';
 import {
@@ -23,6 +23,7 @@ import { ClientError } from './config';
 
 export interface ParsedEvent {
 	moodleFeedbackCourse?: string;
+	moodleQuizKey?: string;
 	uid: string;
 	title: string;
 	location: string;
@@ -190,16 +191,33 @@ interface Span {
 	endDate: string;
 	endTime: string | null;
 }
-/** Only a single, explicit course and an exact one-off feedback title can identify a pair. */
-function readFeedbackCourse(reader: Reader, span: Span) {
-	if (!reader.raw('UID') || reader.raw('RRULE') || reader.all('EXDATE').length) return;
+/** Moodle puts module URLs in the description's link references or in the URL property. */
+function quizKey(reader: Reader, course: string, moodleOrigin: string) {
+	const references = unescapeText([reader.raw('URL'), reader.raw('DESCRIPTION')].join('\n'));
+	const ids = new Set<string>();
+	for (const match of references.matchAll(/https?:\/\/[^\s<>"']+/g)) {
+		const link = URL.parse(match[0].replace(/&amp;/g, '&'));
+		if (link?.origin !== moodleOrigin || !/\/mod\/quiz\/view\.php$/.test(link.pathname)) continue;
+		const values = link.searchParams.getAll('id');
+		if (values.length === 1 && /^[1-9]\d*$/.test(values[0])) ids.add(values[0]);
+	}
+	if (ids.size === 1) return JSON.stringify([moodleOrigin, course, [...ids][0]]);
+}
+
+function readMoodleWindow(reader: Reader, span: Span, moodleOrigin?: string) {
+	if (!moodleOrigin || !reader.raw('UID') || reader.raw('RRULE') || reader.all('EXDATE').length)
+		return;
 	if (!span.startTime || span.startDate !== span.endDate || span.startTime !== span.endTime) return;
 	const title = unescapeText(reader.raw('SUMMARY'));
-	if (title.length > 200 || !feedbackMarker(title)) return;
+	if (title.length > 200 || !availabilityMarker(title)) return;
 	const categories = reader.all('CATEGORIES');
 	if (categories.length !== 1) return;
-	const category = categories[0].value.trim();
-	if (category && !category.replace(/\\./g, '').includes(',')) return unescapeText(category);
+	const rawCourse = categories[0].value.trim();
+	if (!rawCourse || rawCourse.replace(/\\./g, '').includes(',')) return;
+	const course = unescapeText(rawCourse);
+	if (feedbackMarker(title)) return { moodleFeedbackCourse: course };
+	const key = quizKey(reader, course, moodleOrigin);
+	if (key) return { moodleQuizKey: key };
 }
 function readSpan(reader: Reader): Span | undefined {
 	const start = reader.moment(reader.all('DTSTART')[0]);
@@ -312,7 +330,7 @@ function readRule(reader: Reader, span: Span): Rule | undefined {
  * Reads an iCalendar file into events and tasks. Times given in UTC or a known time zone
  * become wall-clock time in `timeZone`; everything else is kept as written.
  */
-export function parseIcs(text: string, timeZone: string): ParsedCalendar {
+export function parseIcs(text: string, timeZone: string, moodleOrigin?: string): ParsedCalendar {
 	const skips = new Map<string, number>();
 	const skip = (reason: string) => void skips.set(reason, (skips.get(reason) ?? 0) + 1);
 	const events = new Map<string, ParsedEvent[]>();
@@ -371,12 +389,12 @@ export function parseIcs(text: string, timeZone: string): ParsedCalendar {
 			if (reader.raw('RRULE') && !rule)
 				skip('Repeat rules without an equivalent (imported as single events)');
 			const length = diffDays(span.endDate, span.startDate);
-			const feedbackCourse = readFeedbackCourse(reader, span);
+			const moodleWindow = readMoodleWindow(reader, span, moodleOrigin);
 			const series = (rule?.starts ?? [span.startDate]).map(
 				(startDate, index, all): ParsedEvent => ({
 					uid: all.length > 1 ? `${uid}-${index + 1}` : uid,
 					...content(reader),
-					...(feedbackCourse && { moodleFeedbackCourse: feedbackCourse }),
+					...moodleWindow,
 					...span,
 					startDate,
 					endDate: addDays(startDate, length),
