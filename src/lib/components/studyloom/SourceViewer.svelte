@@ -449,15 +449,17 @@
 			</Button>
 		</div>
 		{#if split}
-			<!-- The pane group sets an inline height of 100%, so the height belongs to its parent. -->
+			<!-- The pane group sets an inline height of 100%, so the height belongs to its parent.
+			     The scrolling panes are `relative` so absolutely positioned descendants (such as
+			     screen-reader-only labels) stay inside them instead of lengthening the page. -->
 			<div class="h-[78vh] border">
 				<Resizable.PaneGroup direction="horizontal">
 					<Resizable.Pane defaultSize={50} minSize={25} class="p-4">
-						<div class="h-full overflow-y-auto">{@render original()}</div>
+						<div class="relative h-full overflow-y-auto">{@render original()}</div>
 					</Resizable.Pane>
 					<Resizable.Handle withHandle />
 					<Resizable.Pane defaultSize={50} minSize={25}>
-						<div class="h-full overflow-y-auto p-5">{@render content(data)}</div>
+						<div class="relative h-full overflow-y-auto p-5">{@render content(data)}</div>
 					</Resizable.Pane>
 				</Resizable.PaneGroup>
 			</div>
