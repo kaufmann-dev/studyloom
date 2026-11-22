@@ -449,15 +449,18 @@
 			</Button>
 		</div>
 		{#if split}
-			<Resizable.PaneGroup direction="horizontal" class="h-[78vh] border">
-				<Resizable.Pane defaultSize={50} minSize={25} class="p-4">
-					<div class="h-full overflow-y-auto">{@render original()}</div>
-				</Resizable.Pane>
-				<Resizable.Handle withHandle />
-				<Resizable.Pane defaultSize={50} minSize={25}>
-					<div class="h-full overflow-y-auto p-5">{@render content(data)}</div>
-				</Resizable.Pane>
-			</Resizable.PaneGroup>
+			<!-- The pane group sets an inline height of 100%, so the height belongs to its parent. -->
+			<div class="h-[78vh] border">
+				<Resizable.PaneGroup direction="horizontal">
+					<Resizable.Pane defaultSize={50} minSize={25} class="p-4">
+						<div class="h-full overflow-y-auto">{@render original()}</div>
+					</Resizable.Pane>
+					<Resizable.Handle withHandle />
+					<Resizable.Pane defaultSize={50} minSize={25}>
+						<div class="h-full overflow-y-auto p-5">{@render content(data)}</div>
+					</Resizable.Pane>
+				</Resizable.PaneGroup>
+			</div>
 		{:else}
 			{@render content(data)}
 		{/if}
