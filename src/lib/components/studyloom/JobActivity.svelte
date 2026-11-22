@@ -109,7 +109,7 @@
 				<ul class="divide-y border">
 					{#each resumable as job (job.id)}
 						<li class="flex flex-wrap items-center gap-3 px-3 py-2 text-xs">
-							<Pause class="size-6 shrink-0" aria-hidden="true" />
+							<Pause class="size-[18px] shrink-0" aria-hidden="true" />
 							<div class="min-w-40 flex-1">
 								<p class="font-medium break-words">{nameOf(job) ?? 'Source'}</p>
 								<p class="text-muted-foreground">{savedProgress(job)}</p>
