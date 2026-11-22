@@ -1,21 +1,26 @@
 import { z } from 'zod';
-import { ingestionSchema } from '../domain';
+import { chunkResultSchema, ingestionSchema } from '../domain';
 import type { Ingestion, Unit } from './extract';
 import { figureReferences } from './figures';
 
+/** Claude writes a unit's chunks and figures; the server gives them the unit's locators. */
 export const pageReviewSchema = z.object({
 	pages: z
 		.array(
 			z.object({
 				locator: z.string(),
 				outcome: z.enum(['readable', 'partial', 'unreadable', 'blank']),
-				chunks: ingestionSchema.shape.chunks,
-				assets: ingestionSchema.shape.assets,
+				chunks: z.array(chunkResultSchema.omit({ locator: true })).max(2000),
+				assets: z
+					.array(ingestionSchema.shape.assets.unwrap().element.omit({ locator: true }))
+					.max(200)
+					.default([]),
 				notes: z.string().max(10000)
 			})
 		)
 		.max(8)
 });
+export type ReviewedPage = ReturnType<typeof validatePages>[number];
 
 /**
  * What is wrong between a text's figure references and the declared assets, if anything: every
@@ -33,19 +38,15 @@ export function figureProblem(chunks: { text: string }[], assets: { path: string
 
 export function validatePages(value: unknown, units: Unit[]) {
 	const result = pageReviewSchema.parse(value);
-	if (result.pages.length !== units.length) throw new Error('Missing page records.');
+	if (result.pages.length !== units.length) throw new Error(
+			`The file has ${result.pages.length} records; write exactly one per assigned unit (${units.length}).`
+		);
 	for (const [i, unit] of units.entries()) {
 		const page = result.pages[i];
 		if (page.locator !== unit.locator)
-			throw new Error('Page records must match assigned pages in order.');
-		const owns = (locator: string) =>
-			locator === unit.locator ||
-			(locator.startsWith(`${unit.locator}#`) &&
-				/^[1-9][0-9]*$/.test(locator.slice(unit.locator.length + 1)));
-		if (page.chunks.some((c) => !owns(c.locator)) || page.assets.some((a) => !owns(a.locator)))
-			throw new Error('Invalid page locator.');
-		if (new Set(page.chunks.map((c) => c.locator)).size !== page.chunks.length)
-			throw new Error('Duplicate chunk locator.');
+			throw new Error(
+				`Record ${i + 1} has locator ${JSON.stringify(page.locator)}; the assigned units are ${units.map((u) => JSON.stringify(u.locator)).join(', ')} in this order.`
+			);
 		const problem = figureProblem(page.chunks, page.assets);
 		if (problem) throw new Error(`${unit.locator}: ${problem}`);
 		if ((page.outcome === 'blank' || page.outcome === 'unreadable') && page.chunks.length)
@@ -59,10 +60,18 @@ export function validatePages(value: unknown, units: Unit[]) {
 			page.notes = [...unit.limitations, page.notes].filter(Boolean).join('\n').slice(0, 10000);
 		}
 	}
-	return result.pages;
+	return result.pages.map((page) => ({
+		...page,
+		// One chunk is the unit itself; several are numbered in reading order.
+		chunks: page.chunks.map((chunk, n) => ({
+			...chunk,
+			locator: page.chunks.length > 1 ? `${page.locator}#${n + 1}` : page.locator
+		})),
+		assets: page.assets.map((asset) => ({ ...asset, locator: page.locator }))
+	}));
 }
 
-export function assemblePages(pages: z.infer<typeof pageReviewSchema>['pages']): Ingestion {
+export function assemblePages(pages: ReviewedPage[]): Ingestion {
 	const chunks = pages.flatMap((p) => p.chunks);
 	return ingestionSchema.parse({
 		status: !chunks.length

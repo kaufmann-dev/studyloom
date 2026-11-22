@@ -62,6 +62,7 @@ import {
 } from './outline';
 import {
 	pageReviewSchema,
+	type ReviewedPage,
 	validatePages,
 	assemblePages,
 	pageBatches,
@@ -211,6 +212,8 @@ export function missingArtifactError(artifact: string, result: ClaudeResult): Er
 	const detail = parts.length ? ` Last output: ${parts.join(' | ')}` : '';
 	return new Error(`Claude completed without writing ${artifact}.${detail} Retry this job.`);
 }
+const artifactContract = (artifact: string) =>
+	`The required artifact is ${artifact}. Use run_command to write valid JSON to ${artifact} in the working directory, verify that it exists, and do not finish until it is saved.`;
 /** Runs a task that must leave a JSON file artifact in the workspace, retrying once. */
 export async function runClaudeWithArtifact(
 	workspace: string,
@@ -220,7 +223,7 @@ export async function runClaudeWithArtifact(
 	signal: AbortSignal,
 	progress: Progress
 ) {
-	const contract = `The required artifact is ${artifact}. Use run_command to write valid JSON to ${artifact} in the working directory, verify that it exists, and do not finish until it is saved.`;
+	const contract = artifactContract(artifact);
 	const run = (task: string) =>
 		claudeRun({ workspace, modelId, system: systemPrompt, prompt: task, signal, progress });
 	const first = await run(`${prompt}\n${contract}`);
@@ -309,7 +312,7 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 		...(material.sourceUrl && { sourceUrl: material.sourceUrl })
 	};
 	if (prepared?.type === 'review') {
-		const reviewed: z.infer<typeof pageReviewSchema>['pages'] = [];
+		const reviewed: ReviewedPage[] = [];
 		for (const { offset, units } of pageBatches(prepared.units)) {
 			signal.throwIfAborted();
 			if (units.some((unit) => !unit.image)) throw new Error('Missing page review image.');
@@ -330,16 +333,18 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 				);
 				let validating = false;
 				try {
-					await claudeRun({
+					const result = await claudeRun({
 						workspace,
 						modelId,
 						system: systemPrompt,
 						signal,
 						progress,
 						requiredImages: units.map((unit) => unit.image!),
-						prompt: `Read ${inputName}. Visually inspect EVERY assigned unit image with view_image. Adjacent units are only context; emit exactly one record per assigned unit in order. Preserve all meaningful prose, table headers and row/value associations, signs, units, formulas and diagram relationships. Remove running headers, footers and page numbers. ${EXTRACTION_FORMAT} Keep chunks within an assigned unit, using its exact locator or a #1, #2 suffix. Label continuations. Render higher-resolution crops with available tools if you need a closer look. Never guess unclear values: report partial/unreadable and explain limitations. Blank units have no chunks. Spreadsheet unit text is structured JSON: preserve addresses, formulas, merged ranges, number formats, named ranges and chart source relationships. Separate originalCache (original OOXML cached result, if present) from engineValue (LibreOffice imported value); never claim the latter is a verified original result or a new calculation. Report missing caches, formula errors, external dependencies, unsupported features and material discrepancies as limitations. Hidden rows and columns are revealed for review and labeled as originally hidden in cell data. Describe charts from images, not just their data. Generated region boundaries are not original print layout. Save ${outputName} with schema ${JSON.stringify(z.toJSONSchema(pageReviewSchema))}. ${feedback}`
+						prompt: `Read ${inputName}. Visually inspect EVERY assigned unit image with view_image. Adjacent units are only context; emit exactly one record per assigned unit in order. Preserve all meaningful prose, table headers and row/value associations, signs, units, formulas and diagram relationships. Remove running headers, footers and page numbers. ${EXTRACTION_FORMAT} A record holds only its own unit's chunks, in reading order; Studyloom assigns chunk and figure locators. Label continuations. Render higher-resolution crops with available tools if you need a closer look. Never guess unclear values: report partial/unreadable and explain limitations. Blank units have no chunks. Spreadsheet unit text is structured JSON: preserve addresses, formulas, merged ranges, number formats, named ranges and chart source relationships. Separate originalCache (original OOXML cached result, if present) from engineValue (LibreOffice imported value); never claim the latter is a verified original result or a new calculation. Report missing caches, formula errors, external dependencies, unsupported features and material discrepancies as limitations. Hidden rows and columns are revealed for review and labeled as originally hidden in cell data. Describe charts from images, not just their data. Generated region boundaries are not original print layout. Save ${outputName} with schema ${JSON.stringify(z.toJSONSchema(pageReviewSchema))}. ${artifactContract(outputName)}${feedback}`
 					});
 					validating = true;
+					if (!(await artifactExists(workspace, outputName)))
+						throw missingArtifactError(outputName, result);
 					const pages = validatePages(await readArtifact(workspace, outputName), units);
 					for (const asset of pages.flatMap((page) => page.assets))
 						await scopedFile(join(workspace, 'files'), asset.path).catch(() => {
@@ -354,7 +359,7 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 						(!validating && !safeError(cause).startsWith('Visual review incomplete:'))
 					)
 						throw cause;
-					feedback = `Correct this validation failure: ${safeError(cause)}`;
+					feedback = `\nA previous attempt was rejected and its ${outputName} deleted: ${safeError(cause)} Review the units again and write the complete corrected ${outputName}.`;
 				}
 			}
 		}

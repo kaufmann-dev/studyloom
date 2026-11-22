@@ -4,7 +4,7 @@ const unit = { locator: 'page:121', text: 'table', image: 'pages/page-121.jpg' }
 const page = {
 	locator: unit.locator,
 	outcome: 'readable',
-	chunks: [{ locator: unit.locator, text: '|Cost|Value|\n|---|---|\n|Material|898366|' }],
+	chunks: [{ text: '|Cost|Value|\n|---|---|\n|Material|898366|' }],
 	assets: [],
 	notes: ''
 };
@@ -15,17 +15,19 @@ describe('figure references', () => {
 		expect(figureProblem([{ text }], [figure])).toBeUndefined();
 		const withFigure = {
 			...page,
-			chunks: [{ locator: unit.locator, text }],
-			assets: [{ ...figure, locator: unit.locator }]
+			chunks: [{ text }],
+			assets: [figure]
 		};
-		expect(validatePages({ pages: [withFigure] }, [unit])[0].assets).toHaveLength(1);
+		expect(validatePages({ pages: [withFigure] }, [unit])[0].assets).toEqual([
+			{ ...figure, locator: unit.locator }
+		]);
 	});
 	it('rejects a reference without its asset and an asset nobody shows', () => {
 		expect(figureProblem([{ text }], [])).toContain('not listed in assets');
 		expect(figureProblem([{ text: 'No picture.' }], [figure])).toContain('not referenced');
 		expect(figureProblem([{ text }], [figure, figure])).toContain('twice');
 		expect(() =>
-			validatePages({ pages: [{ ...page, chunks: [{ locator: unit.locator, text }] }] }, [unit])
+			validatePages({ pages: [{ ...page, chunks: [{ text }] }] }, [unit])
 		).toThrow('page:121');
 	});
 });
@@ -36,12 +38,21 @@ describe('page review validation', () => {
 		expect(() => validatePages({ pages: [] }, [unit])).toThrow();
 		expect(() => validatePages({ pages: [page, page] }, [unit])).toThrow();
 	});
-	it('rejects chunks attributed to other pages', () =>
-		expect(() =>
-			validatePages({ pages: [{ ...page, chunks: [{ locator: 'page:122', text: 'wrong' }] }] }, [
-				unit
-			])
-		).toThrow());
+	it('rejects records for other pages', () =>
+		expect(() => validatePages({ pages: [{ ...page, locator: 'page:122' }] }, [unit])).toThrow(
+			'"page:121"'
+		));
+	it('gives chunks the locators of their unit, whatever Claude wrote', () => {
+		const chunks = [
+			{ locator: 'page:121#intro', text: 'Intro' },
+			{ locator: 'page:121#q1', kind: 'exercise', text: '1. Why?' }
+		];
+		expect(validatePages({ pages: [{ ...page, chunks }] }, [unit])[0].chunks).toEqual([
+			{ locator: 'page:121#1', kind: 'text', text: 'Intro' },
+			{ locator: 'page:121#2', kind: 'exercise', text: '1. Why?' }
+		]);
+		expect(validatePages({ pages: [page] }, [unit])[0].chunks[0].locator).toBe('page:121');
+	});
 	it('requires limitations for unreadable pages', () =>
 		expect(() =>
 			validatePages({ pages: [{ ...page, outcome: 'unreadable', chunks: [] }] }, [unit])
@@ -71,25 +82,6 @@ it('batches 228 pages into 29 ordered batches without gaps', () => {
 	expect(batches.flatMap((batch) => batch.units)).toEqual(units);
 });
 
-it('treats spreadsheet punctuation literally when validating chunk suffixes', () => {
-	const unit = { locator: "sheet:'Budget [2026].(€)'!A1:H30", text: 'data' };
-	const page = {
-		locator: unit.locator,
-		outcome: 'readable',
-		chunks: [{ locator: unit.locator + '#2', text: 'table' }],
-		assets: [],
-		notes: ''
-	};
-	expect(validatePages({ pages: [page] }, [unit])).toHaveLength(1);
-	expect(() =>
-		validatePages(
-			{
-				pages: [{ ...page, chunks: [{ locator: "sheet:'Budget 2.x€'!A1:H30#2", text: 'wrong' }] }]
-			},
-			[unit]
-		)
-	).toThrow();
-});
 it('preserves preparation limitations even when the model says ready', () => {
 	const unit = {
 		locator: 'sheet:Budget!A1:B2',
@@ -102,7 +94,7 @@ it('preserves preparation limitations even when the model says ready', () => {
 				{
 					locator: unit.locator,
 					outcome: 'readable',
-					chunks: [{ locator: unit.locator, text: 'table' }],
+					chunks: [{ text: 'table' }],
 					assets: [],
 					notes: ''
 				}

@@ -112,7 +112,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Source ingestion', () => {
 							{
 								locator: 'page:1',
 								outcome: 'readable',
-								chunks: [{ locator: 'page:1', text: 'Water follows salt.' }],
+								chunks: [{ text: 'Water follows salt.' }],
 								assets: [],
 								notes: ''
 							}
@@ -165,12 +165,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Source ingestion', () => {
 								locator: 'page:1',
 								outcome: 'readable',
 								chunks: [
-									{ locator: 'page:1', text: `The cycle:\n\n![Cycle](figure:${figure})` },
-									{ locator: 'page:1#1', kind: 'exercise', text: '1. Who takes part?' }
+									{ text: `The cycle:\n\n![Cycle](figure:${figure})` },
+									{ kind: 'exercise', text: '1. Who takes part?' }
 								],
-								assets: [
-									{ path: figure, label: 'Cycle', mimeType: 'text/plain', locator: 'page:1' }
-								],
+								assets: [{ path: figure, label: 'Cycle', mimeType: 'text/plain' }],
 								notes: ''
 							}
 						]
