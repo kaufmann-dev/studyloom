@@ -287,6 +287,15 @@ export interface ClaudeResult {
 	structured?: unknown;
 	stderr: string;
 }
+export class ClaudeUsageLimit extends Error {
+	constructor(
+		message: string,
+		readonly resetsAt: Date | null
+	) {
+		super(message);
+	}
+}
+
 interface RunState {
 	result?: SDKResultMessage;
 	/** When a rejected rate limit resets, in epoch seconds; null when unknown. */
@@ -299,7 +308,7 @@ const resetTime = (until: number) =>
 /** Why a run produced no usable result, in words the job panel can show. */
 export function runFailure(state: RunState): string {
 	const { result, limitedUntil, assistantError, stderr } = state;
-	if (limitedUntil !== undefined)
+	if (limitedUntil !== undefined || assistantError === 'rate_limit')
 		return `Your Claude usage limit is reached${limitedUntil ? ` until ${resetTime(limitedUntil)} UTC` : ''}. Retry this job then.`;
 	const detail =
 		(result?.subtype === 'success' ? result.result : result?.errors?.join('; ')) ||
@@ -394,7 +403,17 @@ export async function claudeRun(input: {
 	}
 	state.stderr = stderr.text;
 	const result = state.result;
-	if (result?.subtype !== 'success' || result.is_error) throw new Error(runFailure(state));
+	if (result?.subtype !== 'success' || result.is_error) {
+		const message = runFailure(state);
+		if (state.limitedUntil !== undefined || state.assistantError === 'rate_limit') {
+			const until = state.limitedUntil;
+			throw new ClaudeUsageLimit(
+				message,
+				until ? new Date(until < 1e12 ? until * 1000 : until) : null
+			);
+		}
+		throw new Error(message);
+	}
 	for (const image of input.requiredImages ?? []) {
 		if (!viewed.has(await scopedFile(files, image)))
 			throw new Error(`Visual review incomplete: ${image}`);

@@ -1,14 +1,15 @@
 import { error } from '@sveltejs/kit';
-import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { db, type Transaction } from '../db';
 import * as t from '../db/schema';
+import { settleJobTarget } from '../jobs';
 import { idSchema } from '../../domain';
 
 export type Material = typeof t.materials.$inferSelect;
 export type Job = typeof t.jobs.$inferSelect;
 
 export const jobIsActive = inArray(t.jobs.status, ['queued', 'running']);
-export const jobIsInterrupted = inArray(t.jobs.status, ['failed', 'cancelled']);
+export const jobIsInterrupted = inArray(t.jobs.status, ['paused', 'failed', 'cancelled']);
 /** Generation jobs keep files under their own id (speech, plans, images), which their output takes over. */
 export const JOBS_WITH_FILES = ['audio', 'session', 'quiz', 'lesson'] as const;
 
@@ -58,6 +59,55 @@ export async function hasActiveJob(tx: Transaction, scope: SQL) {
 export function isUniqueViolation(value: unknown) {
 	return value && typeof value === 'object' && 'code' in value && value.code === '23505';
 }
+export async function latestMaterialJob(tx: Transaction, materialId: string) {
+	const [latest] = await tx
+		.select()
+		.from(t.jobs)
+		.where(eq(t.jobs.materialId, materialId))
+		.orderBy(desc(t.jobs.createdAt), desc(t.jobs.id))
+		.limit(1);
+	return latest;
+}
+
+async function checkSourceReaders(tx: Transaction, projectId: string, id: string) {
+	if (
+		await hasActiveJob(
+			tx,
+			and(
+				eq(t.jobs.projectId, projectId),
+				sql`jsonb_exists(${t.jobs.payload} -> 'materialIds', ${id})`
+			)!
+		)
+	)
+		error(409, 'Wait until the jobs that use this source are finished.');
+}
+
+/** Caller holds the project lock. Both source processing and job retry enter here. */
+export async function resumeReview(tx: Transaction, job: Job, payload: Job['payload']) {
+	if (job.status === 'queued' || job.status === 'running') return job;
+	if (!job.review || !job.materialId || job.status === 'succeeded')
+		error(409, 'This review cannot be resumed.');
+	await checkSourceReaders(tx, job.projectId, job.materialId);
+	const [queued] = await tx
+		.update(t.jobs)
+		.set({
+			status: 'queued',
+			progress: 'Waiting to resume',
+			resetsAt: null,
+			error: null,
+			tries: 0,
+			payload,
+			leaseOwner: null,
+			leaseUntil: null,
+			updatedAt: new Date()
+		})
+		.where(and(eq(t.jobs.id, job.id), jobIsInterrupted))
+		.returning();
+	if (!queued) error(409, 'This review has already changed.');
+	await settleJobTarget(tx, job, 'retried');
+	return queued;
+}
+
 /**
  * Moves a source to `processing` and queues its job, but only from one of the `from` statuses.
  * Returns the already active job when a concurrent request won, or nothing when the source moved on.
@@ -71,17 +121,12 @@ export async function enqueueMaterialJob(
 	try {
 		return await db().transaction(async (tx) => {
 			await lockProject(tx, source.projectId);
-			// A job that reads this source's text or figures must finish before they are replaced.
-			if (
-				await hasActiveJob(
-					tx,
-					and(
-						eq(t.jobs.projectId, source.projectId),
-						sql`jsonb_exists(${t.jobs.payload} -> 'materialIds', ${source.id})`
-					)!
-				)
-			)
-				error(409, 'Wait until the jobs that use this source are finished.');
+			if (kind === 'ingest') {
+				const latest = await latestMaterialJob(tx, source.id);
+				if (latest?.review && latest.status !== 'succeeded')
+					return resumeReview(tx, latest, { ...latest.payload, modelId: payload.modelId });
+			}
+			await checkSourceReaders(tx, source.projectId, source.id);
 			const [changed] = await tx
 				.update(t.materials)
 				.set({ status: 'processing', updatedAt: new Date() })

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, copyFile, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
-import { and, asc, eq, inArray, isNull, like, lt, ne, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, like, lt, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, type Transaction } from './db';
 import * as t from './db/schema';
@@ -16,6 +16,7 @@ import {
 	coverageBudget,
 	sourceStats,
 	type Coverage,
+	type ReviewProgress,
 	audioScriptSchema,
 	studyPlanSchema,
 	type StudyPlan,
@@ -63,14 +64,19 @@ import {
 import {
 	pageReviewSchema,
 	type ReviewedPage,
-	validatePages,
 	assemblePages,
 	pageBatches,
 	figureProblem
 } from './page-review';
 import { FIGURE_REFERENCE, MAX_FIGURE_BYTES, figureReferences, imageType } from './figures';
+import {
+	reviewDirectory,
+	readReviewBatch,
+	prepareReviewBatch,
+	saveReviewBatch
+} from './review-checkpoints';
 import { sniffFile } from './extract';
-import { claudeRun, type ClaudeResult } from './claude';
+import { claudeRun, ClaudeUsageLimit, type ClaudeResult } from './claude';
 import { transcribeFile } from './elevenlabs';
 import { prepareSource, transcriptChunk, type Ingestion, type Prepared } from './extract';
 import {
@@ -300,9 +306,11 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 		console.error('Source preparation failed:', safeError(cause));
 		progress('Preparation failed; Claude will read the file');
 	}
+	if (job.review && prepared?.type !== 'review')
+		throw new Error('The document can no longer be prepared for review.');
 	// Text and transcripts are stored as they came; what Claude extracts is Markdown.
 	if (prepared?.type === 'chunks')
-		return saveIngestion(job, material, prepared.result, 'plain', workspace, signal);
+		return saveIngestion(job, material, prepared.result, 'plain', join(workspace, 'files'), signal);
 	const modelId = String(job.payload.modelId || DEFAULT_MODEL);
 	const source = {
 		materialId: material.id,
@@ -312,9 +320,42 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 		...(material.sourceUrl && { sourceUrl: material.sourceUrl })
 	};
 	if (prepared?.type === 'review') {
+		const root = reviewDirectory(material.id, job.id);
+		const review: ReviewProgress = {
+			unit:
+				prepared.kind === 'slides'
+					? 'slides'
+					: prepared.kind === 'spreadsheet'
+						? 'regions'
+						: 'pages',
+			total: prepared.units.length,
+			saved: job.review?.saved ?? 0
+		};
+		if (job.review && (review.total !== job.review.total || review.unit !== job.review.unit))
+			throw new Error('The prepared document changed. Discard saved progress to process it again.');
+		const updateReview = async (tx: Transaction | ReturnType<typeof db>, saved: number) => {
+			const [updated] = await tx
+				.update(t.jobs)
+				.set({ review: { ...review, saved } })
+				.where(heldBy(job.id, job.leaseOwner))
+				.returning({ id: t.jobs.id });
+			if (!updated) throw new Error('Job was cancelled or superseded.');
+			review.saved = saved;
+		};
+		await updateReview(db(), review.saved);
 		const reviewed: ReviewedPage[] = [];
 		for (const { offset, units } of pageBatches(prepared.units)) {
 			signal.throwIfAborted();
+			const saved = await readReviewBatch(root, offset, units);
+			if (saved) {
+				reviewed.push(...saved);
+				if (reviewed.length > review.saved) await updateReview(db(), reviewed.length);
+				continue;
+			}
+			if (offset < review.saved)
+				throw new Error(
+					'Saved review data is missing. Discard saved progress to process the document again.'
+				);
 			if (units.some((unit) => !unit.image)) throw new Error('Missing page review image.');
 			const inputName = `review-${offset}.json`;
 			const outputName = `review-${offset}-result.json`;
@@ -345,11 +386,15 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 					validating = true;
 					if (!(await artifactExists(workspace, outputName)))
 						throw missingArtifactError(outputName, result);
-					const pages = validatePages(await readArtifact(workspace, outputName), units);
-					for (const asset of pages.flatMap((page) => page.assets))
-						await scopedFile(join(workspace, 'files'), asset.path).catch(() => {
-							throw new Error(`The asset ${asset.path} does not exist. Crop it with crop_image.`);
-						});
+					const raw = await readArtifact(workspace, outputName);
+					const batch = await prepareReviewBatch(raw, units, join(workspace, 'files'), offset);
+					validating = false;
+					const pages = await db().transaction(async (tx) => {
+						await assertJobOwned(tx, job);
+						await saveReviewBatch(root, offset, units, batch);
+						await updateReview(tx, offset + units.length);
+						return batch.pages;
+					});
 					reviewed.push(...pages);
 					break;
 				} catch (cause) {
@@ -363,7 +408,9 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 				}
 			}
 		}
-		return saveIngestion(job, material, assemblePages(reviewed), 'markdown', workspace, signal);
+		await saveIngestion(job, material, assemblePages(reviewed), 'markdown', root, signal);
+		await rm(root, { recursive: true, force: true });
+		return;
 	}
 	await runClaudeWithArtifact(
 		workspace,
@@ -376,7 +423,7 @@ export async function ingest(job: Job, workspace: string, signal: AbortSignal, p
 	const result = ingestionSchema.parse(await readArtifact(workspace, 'extracted.json'));
 	const problem = figureProblem(result.chunks, result.assets);
 	if (problem) throw new Error(`${problem} Retry this job.`);
-	await saveIngestion(job, material, result, 'markdown', workspace, signal);
+	await saveIngestion(job, material, result, 'markdown', join(workspace, 'files'), signal);
 }
 /**
  * Stores an extraction: its chunks, the figures cut out for it and the source's new status.
@@ -387,7 +434,7 @@ async function saveIngestion(
 	material: typeof t.materials.$inferSelect,
 	result: Ingestion,
 	contentFormat: 'plain' | 'markdown',
-	workspace: string,
+	files: string,
 	signal: AbortSignal
 ) {
 	if (new Set(result.chunks.map((c) => c.locator)).size !== result.chunks.length)
@@ -402,7 +449,7 @@ async function saveIngestion(
 	await mkdir(join(materialDir(material.id), 'assets'), { recursive: true, mode: 0o700 });
 	try {
 		for (const asset of result.assets) {
-			const source = await scopedFile(join(workspace, 'files'), asset.path);
+			const source = await scopedFile(files, asset.path);
 			if ((await stat(source)).size > MAX_FIGURE_BYTES)
 				throw new Error('An extracted figure exceeds 8 MiB.');
 			// The browser shows only real images, so the type comes from the file, not from Claude.
@@ -1279,7 +1326,7 @@ async function claimJob(queue: Queue, owner: string) {
 export async function settleJobTarget(
 	tx: Transaction | ReturnType<typeof db>,
 	job: Job,
-	outcome: 'failed' | 'cancelled' | 'retried',
+	outcome: 'failed' | 'cancelled' | 'retried' | 'paused' | 'discarded',
 	notes = ''
 ) {
 	if (job.materialId) {
@@ -1298,7 +1345,16 @@ export async function settleJobTarget(
 					? { status: 'processing', notes, updatedAt: new Date() }
 					: previous
 						? { ...previous, updatedAt: new Date() }
-						: { status: stopped, notes, updatedAt: new Date() }
+						: {
+								status:
+									outcome === 'discarded'
+										? 'stored'
+										: outcome === 'paused'
+											? 'processing'
+											: stopped,
+								notes,
+								updatedAt: new Date()
+							}
 			)
 			.where(eq(t.materials.id, job.materialId));
 	}
@@ -1329,15 +1385,34 @@ export async function settleJobTarget(
 }
 async function failJob(job: Job, cause: unknown) {
 	const message = safeError(cause);
-	const [failed] = await db()
-		.update(t.jobs)
-		.set({ status: 'failed', error: message, ...released() })
-		.where(heldBy(job.id, job.leaseOwner))
-		.returning({ id: t.jobs.id });
-	if (failed) await settleJobTarget(db(), job, 'failed', message);
+	await db().transaction(async (tx) => {
+		if (job.kind === 'ingest' && cause instanceof ClaudeUsageLimit) {
+			const [paused] = await tx
+				.update(t.jobs)
+				.set({
+					status: 'paused',
+					resetsAt: cause.resetsAt,
+					progress: 'Paused · Claude usage limit',
+					error: null,
+					...released()
+				})
+				.where(and(heldBy(job.id, job.leaseOwner), isNotNull(t.jobs.review)))
+				.returning({ id: t.jobs.id });
+			if (paused) {
+				await settleJobTarget(tx, job, 'paused');
+				return;
+			}
+		}
+		const [failed] = await tx
+			.update(t.jobs)
+			.set({ status: 'failed', error: message, ...released() })
+			.where(heldBy(job.id, job.leaseOwner))
+			.returning({ id: t.jobs.id });
+		if (failed) await settleJobTarget(tx, job, 'failed', message);
+	});
 }
 /** Runs one claimed job in a fresh workspace while a heartbeat keeps its lease alive. */
-async function runJob(job: Job, stop: AbortSignal) {
+export async function runJob(job: Job, stop: AbortSignal) {
 	const control = new AbortController();
 	const signal = AbortSignal.any([control.signal, stop]);
 	const workspace = join(dataDir(), 'jobs', job.id);

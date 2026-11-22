@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { and, asc, count, desc, eq, inArray, like } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNotNull, ne, or, like } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db, type Transaction } from '../db';
 import * as t from '../db/schema';
@@ -124,9 +124,24 @@ export async function projectWorkspace(rawId: string | undefined) {
 			db()
 				.select()
 				.from(t.jobs)
-				.where(eq(t.jobs.projectId, id))
-				.orderBy(desc(t.jobs.createdAt))
-				.limit(100),
+				.where(
+					and(
+						eq(t.jobs.projectId, id),
+						or(
+							inArray(
+								t.jobs.id,
+								db()
+									.select({ id: t.jobs.id })
+									.from(t.jobs)
+									.where(eq(t.jobs.projectId, id))
+									.orderBy(desc(t.jobs.createdAt))
+									.limit(100)
+							),
+							and(isNotNull(t.jobs.review), ne(t.jobs.status, 'succeeded'))
+						)
+					)
+				)
+				.orderBy(desc(t.jobs.createdAt)),
 			db()
 				.select({ materialId: t.sourceChunks.materialId, total: count() })
 				.from(t.sourceChunks)
@@ -234,9 +249,7 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 			const generated = await tx
 				.select({ id: t.jobs.id })
 				.from(t.jobs)
-				.where(
-					and(eq(t.jobs.projectId, id), inArray(t.jobs.kind, [...JOBS_WITH_FILES]))
-				);
+				.where(and(eq(t.jobs.projectId, id), inArray(t.jobs.kind, [...JOBS_WITH_FILES])));
 			await tx.delete(t.projects).where(eq(t.projects.id, id));
 			return { sources, generated };
 		});

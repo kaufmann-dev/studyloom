@@ -1,4 +1,4 @@
-import type { Material, ProjectMaterial } from './domain';
+import type { Job, Material, ProjectMaterial } from './domain';
 
 export const STATUS_LABELS: Record<Material['status'], string> = {
 	uploading: 'Upload incomplete',
@@ -31,7 +31,9 @@ export function sourceType(material: Material): string {
  * What processing can do for a file source now: start (a stored file or a finished upload), try
  * again after a failure, or redo an extraction that exists. Recordings are saved, not processed.
  */
-export function processAction(material: ProjectMaterial) {
+export function processAction(material: ProjectMaterial, job?: Job) {
+	if (job?.status === 'queued' || job?.status === 'running') return '';
+	if (canResumeReview(job)) return 'Resume processing';
 	if (material.kind !== 'file') {
 		// A recording whose final save failed can be saved again.
 		return material.status === 'failed' || material.status === 'partial' ? 'Retry saving' : '';
@@ -51,4 +53,26 @@ export function playingTime(ms: number) {
 	return minutes < 60
 		? `${minutes}:${rest}`
 		: `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${rest}`;
+}
+
+export function canResumeReview(job?: Job) {
+	return (
+		job?.kind === 'ingest' &&
+		(job.status === 'paused' ||
+			(Boolean(job.review) && (job.status === 'cancelled' || job.status === 'failed')))
+	);
+}
+
+export function savedProgress(job?: Job) {
+	const review = job?.review;
+	return review ? `${review.saved} of ${review.total} ${review.unit} saved` : '';
+}
+
+export function pauseNotice(job: Job) {
+	if (!job.resetsAt) return 'Claude usage limit reached. Resume when usage is available.';
+	const reset = new Date(job.resetsAt).toLocaleString(undefined, {
+		dateStyle: 'medium',
+		timeStyle: 'short'
+	});
+	return `Claude usage limit reached. Reported reset: ${reset}.`;
 }

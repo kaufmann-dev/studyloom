@@ -21,6 +21,8 @@ import type {
 	Citation,
 	FeedbackHeader,
 	JobKind,
+	JobStatus,
+	ReviewProgress,
 	LessonInfo,
 	QuestionAnswer,
 	Quiz,
@@ -507,11 +509,10 @@ export const jobs = pgTable(
 		materialId: uuid('material_id').references(() => materials.id, { onDelete: 'cascade' }),
 		kind: text('kind').$type<JobKind>().notNull(),
 		queue: text('queue').$type<'interactive' | 'background' | 'speech'>().notNull(),
-		status: text('status')
-			.$type<'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'>()
-			.notNull()
-			.default('queued'),
+		status: text('status').$type<JobStatus>().notNull().default('queued'),
 		payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+		review: jsonb('review').$type<ReviewProgress>(),
+		resetsAt: timestamp('resets_at', { withTimezone: true }),
 		progress: text('progress').notNull().default('Waiting to start'),
 		error: text('error'),
 		outputId: uuid('output_id'),

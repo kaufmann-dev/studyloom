@@ -12,14 +12,24 @@
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { createPoller } from '#lib/polling.js';
 	import { getProject } from '#lib/project.svelte.js';
-	import { STATUS_LABELS, playingTime, processAction, sourceType } from '#lib/sources.js';
+	import {
+		STATUS_LABELS,
+		playingTime,
+		processAction,
+		savedProgress,
+		sourceType
+	} from '#lib/sources.js';
 	import { api, copyText, downloadText, errorText, fileSize, plural } from '#lib/ui.js';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import ErrorAlert from './ErrorAlert.svelte';
 	import Markdown from './Markdown.svelte';
 
 	/** One source: its original beside what was extracted from it. */
-	let { materialId, locator = '' }: { materialId: string; locator?: string } = $props();
+	let {
+		materialId,
+		locator = '',
+		isNavigation
+	}: { materialId: string; locator?: string; isNavigation: () => boolean } = $props();
 	const project = getProject();
 	const PENDING = ['uploading', 'processing', 'recording', 'paused'];
 	const KIND_FILTERS: { value: ChunkKind | 'all'; label: string }[] = [
@@ -40,10 +50,11 @@
 	let pdfPage = $state(0);
 	let media: HTMLMediaElement | undefined;
 	let fileHref = $derived(`/api/materials/${materialId}/file`);
-	let material = $derived(data?.material);
 	/** The same source as the project lists it, which knows how much was extracted. */
 	let listed = $derived(project.materials.find((item) => item.id === materialId));
-	let action = $derived(listed ? processAction(listed) : '');
+	let material = $derived(listed ?? data?.material);
+	let job = $derived(project.ingestJobs.get(materialId));
+	let action = $derived(listed ? processAction(listed, job) : '');
 	let hasKinds = $derived(data?.chunks.some((chunk) => chunk.kind !== 'text') ?? false);
 	// A cited passage is always listed, whatever the filter says.
 	let shown = $derived(
@@ -98,7 +109,7 @@
 		error = '';
 		try {
 			data = await api<MaterialDetails>(`/api/materials/${materialId}`, { interaction });
-			return PENDING.includes(data.material.status);
+			return PENDING.includes(data.material.status) && job?.status !== 'paused';
 		} catch (cause) {
 			error = errorText(cause);
 			return false;
@@ -125,9 +136,8 @@
 	async function process() {
 		busy = true;
 		try {
-			await api(`/api/materials/${materialId}/process`, {
-				body: { modelId: project.processingModel }
-			});
+			if (!listed) return;
+			await project.processSource(listed);
 			await Promise.all([project.refresh(), poller.run()]);
 		} catch (cause) {
 			toast.error(errorText(cause));
@@ -142,7 +152,7 @@
 		await goto(resolve('/projects/[id]', { id: project.projectId }));
 	}
 	onMount(() => {
-		void poller.run(true);
+		void poller.run(isNavigation());
 		return poller.stop;
 	});
 </script>
@@ -216,9 +226,11 @@
 		</div>
 	{:else}
 		<p class="text-sm text-muted-foreground">
-			{details.material.status === 'processing'
-				? 'This source is still being processed.'
-				: 'No extracted text is available.'}
+			{job?.status === 'paused'
+				? 'The extracted text will be available when processing finishes.'
+				: material?.status === 'processing'
+					? 'This source is still being processed.'
+					: 'No extracted text is available.'}
 		</p>
 	{/if}
 {/snippet}
@@ -291,7 +303,8 @@
 			<p class="mt-1 text-xs text-muted-foreground">
 				{[
 					sourceType(material),
-					STATUS_LABELS[material.status],
+					job?.status === 'paused' ? 'Processing paused' : STATUS_LABELS[material.status],
+					...(job?.review && job.status !== 'succeeded' ? [savedProgress(job)] : []),
 					...(material.size ? [fileSize(material.size)] : []),
 					...(material.durationMs ? [playingTime(material.durationMs)] : []),
 					...(data.chunks.length ? [plural(data.chunks.length, 'section')] : [])

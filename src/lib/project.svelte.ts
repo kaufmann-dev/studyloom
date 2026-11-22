@@ -1,4 +1,5 @@
 import { createContext } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 import { availableModel } from './components/studyloom/ModelSelect.svelte';
 import {
 	DEFAULT_MODEL,
@@ -6,15 +7,14 @@ import {
 	isReadable,
 	type ClaudeModel,
 	type ClaudeStatus,
+	type Job,
 	type ProjectMaterial,
 	type ProjectWorkspace
 } from './domain';
+import { canResumeReview } from './sources';
 import { createPoller } from './polling';
 import { BrowserRecorder } from './recording/recorder.svelte';
 import { api, errorText } from './ui';
-
-const isWorking = (material: ProjectMaterial) =>
-	material.status === 'processing' || material.status === 'recording';
 
 /**
  * One open project, shared by its pages: the polled workspace, the Claude models and the sources
@@ -36,6 +36,14 @@ export class ProjectState {
 	leaveWarning = $state(false);
 	readonly processingModel = $derived(availableModel(this.models, this.preferredModel));
 	readonly materials = $derived(this.data?.materials ?? []);
+	readonly ingestJobs = $derived.by(() => {
+		const latest = new SvelteMap<string, Job>();
+		for (const job of this.data?.jobs ?? []) {
+			if (job.kind === 'ingest' && job.materialId && !latest.has(job.materialId))
+				latest.set(job.materialId, job);
+		}
+		return latest;
+	});
 	readonly readable = $derived(this.materials.filter(isReadable));
 
 	// Guards against a slow response overwriting a newer one.
@@ -59,12 +67,28 @@ export class ProjectState {
 				)
 			];
 			this.#knownReadable = available;
-			return result.jobs.some(isActiveJob) || result.materials.some(isWorking);
+			return (
+				result.jobs.some(isActiveJob) ||
+				result.materials.some(
+					(material) =>
+						material.status === 'recording' ||
+						(material.status === 'processing' &&
+							this.ingestJobs.get(material.id)?.status !== 'paused')
+				)
+			);
 		} catch (cause) {
 			this.error = errorText(cause);
 			return false;
 		}
 	});
+
+	processSource(material: ProjectMaterial) {
+		const job = this.ingestJobs.get(material.id);
+		if (job && canResumeReview(job)) return api(`/api/jobs/${job.id}/retry`, { body: {} });
+		return api(`/api/materials/${material.id}/process`, {
+			body: { modelId: this.processingModel }
+		});
+	}
 
 	constructor(projectId: string) {
 		this.projectId = projectId;

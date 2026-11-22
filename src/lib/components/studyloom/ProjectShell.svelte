@@ -157,6 +157,11 @@
 			<Button href={base} variant="outline" size="sm">Open recorder</Button>
 		</div>
 	{/if}
-	<JobActivity jobs={data.jobs} onChanged={project.refresh} class="mb-7" />
+	<JobActivity
+		jobs={data.jobs}
+		materials={data.materials}
+		onChanged={project.refresh}
+		class="mb-7"
+	/>
 	{@render children()}
 {/if}

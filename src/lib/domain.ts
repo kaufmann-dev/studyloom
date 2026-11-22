@@ -740,7 +740,12 @@ export const pastedTextInput = z.object({
 export type Citation = z.infer<typeof citationSchema>;
 export type Quiz = z.infer<typeof quizSchema>;
 export type Question = z.infer<typeof questionSchema>;
-export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type JobStatus = 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
+export interface ReviewProgress {
+	saved: number;
+	total: number;
+	unit: 'pages' | 'slides' | 'regions';
+}
 export type JobKind =
 	| 'ingest'
 	| 'chat'
@@ -771,7 +776,10 @@ export function interruptedJobs(jobs: Job[]) {
 			const target = jobTarget(job);
 			const replaced = target !== undefined && later.has(target);
 			if (target) later.add(target);
-			return !replaced && (job.status === 'failed' || job.status === 'cancelled');
+			return (
+				!replaced &&
+				(job.status === 'paused' || job.status === 'failed' || job.status === 'cancelled')
+			);
 		});
 }
 /** A Library contact marked as lecturer, as assigned to a project. */
@@ -1000,6 +1008,8 @@ export interface Job {
 	materialId: string | null;
 	kind: JobKind;
 	status: JobStatus;
+	review?: ReviewProgress;
+	resetsAt?: string | null;
 	progress: string;
 	error: string | null;
 	outputId: string | null;

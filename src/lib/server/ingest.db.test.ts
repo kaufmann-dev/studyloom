@@ -2,16 +2,18 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { asc, eq } from 'drizzle-orm';
-import { claudeRun } from './claude';
+import { claudeRun, ClaudeUsageLimit } from './claude';
 import { db, closeDatabase } from './db';
 import { assets, jobs, materials, projects, sourceChunks } from './db/schema';
 import { prepareSource } from './extract';
-import { ingest } from './jobs';
+import { ingest, runJob } from './jobs';
 import { materialDir, originalPath } from './storage';
-import { useTestDatabase } from './testing';
+import { reviewDirectory } from './review-checkpoints';
+import { callApi, useTestDatabase } from './testing';
 
 vi.mock('./claude', async (importOriginal) => ({
 	...(await importOriginal<typeof import('./claude')>()),
+	offeredModel: vi.fn(async () => 'default'),
 	claudeRun: vi.fn()
 }));
 vi.mock('./extract', async (importOriginal) => {
@@ -236,4 +238,138 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Source ingestion', () => {
 			await environment.restore();
 		}
 	});
+	it('resumes a 200-page document in a fresh worker workspace without repeating saved pages', async () => {
+		const environment = await useTestDatabase('review-resume');
+		const { material, job } = await queue(environment.data, 'large.pdf', '%PDF-1.7');
+		const root = reviewDirectory(material.id, job.id);
+		const units = Array.from({ length: 200 }, (_, i) => ({
+			locator: `page:${i + 1}`,
+			image: `pages/${i + 1}.jpg`,
+			text: `Page ${i + 1}`
+		}));
+		const firstPages: number[] = [];
+		const limit = new Date('2027-01-15T08:00:00Z');
+		let stopAt = 1;
+		const png = Buffer.from('89504e470d0a1a0a', 'hex');
+		const current = async () => (await db().select().from(jobs).where(eq(jobs.id, job.id)))[0];
+		const retry = () => callApi(`/api/jobs/${job.id}/retry`, { body: {} });
+		const runQueued = async () => {
+			const [claimed] = await db()
+				.update(jobs)
+				.set({ status: 'running', leaseOwner: 'next-worker' })
+				.where(eq(jobs.id, job.id))
+				.returning();
+			await runJob(claimed, AbortSignal.timeout(15000));
+		};
+		try {
+			vi.mocked(prepareSource).mockResolvedValue({ type: 'review', kind: 'pdf', units });
+			vi.mocked(claudeRun).mockImplementation(async ({ workspace, requiredImages }) => {
+				const first = Number(requiredImages![0].match(/(\d+)\.jpg$/)![1]);
+				firstPages.push(first);
+				if (first === stopAt)
+					throw new ClaudeUsageLimit('Usage exhausted', first === 1 ? null : limit);
+				const image = first === 1;
+				if (image) await writeFile(join(workspace, 'files', 'figure.png'), png);
+				const pages = units.slice(first - 1, first - 1 + requiredImages!.length).map((unit, i) => ({
+					locator: unit.locator,
+					outcome: 'readable',
+					notes: '',
+					chunks: [{ text: image && !i ? '![Example](figure:figure.png)' : unit.text }],
+					assets:
+						image && !i ? [{ path: 'figure.png', label: 'Example', mimeType: 'image/png' }] : []
+				}));
+				await writeFile(
+					join(workspace, 'files', `review-${first - 1}-result.json`),
+					JSON.stringify({ pages })
+				);
+				return { text: 'Saved.', stderr: '' };
+			});
+			await runJob(job, AbortSignal.timeout(15000));
+			expect(await current()).toMatchObject({
+				status: 'paused',
+				resetsAt: null,
+				review: { saved: 0, total: 200, unit: 'pages' }
+			});
+			stopAt = 97;
+			await Promise.all([retry(), retry()]);
+			await runQueued();
+			expect(await current()).toMatchObject({
+				status: 'paused',
+				resetsAt: limit,
+				review: { saved: 96 }
+			});
+			expect((await stored(material.id)).chunks).toHaveLength(0);
+			await db()
+				.insert(jobs)
+				.values(
+					Array.from({ length: 101 }, () => ({
+						projectId: material.projectId,
+						kind: 'summary' as const,
+						queue: 'background' as const,
+						status: 'succeeded' as const
+					}))
+				);
+			const workspace = await (await callApi(`/api/projects/${material.projectId}`)).json();
+			expect(workspace.jobs).toContainEqual(
+				expect.objectContaining({ id: job.id, status: 'paused', resetsAt: limit.toISOString() })
+			);
+			// An uncommitted directory left by a crashed writer must be ignored.
+			await mkdir(join(root, '.pending-incomplete'));
+			stopAt = 0;
+			firstPages.length = 0;
+			await retry();
+			await runQueued();
+			expect(firstPages).toEqual(Array.from({ length: 13 }, (_, i) => 97 + 8 * i));
+			expect(await current()).toMatchObject({ status: 'succeeded' });
+			const result = await stored(material.id);
+			expect(result.chunks.map((chunk) => chunk.locator)).toEqual(
+				units.map((unit) => unit.locator)
+			);
+			const figures = await db().select().from(assets).where(eq(assets.materialId, material.id));
+			expect(figures).toHaveLength(1);
+			expect(await readFile(figures[0].path)).toEqual(png);
+			expect(result.chunks[0].text).toBe(`![Example](asset:${figures[0].id})`);
+			await expect(readdir(root)).rejects.toMatchObject({ code: 'ENOENT' });
+		} finally {
+			await db().delete(projects).where(eq(projects.id, material.projectId));
+			await closeDatabase();
+			await environment.restore();
+		}
+	});
+	it.each(['discard', 'material', 'project'] as const)(
+		'cleans up paused review files on %s',
+		async (action) => {
+			const environment = await useTestDatabase('review-cleanup');
+			const { material, job } = await queue(environment.data, 'notes.pdf', '%PDF-1.7');
+			try {
+				await db()
+					.update(jobs)
+					.set({
+						status: 'paused',
+						leaseOwner: null,
+						review: { total: 16, saved: 8, unit: 'pages' }
+					})
+					.where(eq(jobs.id, job.id));
+				const root = reviewDirectory(material.id, job.id);
+				await mkdir(root, { recursive: true });
+				await writeFile(join(root, 'saved'), 'saved');
+				const path =
+					action === 'discard'
+						? `/api/jobs/${job.id}`
+						: action === 'material'
+							? `/api/materials/${material.id}`
+							: `/api/projects/${material.projectId}`;
+				expect((await callApi(path, { method: 'DELETE' })).status).toBe(200);
+				await expect(readdir(root)).rejects.toMatchObject({ code: 'ENOENT' });
+				if (action === 'discard') {
+					expect((await stored(material.id)).material.status).toBe('stored');
+					expect(await readFile(originalPath(material.id), 'utf8')).toBe('%PDF-1.7');
+				}
+			} finally {
+				await db().delete(projects).where(eq(projects.id, material.projectId));
+				await closeDatabase();
+				await environment.restore();
+			}
+		}
+	);
 });

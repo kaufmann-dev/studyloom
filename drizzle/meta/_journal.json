@@ -134,6 +134,13 @@
       "when": 1794704846638,
       "tag": "0018_lessons",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795346317005,
+      "tag": "0019_resumable_document_review",
+      "breakpoints": true
     }
   ]
 }

@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
+import JobActivity from './JobActivity.svelte';
 import Upload from './Upload.svelte';
 import WebSource from './WebSource.svelte';
 import PasteText from './PasteText.svelte';
 import type {
 	ClaudeModel,
+	Job,
 	Conversation,
 	LibraryEntry,
 	LibraryFolder,
@@ -696,5 +698,65 @@ describe('Tasks and calendar', () => {
 		await page.getByRole('button', { name: 'Task: Hand in essay, Today' }).click();
 		expect(onTask).toHaveBeenCalledOnce();
 		await expect.element(page.getByText('Later task')).not.toBeInTheDocument();
+	});
+});
+
+describe('Resumable source processing', () => {
+	const job: Job = {
+		id: 'review-1',
+		projectId: 'project-1',
+		materialId: 'source-1',
+		kind: 'ingest',
+		status: 'paused',
+		review: { saved: 64, total: 200, unit: 'pages' },
+		resetsAt: null,
+		progress: '',
+		error: null,
+		outputId: null,
+		conversationId: null,
+		attemptId: null,
+		lessonAnswerId: null,
+		createdAt: '2026-11-22T08:00:00Z',
+		updatedAt: '2026-11-22T09:00:00Z'
+	};
+	function renderPaused() {
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => response({}));
+		const onChanged = vi.fn();
+		render(JobActivity, {
+			jobs: [job],
+			materials: [{ id: 'source-1', name: 'Lecture notes.pdf' }],
+			onChanged
+		});
+		return { fetchMock, onChanged };
+	}
+
+	it('shows the saved pages and resumes the existing job on request', async () => {
+		const { fetchMock, onChanged } = renderPaused();
+		await expect.element(page.getByText('Lecture notes.pdf')).toBeVisible();
+		await expect.element(page.getByText('64 of 200 pages saved')).toBeVisible();
+		await expect
+			.element(page.getByText('Claude usage limit reached.', { exact: false }))
+			.toBeVisible();
+		expect(fetchMock).not.toHaveBeenCalled();
+		await page.getByRole('button', { name: 'Resume processing' }).click();
+		await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/jobs/review-1/retry',
+			expect.objectContaining({ method: 'POST' })
+		);
+	});
+
+	it('discards a checkpoint only after confirmation', async () => {
+		const { fetchMock, onChanged } = renderPaused();
+		await page.getByRole('button', { name: 'Discard progress' }).click();
+		const dialog = page.getByRole('alertdialog');
+		await expect.element(dialog).toBeVisible();
+		expect(fetchMock).not.toHaveBeenCalled();
+		await dialog.getByRole('button', { name: 'Discard progress' }).click();
+		await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/jobs/review-1',
+			expect.objectContaining({ method: 'DELETE' })
+		);
 	});
 });

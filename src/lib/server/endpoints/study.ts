@@ -1,3 +1,5 @@
+import { rm } from 'node:fs/promises';
+import { reviewDirectory } from '../review-checkpoints';
 import { error } from '@sveltejs/kit';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
@@ -30,6 +32,8 @@ import {
 	jobIsActive,
 	jobIsInterrupted,
 	lockProject,
+	latestMaterialJob,
+	resumeReview,
 	type Job
 } from './queries';
 
@@ -41,6 +45,7 @@ export const publicJob = (job: Job) => ({
 	kind: job.kind,
 	status: job.status,
 	progress: job.progress,
+	...(job.review && { review: job.review, resetsAt: job.resetsAt?.toISOString() ?? null }),
 	error: job.error,
 	outputId: job.outputId,
 	conversationId: job.conversationId,
@@ -376,11 +381,21 @@ export const jobs: Handler = async ({ method, id, action }) => {
 		return ok();
 	}
 	if (!action && method === 'DELETE') {
-		const [removed] = await db()
-			.delete(t.jobs)
-			.where(and(eq(t.jobs.id, job.id), jobIsInterrupted))
-			.returning({ id: t.jobs.id });
-		if (!removed) error(409, 'Only failed or cancelled jobs can be dismissed.');
+		const removed = await db().transaction(async (tx) => {
+			await lockProject(tx, job.projectId);
+			const latest = job.materialId ? await latestMaterialJob(tx, job.materialId) : undefined;
+			const [removed] = await tx
+				.delete(t.jobs)
+				.where(and(eq(t.jobs.id, job.id), jobIsInterrupted))
+				.returning();
+			if (!removed) error(409, 'Only interrupted jobs can be dismissed.');
+			if (removed.review && removed.materialId && latest?.id === removed.id) {
+				await settleJobTarget(tx, removed, 'discarded');
+			}
+			return removed;
+		});
+		if (removed.review && removed.materialId)
+			await rm(reviewDirectory(removed.materialId, removed.id), { recursive: true, force: true });
 		if ((JOBS_WITH_FILES as readonly string[]).includes(job.kind)) {
 			const [output] = await db()
 				.select({ id: t.outputs.id })
@@ -391,7 +406,7 @@ export const jobs: Handler = async ({ method, id, action }) => {
 		return ok();
 	}
 	if (action === 'retry' && method === 'POST') {
-		if (job.status !== 'failed' && job.status !== 'cancelled')
+		if (!job.review && job.status !== 'failed' && job.status !== 'cancelled')
 			error(409, 'Only failed or cancelled jobs can be retried.');
 		// A model Claude Code no longer offers would fail again, so the retry uses the default.
 		const payload =
@@ -400,6 +415,15 @@ export const jobs: Handler = async ({ method, id, action }) => {
 				: job.payload;
 		try {
 			await db().transaction(async (tx) => {
+				if (job.materialId && job.kind === 'ingest') {
+					await lockProject(tx, job.projectId);
+					const latest = await latestMaterialJob(tx, job.materialId);
+					if (latest?.id !== job.id) error(409, 'A newer job replaced this review.');
+					if (latest.review) {
+						await resumeReview(tx, latest, payload);
+						return;
+					}
+				}
 				const [retried] = await tx
 					.update(t.jobs)
 					.set({

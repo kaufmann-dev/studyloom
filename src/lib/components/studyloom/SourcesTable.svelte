@@ -22,7 +22,13 @@
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
 	import { getProject } from '#lib/project.svelte.js';
-	import { STATUS_LABELS, playingTime, processAction, sourceType } from '#lib/sources.js';
+	import {
+		STATUS_LABELS,
+		playingTime,
+		processAction,
+		savedProgress,
+		sourceType
+	} from '#lib/sources.js';
 	import { api, dateLabel, errorText, fileSize, plural } from '#lib/ui.js';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 
@@ -42,7 +48,11 @@
 	let deleting = $state.raw<ProjectMaterial | null>(null);
 	/** Rows ticked for processing in one go. */
 	let ticked = $state<string[]>([]);
-	let processable = $derived(project.materials.filter((material) => processAction(material)));
+	let processable = $derived(
+		project.materials.filter((material) =>
+			processAction(material, project.ingestJobs.get(material.id))
+		)
+	);
 	let chosen = $derived(processable.filter((material) => ticked.includes(material.id)));
 
 	const sortValue: Record<SortKey, (material: ProjectMaterial) => string | number> = {
@@ -50,7 +60,7 @@
 		type: (material) => sourceType(material),
 		size: (material) => material.size,
 		added: (material) => material.createdAt,
-		status: (material) => STATUS_LABELS[material.status]
+		status: statusLabel
 	};
 	let rows = $derived.by(() => {
 		const needle = filter.trim().toLowerCase();
@@ -79,13 +89,18 @@
 				? material.filename
 				: '';
 
+	function statusLabel(material: ProjectMaterial) {
+		return project.ingestJobs.get(material.id)?.status === 'paused'
+			? 'Processing paused'
+			: STATUS_LABELS[material.status];
+	}
 	function sortBy(key: SortKey) {
 		sort = { key, descending: sort.key === key ? !sort.descending : key === 'added' };
 	}
-	async function act(material: ProjectMaterial, path: string, body: unknown) {
+	async function act(material: ProjectMaterial, run: () => Promise<unknown>) {
 		busy = material.id;
 		try {
-			await api(path, { body });
+			await run();
 			await project.refresh();
 		} catch (cause) {
 			toast.error(errorText(cause));
@@ -93,8 +108,7 @@
 			busy = '';
 		}
 	}
-	const process = (material: ProjectMaterial) =>
-		api(`/api/materials/${material.id}/process`, { body: { modelId: project.processingModel } });
+
 	function tick(id: string, checked: boolean) {
 		ticked = checked ? [...ticked, id] : ticked.filter((value) => value !== id);
 	}
@@ -104,7 +118,7 @@
 		const failures: string[] = [];
 		for (const material of chosen) {
 			try {
-				await process(material);
+				await project.processSource(material);
 			} catch (cause) {
 				failures.push(`${material.name}: ${errorText(cause)}`);
 			}
@@ -197,8 +211,12 @@
 				</Table.Header>
 				<Table.Body>
 					{#each rows as material (material.id)}
-						{@const progress = material.status === 'processing' ? progressOf(material) : ''}
-						{@const action = processAction(material)}
+						{@const job = project.ingestJobs.get(material.id)}
+						{@const progress =
+							job?.status !== 'succeeded' && job?.review
+								? savedProgress(job)
+								: progressOf(material)}
+						{@const action = processAction(material, project.ingestJobs.get(material.id))}
 						<Table.Row>
 							<Table.Cell>
 								<Checkbox
@@ -236,11 +254,11 @@
 							<Table.Cell class="whitespace-nowrap">{dateLabel(material.createdAt)}</Table.Cell>
 							<Table.Cell class="max-w-56">
 								<p class="flex items-center gap-1.5">
-									{#if material.status === 'processing'}
+									{#if material.status === 'processing' && job?.status !== 'paused'}
 										<Spinner class="size-3" role="presentation" />
 									{/if}
 									<span class={[material.status === 'failed' && 'text-destructive']}>
-										{STATUS_LABELS[material.status]}
+										{statusLabel(material)}
 									</span>
 								</p>
 								{#if progress}
@@ -281,10 +299,7 @@
 										</DropdownMenu.Item>
 										{#if action}
 											<DropdownMenu.Item
-												onSelect={() =>
-													act(material, `/api/materials/${material.id}/process`, {
-														modelId: project.processingModel
-													})}
+												onSelect={() => act(material, () => project.processSource(material))}
 											>
 												<RefreshCw />{action}
 											</DropdownMenu.Item>
@@ -292,9 +307,11 @@
 										{#if material.kind === 'recording' && material.status === 'paused'}
 											<DropdownMenu.Item
 												onSelect={() =>
-													act(material, `/api/recordings/${material.id}/recover`, {
-														finalize: true
-													})}
+													act(material, () =>
+														api(`/api/recordings/${material.id}/recover`, {
+															body: { finalize: true }
+														})
+													)}
 											>
 												<Save />Save recording
 											</DropdownMenu.Item>
