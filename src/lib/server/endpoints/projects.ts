@@ -25,7 +25,7 @@ import { validateModel } from '../claude';
 import { addPastedText, addWebSource } from '../sources';
 import { removeMaterialFiles } from '../storage';
 import { accepted, created, ok, readJson, type Handler } from './http';
-import { findProject, hasActiveJob, lockProject } from './queries';
+import { JOBS_WITH_FILES, findProject, hasActiveJob, lockProject } from './queries';
 import { publicJob } from './study';
 
 type ProjectRow = typeof t.projects.$inferSelect;
@@ -231,15 +231,11 @@ export const projects: Handler = async ({ event, method, id: rawId, action }) =>
 				.select({ id: t.materials.id })
 				.from(t.materials)
 				.where(eq(t.materials.projectId, id));
-			// Generation jobs keep files under their own id: speech, plans, images.
 			const generated = await tx
 				.select({ id: t.jobs.id })
 				.from(t.jobs)
 				.where(
-					and(
-						eq(t.jobs.projectId, id),
-						inArray(t.jobs.kind, ['audio', 'session', 'quiz', 'lesson'])
-					)
+					and(eq(t.jobs.projectId, id), inArray(t.jobs.kind, [...JOBS_WITH_FILES]))
 				);
 			await tx.delete(t.projects).where(eq(t.projects.id, id));
 			return { sources, generated };

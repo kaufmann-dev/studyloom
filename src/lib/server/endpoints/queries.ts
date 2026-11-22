@@ -8,6 +8,9 @@ export type Material = typeof t.materials.$inferSelect;
 export type Job = typeof t.jobs.$inferSelect;
 
 export const jobIsActive = inArray(t.jobs.status, ['queued', 'running']);
+export const jobIsInterrupted = inArray(t.jobs.status, ['failed', 'cancelled']);
+/** Generation jobs keep files under their own id (speech, plans, images), which their output takes over. */
+export const JOBS_WITH_FILES = ['audio', 'session', 'quiz', 'lesson'] as const;
 
 export async function findProject(id: string | undefined) {
 	const [row] = await db()

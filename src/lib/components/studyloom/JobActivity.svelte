@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { isActiveJob, type Job, type JobKind } from '#lib/domain.js';
+	import { interruptedJobs, isActiveJob, type Job, type JobKind } from '#lib/domain.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { api, errorText } from '#lib/ui.js';
@@ -26,14 +26,13 @@
 	};
 	let busy = $state('');
 	let active = $derived(jobs.filter(isActiveJob));
-	let interrupted = $derived(
-		jobs.filter((job) => job.status === 'failed' || job.status === 'cancelled').slice(0, 10)
-	);
+	let interrupted = $derived(interruptedJobs(jobs).slice(0, 10));
 
-	async function act(job: Job, action: 'cancel' | 'retry') {
+	async function act(job: Job, action: 'cancel' | 'retry' | 'dismiss') {
 		busy = job.id;
 		try {
-			await api(`/api/jobs/${job.id}/${action}`, { body: {} });
+			if (action === 'dismiss') await api(`/api/jobs/${job.id}`, { method: 'DELETE' });
+			else await api(`/api/jobs/${job.id}/${action}`, { body: {} });
 			await onChanged();
 		} catch (cause) {
 			toast.error(errorText(cause));
@@ -95,6 +94,12 @@
 								size="sm"
 								disabled={busy === job.id}
 								onclick={() => act(job, 'retry')}>Retry</Button
+							>
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={busy === job.id}
+								onclick={() => act(job, 'dismiss')}>Dismiss</Button
 							>
 						</li>
 					{/each}

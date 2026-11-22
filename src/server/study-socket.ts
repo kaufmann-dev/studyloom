@@ -8,7 +8,7 @@ import { safeError } from '../lib/server/config';
 import { audioDir } from '../lib/server/audio';
 import { speakStream, speechCatalog } from '../lib/server/elevenlabs';
 import { studyClipKey, type Snapshot } from '../lib/server/jobs';
-import { gradingModel } from '../lib/server/claude';
+import { offeredModel } from '../lib/server/claude';
 import {
 	openRealtimeAsr,
 	requireTranscription,
@@ -120,7 +120,7 @@ export async function studySession(
 		if (run.status === 'complete') throw new Error('This run is finished. Start a new one.');
 		const study: StudyInfo = output.study;
 		const { plan } = study;
-		const modelId = await gradingModel(output.modelId);
+		const modelId = await offeredModel(output.modelId);
 		const { voices } = await speechCatalog();
 		if (!voices.some((voice) => voice.voiceId === study.voiceId))
 			throw new Error('The session voice is no longer available in ElevenLabs.');

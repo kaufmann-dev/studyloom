@@ -18,13 +18,20 @@ import {
 } from '../../domain';
 import { released, settleJobTarget } from '../jobs';
 import { gradeQuestion } from '../grading';
-import { outputImagePath } from '../outline';
+import { outputImagePath, removeOutputFiles } from '../outline';
 import { speechCatalog } from '../elevenlabs';
 import { ensureClip, existingClip, removeClips } from '../lesson-voice';
-import { gradingModel } from '../claude';
-import { audioFile } from '../audio';
+import { offeredModel } from '../claude';
+import { audioFile, removeAudioFiles } from '../audio';
 import { accepted, download, ok, readJson, type Handler } from './http';
-import { isUniqueViolation, jobIsActive, lockProject, type Job } from './queries';
+import {
+	JOBS_WITH_FILES,
+	isUniqueViolation,
+	jobIsActive,
+	jobIsInterrupted,
+	lockProject,
+	type Job
+} from './queries';
 
 // Job payloads and source snapshots stay on the server.
 export const publicJob = (job: Job) => ({
@@ -276,7 +283,7 @@ export const outputs: Handler = async ({ event, method, id, action, seq }) => {
 		// Everything but free text is graded here and now, without Claude.
 		const result = gradeQuestion(question, answer.values);
 		const written = result.state === 'pending';
-		const modelId = written ? await gradingModel(output.modelId) : output.modelId;
+		const modelId = written ? await offeredModel(output.modelId) : output.modelId;
 		const saved = await db().transaction(async (tx) => {
 			await lockProject(tx, output.projectId);
 			const [row] = await tx
@@ -319,7 +326,7 @@ export const outputs: Handler = async ({ event, method, id, action, seq }) => {
 		// Everything but free text is graded here; a question left open scores nothing.
 		const grades = questions.map((question) => gradeQuestion(question, given.get(question.id)));
 		const written = grades.some((grade) => grade.state === 'pending');
-		const modelId = written ? await gradingModel(output.modelId) : output.modelId;
+		const modelId = written ? await offeredModel(output.modelId) : output.modelId;
 		const { attempt, job } = await db().transaction(async (tx) => {
 			await lockProject(tx, output.projectId);
 			const [attempt] = await tx
@@ -368,21 +375,42 @@ export const jobs: Handler = async ({ method, id, action }) => {
 		});
 		return ok();
 	}
+	if (!action && method === 'DELETE') {
+		const [removed] = await db()
+			.delete(t.jobs)
+			.where(and(eq(t.jobs.id, job.id), jobIsInterrupted))
+			.returning({ id: t.jobs.id });
+		if (!removed) error(409, 'Only failed or cancelled jobs can be dismissed.');
+		if ((JOBS_WITH_FILES as readonly string[]).includes(job.kind)) {
+			const [output] = await db()
+				.select({ id: t.outputs.id })
+				.from(t.outputs)
+				.where(eq(t.outputs.id, job.id));
+			if (!output) await Promise.all([removeAudioFiles(job.id), removeOutputFiles(job.id)]);
+		}
+		return ok();
+	}
 	if (action === 'retry' && method === 'POST') {
 		if (job.status !== 'failed' && job.status !== 'cancelled')
 			error(409, 'Only failed or cancelled jobs can be retried.');
+		// A model Claude Code no longer offers would fail again, so the retry uses the default.
+		const payload =
+			typeof job.payload.modelId === 'string'
+				? { ...job.payload, modelId: await offeredModel(job.payload.modelId) }
+				: job.payload;
 		try {
 			await db().transaction(async (tx) => {
 				const [retried] = await tx
 					.update(t.jobs)
 					.set({
 						status: 'queued',
+						payload,
 						error: null,
 						tries: 0,
 						progress: 'Waiting to retry',
 						...released()
 					})
-					.where(and(eq(t.jobs.id, job.id), inArray(t.jobs.status, ['failed', 'cancelled'])))
+					.where(and(eq(t.jobs.id, job.id), jobIsInterrupted))
 					.returning({ id: t.jobs.id });
 				if (retried) await settleJobTarget(tx, job, 'retried');
 			});

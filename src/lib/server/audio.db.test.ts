@@ -23,7 +23,7 @@ import { callApi, useTestDatabase } from './testing';
 vi.mock('./claude', async (importOriginal) => ({
 	...(await importOriginal<typeof import('./claude')>()),
 	validateModel: vi.fn(async () => {}),
-	gradingModel: vi.fn(async (modelId: string) => modelId),
+	offeredModel: vi.fn(async (modelId: string) => modelId),
 	claudeRun: vi.fn()
 }));
 vi.mock('./elevenlabs', () => ({

@@ -29,7 +29,7 @@ vi.mock('../lib/server/realtime-asr', () => ({
 }));
 vi.mock('../lib/server/claude', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../lib/server/claude')>()),
-	gradingModel: async (id: string) => id
+	offeredModel: async (id: string) => id
 }));
 vi.mock('../lib/server/elevenlabs', () => ({
 	speechCatalog: async () => ({ voices: [{ voiceId: 'voice1', name: 'Rachel', description: '' }] }),

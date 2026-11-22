@@ -40,7 +40,7 @@ const {
 	claudeRun,
 	claudeStatus,
 	describeModel,
-	gradingModel,
+	offeredModel,
 	runFailure,
 	validateModel
 } = await import('./claude');
@@ -99,8 +99,8 @@ describe('Claude models', () => {
 		await expect(validateModel('muse-spark-1.3-contributor')).rejects.toMatchObject({
 			status: 409
 		});
-		expect(await gradingModel('haiku')).toBe('haiku');
-		expect(await gradingModel('muse-spark-1.3-contributor')).toBe('default');
+		expect(await offeredModel('haiku')).toBe('haiku');
+		expect(await offeredModel('muse-spark-1.3-contributor')).toBe('default');
 	});
 	it('reports a missing token instead of failing later', async () => {
 		vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', '');

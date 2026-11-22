@@ -181,8 +181,8 @@ export async function validateModel(modelId: string) {
 	if (!offered(await availableModels(), modelId))
 		throw new ClientError(409, 'This model is no longer available. Refresh the model list.');
 }
-/** The output's own model while Claude Code still offers it, otherwise the default. */
-export async function gradingModel(preferred: string) {
+/** The stored model while Claude Code still offers it, otherwise the default. */
+export async function offeredModel(preferred: string) {
 	return offered(await availableModels(), preferred) ? preferred : DEFAULT_MODEL;
 }
 

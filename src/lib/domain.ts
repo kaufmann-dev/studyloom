@@ -754,6 +754,26 @@ export type JobKind =
 	| 'recover';
 export const isActiveJob = (job: { status: JobStatus }) =>
 	job.status === 'queued' || job.status === 'running';
+/** What a job works on, when a later job for the same thing takes its place. */
+const jobTarget = (job: Job) =>
+	(job.materialId && `material:${job.materialId}`) ||
+	(job.conversationId && `conversation:${job.conversationId}`) ||
+	(job.attemptId && `attempt:${job.attemptId}`) ||
+	(job.lessonAnswerId && `answer:${job.lessonAnswerId}`) ||
+	(job.kind === 'voice' && job.outputId && `voice:${job.outputId}`) ||
+	undefined;
+/** Failed and cancelled jobs, newest first, without those a later job for the same thing replaced. */
+export function interruptedJobs(jobs: Job[]) {
+	const later = new Set<string>();
+	return jobs
+		.toSorted((a, b) => b.createdAt.localeCompare(a.createdAt))
+		.filter((job) => {
+			const target = jobTarget(job);
+			const replaced = target !== undefined && later.has(target);
+			if (target) later.add(target);
+			return !replaced && (job.status === 'failed' || job.status === 'cancelled');
+		});
+}
 /** A Library contact marked as lecturer, as assigned to a project. */
 export interface ProjectLecturer {
 	id: string;
