@@ -1,10 +1,12 @@
-import { and, count, eq, gte, inArray, notInArray, sql } from 'drizzle-orm';
+import { and, count, eq, gte, inArray, isNotNull, or, notInArray, sql } from 'drizzle-orm';
 import { toWallClock } from '../calendar';
 import type { MoodleCalendar } from '../domain';
 import { ClientError, safeError } from './config';
 import { db, type Transaction } from './db';
 import * as t from './db/schema';
 import { parseIcs, type ParsedEvent } from './ics-import';
+import { visibleTask } from './endpoints/queries';
+import { feedbackPairs } from './moodle-feedback';
 import { fetchWebPage } from './web-page';
 
 const ROW_ID = 1;
@@ -77,6 +79,7 @@ async function store(tx: Transaction, parsed: ParsedEvent[], today: string) {
 					notes: task.notes,
 					dueDate: task.startDate,
 					dueTime: task.startTime,
+					moodleFeedbackCourse: task.moodleFeedbackCourse ?? null,
 					source: 'moodle' as const
 				}))
 			)
@@ -87,6 +90,7 @@ async function store(tx: Transaction, parsed: ParsedEvent[], today: string) {
 					notes: excluded(k.notes),
 					dueDate: excluded(k.dueDate),
 					dueTime: excluded(k.dueTime),
+					moodleFeedbackCourse: excluded(k.moodleFeedbackCourse),
 					source: excluded(k.source),
 					updatedAt: new Date()
 				}
@@ -115,6 +119,58 @@ async function store(tx: Transaction, parsed: ParsedEvent[], today: string) {
 				: undefined
 		)
 	);
+	await linkFeedbackWindows(tx);
+}
+
+/** Keep the original Moodle UIDs so future updates and a narrowing feed window are lossless. */
+async function linkFeedbackWindows(tx: Transaction) {
+	const k = t.tasks;
+	const rows = await tx
+		.select({
+			id: k.id,
+			uid: k.uid,
+			title: k.title,
+			dueDate: k.dueDate,
+			dueTime: k.dueTime,
+			moodleFeedbackCourse: k.moodleFeedbackCourse,
+			moodleOpeningId: k.moodleOpeningId,
+			completedAt: k.completedAt
+		})
+		.from(k)
+		.where(
+			and(
+				eq(k.source, 'moodle'),
+				or(isNotNull(k.moodleFeedbackCourse), isNotNull(k.moodleOpeningId))
+			)
+		)
+		.for('update');
+	const pairs = feedbackPairs(rows);
+	const stale = rows.filter(
+		(row) => row.moodleOpeningId && pairs.get(row.id) !== row.moodleOpeningId
+	);
+	if (stale.length)
+		await tx
+			.update(k)
+			.set({ moodleOpeningId: null, updatedAt: new Date() })
+			.where(
+				inArray(
+					k.id,
+					stale.map((row) => row.id)
+				)
+			);
+	const byId = new Map(rows.map((row) => [row.id, row]));
+	for (const [endId, startId] of pairs) {
+		const end = byId.get(endId)!;
+		if (end.moodleOpeningId === startId) continue;
+		await tx
+			.update(k)
+			.set({
+				moodleOpeningId: startId,
+				completedAt: end.completedAt ?? byId.get(startId)!.completedAt,
+				updatedAt: new Date()
+			})
+			.where(eq(k.id, endId));
+	}
 }
 
 // Every change to the Moodle data runs in turn, so a sync never overlaps another sync or a
@@ -156,7 +212,10 @@ export async function moodleStatus(): Promise<MoodleCalendar> {
 	const [[row], [events], [tasks]] = await Promise.all([
 		db().select().from(t.moodleCalendar),
 		db().select({ n: count() }).from(t.events).where(eq(t.events.source, 'moodle')),
-		db().select({ n: count() }).from(t.tasks).where(eq(t.tasks.source, 'moodle'))
+		db()
+			.select({ n: count() })
+			.from(t.tasks)
+			.where(and(eq(t.tasks.source, 'moodle'), visibleTask))
 	]);
 	return {
 		connected: Boolean(row?.url),

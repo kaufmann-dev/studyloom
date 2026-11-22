@@ -12,8 +12,7 @@
 	import Textarea from '#lib/components/ui/textarea/textarea.svelte';
 	import ConfirmDialog from '#lib/components/studyloom/ConfirmDialog.svelte';
 	import ProjectSelect from '#lib/components/studyloom/ProjectSelect.svelte';
-	import { dayLabel } from '#lib/calendar.js';
-	import { dueLabel } from '#lib/tasks.js';
+	import { dueLabel, taskSchedule } from '#lib/tasks.js';
 	import { getTasks } from '#lib/tasks.svelte.js';
 	import { errorText } from '#lib/ui.js';
 
@@ -94,8 +93,10 @@
 		</Dialog.Description>
 	</Dialog.Header>
 	<p class="text-sm">
-		Due {dayLabel(synced.dueDate)}{synced.dueTime ? `, ${synced.dueTime}` : ''}
-		<span class="text-muted-foreground">· {dueLabel(synced, tasks.clock.now)}</span>
+		{taskSchedule(synced, tasks.clock.now)}
+		{#if !synced.moodleFeedbackOpening || synced.completedAt}<span class="text-muted-foreground"
+				>· {dueLabel(synced, tasks.clock.now)}</span
+			>{/if}
 	</p>
 	{#if synced.notes}
 		<p class="text-sm whitespace-pre-wrap text-muted-foreground">{synced.notes}</p>

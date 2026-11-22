@@ -1,3 +1,4 @@
+import { feedbackMarker } from './moodle-feedback';
 import { randomUUID } from 'node:crypto';
 import { parseDate, parseDateTime } from '@internationalized/date';
 import {
@@ -21,6 +22,7 @@ import {
 import { ClientError } from './config';
 
 export interface ParsedEvent {
+	moodleFeedbackCourse?: string;
 	uid: string;
 	title: string;
 	location: string;
@@ -187,6 +189,17 @@ interface Span {
 	startTime: string | null;
 	endDate: string;
 	endTime: string | null;
+}
+/** Only a single, explicit course and an exact one-off feedback title can identify a pair. */
+function readFeedbackCourse(reader: Reader, span: Span) {
+	if (!reader.raw('UID') || reader.raw('RRULE') || reader.all('EXDATE').length) return;
+	if (!span.startTime || span.startDate !== span.endDate || span.startTime !== span.endTime) return;
+	const title = unescapeText(reader.raw('SUMMARY'));
+	if (title.length > 200 || !feedbackMarker(title)) return;
+	const categories = reader.all('CATEGORIES');
+	if (categories.length !== 1) return;
+	const category = categories[0].value.trim();
+	if (category && !category.replace(/\\./g, '').includes(',')) return unescapeText(category);
 }
 function readSpan(reader: Reader): Span | undefined {
 	const start = reader.moment(reader.all('DTSTART')[0]);
@@ -358,10 +371,12 @@ export function parseIcs(text: string, timeZone: string): ParsedCalendar {
 			if (reader.raw('RRULE') && !rule)
 				skip('Repeat rules without an equivalent (imported as single events)');
 			const length = diffDays(span.endDate, span.startDate);
+			const feedbackCourse = readFeedbackCourse(reader, span);
 			const series = (rule?.starts ?? [span.startDate]).map(
 				(startDate, index, all): ParsedEvent => ({
 					uid: all.length > 1 ? `${uid}-${index + 1}` : uid,
 					...content(reader),
+					...(feedbackCourse && { moodleFeedbackCourse: feedbackCourse }),
 					...span,
 					startDate,
 					endDate: addDays(startDate, length),

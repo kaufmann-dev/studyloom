@@ -42,6 +42,15 @@ describe('task urgency', () => {
 		expect(urgency(done, now)).toBe('done');
 		expect(isUrgent(done, now)).toBe(false);
 	});
+	it('uses the closing deadline of a feedback task, and never flags a lone opening', () => {
+		const paired = { ...task('2026-10-04'), opensDate: '2026-09-29' };
+		expect(urgency(paired, now)).toBe('soon');
+		const opening = { ...task('2026-09-29'), moodleFeedbackOpening: true };
+		expect(urgency(opening, now)).toBe('opening');
+		expect(isUrgent(opening, now)).toBe(false);
+		expect(dueLabel(opening, now)).toBe('Opening date');
+		expect(urgency({ ...opening, completedAt: now.toISOString() }, now)).toBe('done');
+	});
 	it('sorts by deadline with timed tasks before end-of-day ones', () => {
 		const sorted = [task('2026-10-03'), task('2026-10-02'), task('2026-10-03', '09:00')].sort(
 			compareDue

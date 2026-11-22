@@ -158,6 +158,10 @@ export const tasks = pgTable(
 		notes: text('notes').notNull().default(''),
 		dueDate: date('due_date', { mode: 'string' }).notNull(),
 		dueTime: text('due_time'),
+		moodleFeedbackCourse: text('moodle_feedback_course'),
+		moodleOpeningId: uuid('moodle_opening_id').references((): AnyPgColumn => tasks.id, {
+			onDelete: 'set null'
+		}),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		source: source(),
 		createdAt: time('created_at'),
@@ -165,6 +169,9 @@ export const tasks = pgTable(
 	},
 	(t) => [
 		uniqueIndex('tasks_uid_idx').on(t.uid),
+		uniqueIndex('tasks_moodle_opening_idx')
+			.on(t.moodleOpeningId)
+			.where(sql`${t.moodleOpeningId} is not null`),
 		index('tasks_due_idx').on(t.completedAt, t.dueDate),
 		index('tasks_project_idx').on(t.projectId),
 		check('tasks_due_time_check', sql`${t.dueTime} is null or ${t.dueTime} ~ ${CLOCK_TIME}`),

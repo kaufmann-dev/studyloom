@@ -6,6 +6,9 @@ export interface IcsEvent extends Series {
 	updatedAt: Date;
 }
 export interface IcsTask {
+	opensDate?: string | null;
+	opensTime?: string | null;
+	moodleFeedbackOpening?: boolean;
 	uid: string;
 	title: string;
 	notes: string;
@@ -133,13 +136,22 @@ export function buildFeed(input: {
 			'BEGIN:VEVENT',
 			`UID:due-${task.uid}`,
 			...stamps(task.updatedAt),
-			...(task.dueTime
-				? [`DTSTART:${at(task.dueDate, task.dueTime)}`]
-				: [
-						`DTSTART;VALUE=DATE:${compactDate(task.dueDate)}`,
-						`DTEND;VALUE=DATE:${compactDate(addDays(task.dueDate, 1))}`
-					]),
-			...text('SUMMARY', `Due: ${task.title}`),
+			...(task.opensDate && task.opensTime && task.dueTime
+				? [
+						`DTSTART:${at(task.opensDate, task.opensTime)}`,
+						`DTEND:${at(task.dueDate, task.dueTime)}`,
+						'TRANSP:TRANSPARENT'
+					]
+				: task.dueTime
+					? [`DTSTART:${at(task.dueDate, task.dueTime)}`]
+					: [
+							`DTSTART;VALUE=DATE:${compactDate(task.dueDate)}`,
+							`DTEND;VALUE=DATE:${compactDate(addDays(task.dueDate, 1))}`
+						]),
+			...text(
+				'SUMMARY',
+				task.opensDate || task.moodleFeedbackOpening ? task.title : `Due: ${task.title}`
+			),
 			...text('DESCRIPTION', describe(task.notes, task.projectName)),
 			'END:VEVENT'
 		);

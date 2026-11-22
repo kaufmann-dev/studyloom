@@ -12,7 +12,7 @@ import { connectMoodle, disconnectMoodle, moodleStatus, syncMoodle } from '../mo
 import { selectEvents } from './events';
 import { ok, readJson, type Handler } from './http';
 import { findProject } from './queries';
-import { selectTasks } from './tasks';
+import { feedbackFields, selectTasks } from './tasks';
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const BATCH = 500;
@@ -47,9 +47,17 @@ export async function feedResponse(token: string) {
 		selectEvents(),
 		selectTasks(isNull(t.tasks.completedAt))
 	]);
-	return calendarResponse(buildFeed({ events, tasks, timeZone: feed.timeZone, now: new Date() }), {
-		'x-robots-tag': 'noindex'
-	});
+	return calendarResponse(
+		buildFeed({
+			events,
+			tasks: tasks.map((row) => ({ ...row, ...feedbackFields(row) })),
+			timeZone: feed.timeZone,
+			now: new Date()
+		}),
+		{
+			'x-robots-tag': 'noindex'
+		}
+	);
 }
 
 function batches<T>(items: T[]) {
@@ -120,11 +128,10 @@ async function store(tx: Transaction, parsed: ParsedCalendar, projectId: string 
 /** Leaves out entries already synced from Moodle; they change only through the sync. */
 async function withoutMoodle(parsed: ParsedCalendar): Promise<ParsedCalendar> {
 	const synced = new Set<string>();
-	for (const [table, items] of [
-		[t.events, parsed.events],
-		[t.tasks, parsed.tasks]
-	] as const)
-		for (const batch of batches(items.map((item) => item.uid)))
+	// Moodle sends its task dates as VEVENTs. Both UIDs of a paired task remain sync-owned.
+	const uids = [...parsed.events, ...parsed.tasks].map((item) => item.uid);
+	for (const table of [t.events, t.tasks])
+		for (const batch of batches(uids))
 			for (const row of await db()
 				.select({ uid: table.uid })
 				.from(table)

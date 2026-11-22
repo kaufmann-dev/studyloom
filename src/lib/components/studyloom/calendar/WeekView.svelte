@@ -14,7 +14,7 @@
 		timeOf,
 		timeRange
 	} from '#lib/calendar.js';
-	import { dueLabel, urgency } from '#lib/tasks.js';
+	import { dueLabel, taskSchedule, urgency } from '#lib/tasks.js';
 	import EventChip from './EventChip.svelte';
 
 	const HOUR_PX = 48;
@@ -175,11 +175,12 @@
 								tone.line
 							]}
 							style:top={offset(minutesOf(task.dueTime!))}
-							aria-label={`Task: ${task.title}, ${dueLabel(task, now)}`}
+							title={taskSchedule(task, now)}
+							aria-label={`Task: ${task.title}, ${task.opensDate || task.moodleFeedbackOpening ? taskSchedule(task, now) : dueLabel(task, now)}`}
 							onclick={() => onTask(task)}
 						>
 							<span class={['ml-auto max-w-full truncate border px-1 text-[0.65rem]', tone.chip]}>
-								{task.dueTime}
+								{task.moodleFeedbackOpening ? 'Opens ' : ''}{task.dueTime}
 								{task.title}
 							</span>
 						</button>

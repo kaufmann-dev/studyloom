@@ -1,16 +1,24 @@
 import { error } from '@sveltejs/kit';
 import { randomUUID } from 'node:crypto';
-import { asc, desc, eq, getTableColumns, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import { feedbackMarker } from '../moodle-feedback';
+import { and, asc, desc, eq, getTableColumns, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '../db';
 import * as t from '../db/schema';
 import { idSchema, taskInput, taskPatchInput } from '../../domain';
 import { ClientError } from '../config';
 import { created, ok, readJson, type Handler } from './http';
-import { findProject } from './queries';
+import { findProject, visibleTask } from './queries';
 
 const DONE_LIMIT = 200;
-const columns = { ...getTableColumns(t.tasks), projectName: t.projects.name };
+const opening = alias(t.tasks, 'feedback_opening');
+const columns = {
+	...getTableColumns(t.tasks),
+	projectName: t.projects.name,
+	opensDate: opening.dueDate,
+	opensTime: opening.dueTime
+};
 
 /** Tasks with the name of their project. */
 export const selectTasks = (where?: SQL) =>
@@ -18,15 +26,25 @@ export const selectTasks = (where?: SQL) =>
 		.select(columns)
 		.from(t.tasks)
 		.leftJoin(t.projects, eq(t.projects.id, t.tasks.projectId))
-		.where(where);
+		.leftJoin(opening, eq(opening.id, t.tasks.moodleOpeningId))
+		.where(and(visibleTask, where));
 type TaskRow = Awaited<ReturnType<typeof selectTasks>>[number];
 
+export function feedbackFields(row: TaskRow) {
+	const marker = row.source === 'moodle' && feedbackMarker(row.title);
+	return {
+		title: marker && row.opensDate ? marker.title : row.title,
+		opensDate: row.opensDate,
+		opensTime: row.opensTime,
+		moodleFeedbackOpening: Boolean(marker && marker.opening)
+	};
+}
 function publicTask(row: TaskRow) {
 	return {
 		id: row.id,
 		projectId: row.projectId,
 		projectName: row.projectName,
-		title: row.title,
+		...feedbackFields(row),
 		notes: row.notes,
 		dueDate: row.dueDate,
 		dueTime: row.dueTime,

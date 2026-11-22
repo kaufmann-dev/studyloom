@@ -9,6 +9,15 @@ const urgent = {
 	line: 'border-destructive',
 	dot: 'bg-destructive'
 };
+const neutral = {
+	icon: Calendar,
+	row: 'border-l-border',
+	badge: 'border-border text-muted-foreground',
+	chip: 'border-border bg-background text-foreground',
+	line: 'border-muted-foreground',
+	dot: 'bg-muted-foreground'
+};
+
 /** How each urgency looks. Red is reserved for tasks that need attention now. */
 export const TONES: Record<Urgency, typeof urgent> = {
 	overdue: urgent,
@@ -21,14 +30,8 @@ export const TONES: Record<Urgency, typeof urgent> = {
 		line: 'border-warning',
 		dot: 'bg-warning'
 	},
-	later: {
-		icon: Calendar,
-		row: 'border-l-border',
-		badge: 'border-border text-muted-foreground',
-		chip: 'border-border bg-background text-foreground',
-		line: 'border-muted-foreground',
-		dot: 'bg-muted-foreground'
-	},
+	later: neutral,
+	opening: neutral,
 	done: {
 		icon: Check,
 		row: 'border-l-border',

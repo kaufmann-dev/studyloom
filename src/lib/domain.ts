@@ -234,6 +234,9 @@ export const importInput = z.object({
 	commit: z.boolean().default(false)
 });
 export interface Task {
+	opensDate?: string | null;
+	opensTime?: string | null;
+	moodleFeedbackOpening?: boolean;
 	id: string;
 	projectId: string | null;
 	projectName: string | null;

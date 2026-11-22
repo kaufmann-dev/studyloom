@@ -21,7 +21,8 @@
 		return [
 			{ title: 'Do now', tasks: by('overdue', 'today') },
 			{ title: 'Next 3 days', tasks: by('soon') },
-			{ title: 'Later', tasks: by('later') }
+			{ title: 'Later', tasks: by('later') },
+			{ title: 'Opening dates', tasks: by('opening') }
 		].filter((group) => group.tasks.length);
 	});
 
@@ -47,7 +48,7 @@
 	<div>
 		<h1 class="text-3xl font-semibold tracking-tight">Tasks</h1>
 		<p class="mt-2 text-muted-foreground">
-			Everything with a deadline. Red is due now, amber within three days.
+			Red marks deadlines due now, amber marks deadlines within three days.
 		</p>
 	</div>
 	<Button onclick={() => (creating = true)}><Plus />New task</Button>

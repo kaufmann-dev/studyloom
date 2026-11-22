@@ -41,6 +41,65 @@ function serve(body: string) {
 }
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('Moodle calendar sync', () => {
+	it('combines unique feedback windows and retains the opening when the feed rolls forward', async () => {
+		const environment = await useTestDatabase('moodle-feedback');
+		vi.stubEnv('ORIGIN', 'https://studyloom.test');
+		const today = toWallClock(new Date(), 'UTC').date;
+		const past = addDays(today, -10);
+		const later = addDays(today, 20);
+		const marker = (uid: string, title: string, date: string, course: string) =>
+			entry(uid, title, date, '1200').replace(
+				'DESCRIPTION:',
+				`CATEGORIES:${course}\r\nDESCRIPTION:`
+			);
+		const start = marker('open', 'Feedback: Seminar beginnt', past, 'Course-A');
+		const end = marker('close', 'Feedback: Seminar endet', later, 'Course-A');
+		const secondCourse = marker('other', 'Feedback: Seminar beginnt', past, 'Course-B');
+		const list = async (status = 'open'): Promise<Task[]> =>
+			(await (await callApi(`/api/tasks?status=${status}`)).json()).tasks;
+		try {
+			serve(calendar(start, end, secondCourse));
+			const status = await (
+				await callApi('/api/calendar/moodle', {
+					method: 'PUT',
+					body: { url: ADDRESS, timeZone: 'UTC' }
+				})
+			).json();
+			expect(status).toMatchObject({ lastError: null, tasks: 2 });
+			const open = await list();
+			const pair = open.find((task) => task.title === 'Feedback: Seminar')!;
+			expect(pair).toMatchObject({ opensDate: past, opensTime: '12:00', dueDate: later });
+			expect(open.find((task) => task.title.endsWith('beginnt'))?.moodleFeedbackOpening).toBe(true);
+			const feed = await (
+				await callApi('/api/calendar/feed', { body: { timeZone: 'UTC' } })
+			).json();
+			const { feedResponse } = await import('./endpoints/calendar');
+			const response = await feedResponse(new URL(feed.url).pathname.split('/')[2]);
+			const ics = await response!.text();
+			expect(ics).toContain(`DTSTART:${compact(past)}T120000Z\r\nDTEND:${compact(later)}T120000Z`);
+			expect(ics).not.toContain('UID:due-open@moodle.test');
+			await callApi(`/api/tasks/${pair.id}`, { method: 'PATCH', body: { done: true } });
+			serve(calendar(end));
+			expect(await (await callApi('/api/calendar/moodle/sync', { body: {} })).json()).toMatchObject(
+				{ tasks: 2, lastError: null }
+			);
+			expect(await list('done')).toContainEqual(
+				expect.objectContaining({ id: pair.id, opensDate: past, dueDate: later })
+			);
+			const renamed = marker('second-close', 'Feedback: Seminar endet', later, 'Course-A');
+			serve(calendar(end, renamed));
+			expect(await (await callApi('/api/calendar/moodle/sync', { body: {} })).json()).toMatchObject(
+				{ tasks: 4, lastError: null }
+			);
+			expect((await list('done')).find((task) => task.id === pair.id)?.opensDate).toBeNull();
+		} finally {
+			await callApi('/api/calendar/moodle', { method: 'DELETE' });
+			await callApi('/api/calendar/feed', { method: 'DELETE' });
+			vi.unstubAllEnvs();
+			await closeDatabase();
+			await environment.restore();
+		}
+	});
 	it('syncs sessions as events and due dates as tasks, read-only except ticking off', async () => {
 		const environment = await useTestDatabase('moodle');
 		vi.stubEnv('ORIGIN', 'https://studyloom.test');

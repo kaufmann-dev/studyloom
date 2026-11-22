@@ -23,7 +23,9 @@
 		onEvent: (occurrence: Occurrence) => void;
 		onMore: () => void;
 	} = $props();
-	let overdue = $derived(tasks.filter((task) => task.dueDate < from));
+	let overdue = $derived(
+		tasks.filter((task) => !task.moodleFeedbackOpening && task.dueDate < from)
+	);
 	let agenda = $derived(
 		Array.from({ length: days }, (_, index) => addDays(from, index))
 			.map((date) => ({

@@ -15,7 +15,7 @@ import type {
 	Occurrence,
 	Task
 } from '#lib/domain.js';
-import { addDays, localDate, monthGrid } from '#lib/calendar.js';
+import { addDays, dayLabel, localDate, monthGrid } from '#lib/calendar.js';
 import MonthView from './calendar/MonthView.svelte';
 import TaskListFixture from './tasks/TaskListFixture.svelte';
 import Chat from './Chat.svelte';
@@ -659,6 +659,37 @@ describe('Tasks and calendar', () => {
 		const [, init] = patches()[0];
 		expect(init).toMatchObject({ method: 'PATCH', body: JSON.stringify({ done: true }) });
 		await expect.element(page.getByText('Hand in essay')).not.toBeInTheDocument();
+	});
+
+	it('shows the feedback window and a checkable opening without an overdue warning', async () => {
+		const opens = addDays(today, -2);
+		const due = addDays(today, 3);
+		render(TaskListFixture, {
+			tasks: [
+				task({
+					title: 'Course feedback',
+					source: 'moodle',
+					opensDate: opens,
+					opensTime: '08:00',
+					dueDate: due,
+					dueTime: '17:30'
+				}),
+				task({
+					id: 'opening',
+					title: 'Seminar feedback',
+					source: 'moodle',
+					moodleFeedbackOpening: true,
+					dueDate: opens
+				})
+			]
+		});
+		await expect
+			.element(page.getByText(`Opens ${dayLabel(opens)}, 08:00 · Due ${dayLabel(due)}, 17:30`))
+			.toBeVisible();
+		const opening = page.getByRole('listitem').filter({ hasText: 'Seminar feedback' });
+		await expect.element(opening.getByText(`Opens ${dayLabel(opens)}`)).toBeVisible();
+		await expect.element(opening.getByRole('checkbox')).toBeEnabled();
+		await expect.element(opening).not.toHaveTextContent('overdue');
 	});
 
 	it('shows events and deadlines on their day in the month', async () => {

@@ -5,6 +5,8 @@ import * as t from '../db/schema';
 import { settleJobTarget } from '../jobs';
 import { idSchema } from '../../domain';
 
+export const visibleTask = sql`not exists (select 1 from ${t.tasks} as closing where closing.moodle_opening_id = ${t.tasks.id})`;
+
 export type Material = typeof t.materials.$inferSelect;
 export type Job = typeof t.jobs.$inferSelect;
 

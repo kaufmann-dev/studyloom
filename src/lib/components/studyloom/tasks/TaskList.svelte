@@ -5,9 +5,8 @@
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
-	import { dayLabel } from '#lib/calendar.js';
 	import type { Task } from '#lib/domain.js';
-	import { urgency } from '#lib/tasks.js';
+	import { taskSchedule, urgency } from '#lib/tasks.js';
 	import { getTasks } from '#lib/tasks.svelte.js';
 	import { errorText } from '#lib/ui.js';
 	import TaskDialog from './TaskDialog.svelte';
@@ -57,8 +56,8 @@
 					<p class="line-clamp-1 text-sm text-muted-foreground">{task.notes}</p>
 				{/if}
 				<p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-					<UrgencyBadge {task} {now} />
-					<span>{dayLabel(task.dueDate, now)}{task.dueTime ? `, ${task.dueTime}` : ''}</span>
+					{#if !task.moodleFeedbackOpening || task.completedAt}<UrgencyBadge {task} {now} />{/if}
+					<span>{taskSchedule(task, now)}</span>
 					{#if showProject && task.projectId && task.projectName}
 						<a
 							href={resolve('/projects/[id]', { id: task.projectId })}
